@@ -1,0 +1,398 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+..........F...............................................FF............ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+...................................................s.................... [ 96%]
+.........................FFFF........................................... [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_ TestGreenChecksNoFindings.test_six_hour_auditor_repairs_superfixer_via_subagent_introspection _
+
+self = <tests.cloud.test_progress_auditor.TestGreenChecksNoFindings object at 0x112c2de50>
+
+    def test_six_hour_auditor_repairs_superfixer_via_subagent_introspection(self) -> None:
+        text = _wrapper("arnold-progress-auditor")
+        timer = _systemd_file("megaplan-progress-audit.timer")
+        service = _systemd_file("megaplan-progress-audit.service")
+    
+        # Step 47 (T33): the timer cadence moved to next-three-hour
+        # reconciliation; the service Description follows the new
+        # next-three-hour contract (legacy six-hour names are compatibility-only).
+        assert "OnUnitActiveSec=3h" in timer
+        assert "Description=Megaplan next-three-hour DeepSeek plan progress audit" in service
+        assert "Codex then reads the subagent-launcher skill" in text
+        assert "DeepSeek research subagents" in text
+        assert "First audit the repair system itself" in text
+        assert "there is no active or recent repair attempt" in text
+        assert "Arnold superfixer bug" in text
+>       assert "Fix the watchdog/repair-trigger/auditor source" in text
+E       assert 'Fix the watchdog/repair-trigger/auditor source' in '#!/usr/bin/env bash\n# arnold-progress-auditor — deterministic gather/report with an explicitly gated Codex review ph...).name}.d")),\n    session="progress_auditor",\n)\nPY\n\nlog "report written to $JSON_OUT (findings=$FINDING_COUNT)"\n'
+
+tests/cloud/test_progress_auditor.py:2190: AssertionError
+_ TestLiveSignalFiltering.test_gather_flags_captured_repair_activity_without_investigation _
+
+self = <tests.cloud.test_progress_auditor.TestLiveSignalFiltering object at 0x112c4cf10>
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_gather_flags_captured_rep0')
+
+    def test_gather_flags_captured_repair_activity_without_investigation(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {"kind": "execution_blocked", "message": "captured repeat"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_exhausted",
+                    "attempts": [{"attempt_id": 1, "failure_classification": "execution_blocked"}],
+                    "iterations": [{"i": 1, "mechanical_launch": "failed"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+    
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+    
+        reason_text = " ".join(findings["findings"][0]["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+>       assert findings["findings"][0]["repair_data_summary"]["investigation_summary"]["status"] == "missing"
+E       AssertionError: assert 'invalid' == 'missing'
+E         
+E         - missing
+E         + invalid
+
+tests/cloud/test_progress_auditor.py:4618: AssertionError
+_ TestLiveSignalFiltering.test_gather_routes_l1_context_constructor_failure_with_exact_reason _
+
+self = <tests.cloud.test_progress_auditor.TestLiveSignalFiltering object at 0x112c4ed50>
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_gather_routes_l1_context_0')
+
+    def test_gather_routes_l1_context_constructor_failure_with_exact_reason(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {
+                        "kind": "quality_gate_blocked",
+                        "message": "T24 remains blocked",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "fixer_infrastructure_failure",
+                    "attempts": [{"attempt_id": 15, "outcome": "fixer_infrastructure_failure"}],
+                    "investigation": {
+                        "status": "failed",
+                        "failure_phase": "context_construction",
+                        "reason": "bounded repair investigation context construction failed",
+                        "error_excerpt": "TypeError: unhashable type: 'slice'",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+    
+        finding = findings["findings"][0]
+        reason_text = " ".join(finding["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+>       assert "bounded repair investigation context construction failed" in reason_text
+E       AssertionError: assert 'bounded repair investigation context construction failed' in 'repair_without_valid_investigation: L1 repair activity/outcome exists but the durable investigation handoff is invalid: installed runtime lacks shared investigation evidence semantics chain last_state=blocked current_plan=demo-plan'
+
+tests/cloud/test_progress_auditor.py:4691: AssertionError
+_ test_offline_structural_smoke_gate_routes_survive_real_codex_capture[.zero-recovery-03-gate-i1-worker-output.json-ITERATE-8] _
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_offline_structural_smoke_5')
+output_name = '.zero-recovery-03-gate-i1-worker-output.json'
+recommendation = 'ITERATE', action_count = 8
+
+    @pytest.mark.parametrize(
+        ("output_name", "recommendation", "action_count"),
+        [
+            (".zero-recovery-03-gate-i1-worker-output.json", "ITERATE", 8),
+            (".zero-recovery-06-gate-i2-worker-output.json", "PROCEED", 0),
+        ],
+    )
+    def test_offline_structural_smoke_gate_routes_survive_real_codex_capture(
+        tmp_path: Path,
+        output_name: str,
+        recommendation: str,
+        action_count: int,
+    ) -> None:
+        fake = Path(
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+            "structural-smoke/fake_codex.py"
+        )
+        schema_path = Path(".megaplan/schemas/gate.json").resolve()
+>       schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_zero_recovery_canary.py:3959: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json'
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+_ test_offline_structural_smoke_gate_routes_survive_real_codex_capture[.zero-recovery-06-gate-i2-worker-output.json-PROCEED-0] _
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_offline_structural_smoke_6')
+output_name = '.zero-recovery-06-gate-i2-worker-output.json'
+recommendation = 'PROCEED', action_count = 0
+
+    @pytest.mark.parametrize(
+        ("output_name", "recommendation", "action_count"),
+        [
+            (".zero-recovery-03-gate-i1-worker-output.json", "ITERATE", 8),
+            (".zero-recovery-06-gate-i2-worker-output.json", "PROCEED", 0),
+        ],
+    )
+    def test_offline_structural_smoke_gate_routes_survive_real_codex_capture(
+        tmp_path: Path,
+        output_name: str,
+        recommendation: str,
+        action_count: int,
+    ) -> None:
+        fake = Path(
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+            "structural-smoke/fake_codex.py"
+        )
+        schema_path = Path(".megaplan/schemas/gate.json").resolve()
+>       schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_zero_recovery_canary.py:3959: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json'
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+_ test_offline_structural_smoke_revise_survives_real_capture_and_structure_audit _
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_offline_structural_smoke_7')
+
+    def test_offline_structural_smoke_revise_survives_real_capture_and_structure_audit(
+        tmp_path: Path,
+    ) -> None:
+        fake = Path(
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+            "structural-smoke/fake_codex.py"
+        )
+        schema_path = Path(".megaplan/schemas/revise.json").resolve()
+>       schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_zero_recovery_canary.py:4021: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/revise.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/revise.json'
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+_ test_offline_structural_smoke_finalize_binds_prompt_clearance_through_capture _
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-530/test_offline_structural_smoke_8')
+
+    def test_offline_structural_smoke_finalize_binds_prompt_clearance_through_capture(
+        tmp_path: Path,
+    ) -> None:
+        fake = Path(
+            ".megaplan/initiatives/critique-ledger-safe-v3-canary/"
+            "structural-smoke/fake_codex.py"
+        )
+        schema_path = Path(".megaplan/schemas/finalize_capture.json").resolve()
+>       schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_zero_recovery_canary.py:4134: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/finalize_capture.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/finalize_capture.json'
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/cloud/test_progress_auditor.py::TestGreenChecksNoFindings::test_six_hour_auditor_repairs_superfixer_via_subagent_introspection - assert 'Fix the watchdog/repair-trigger/auditor source' in '#!/usr/bin/env bash\n# arnold-progress-auditor — deterministic gather/report with an explicitly gated Codex review ph...).name}.d")),\n    session="progress_auditor",\n)\nPY\n\nlog "report written to $JSON_OUT (findings=$FINDING_COUNT)"\n'
+FAILED tests/cloud/test_progress_auditor.py::TestLiveSignalFiltering::test_gather_flags_captured_repair_activity_without_investigation - AssertionError: assert 'invalid' == 'missing'
+  
+  - missing
+  + invalid
+FAILED tests/cloud/test_progress_auditor.py::TestLiveSignalFiltering::test_gather_routes_l1_context_constructor_failure_with_exact_reason - AssertionError: assert 'bounded repair investigation context construction failed' in 'repair_without_valid_investigation: L1 repair activity/outcome exists but the durable investigation handoff is invalid: installed runtime lacks shared investigation evidence semantics chain last_state=blocked current_plan=demo-plan'
+FAILED tests/cloud/test_zero_recovery_canary.py::test_offline_structural_smoke_gate_routes_survive_real_codex_capture[.zero-recovery-03-gate-i1-worker-output.json-ITERATE-8] - FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json'
+FAILED tests/cloud/test_zero_recovery_canary.py::test_offline_structural_smoke_gate_routes_survive_real_codex_capture[.zero-recovery-06-gate-i2-worker-output.json-PROCEED-0] - FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/gate.json'
+FAILED tests/cloud/test_zero_recovery_canary.py::test_offline_structural_smoke_revise_survives_real_capture_and_structure_audit - FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/revise.json'
+FAILED tests/cloud/test_zero_recovery_canary.py::test_offline_structural_smoke_finalize_binds_prompt_clearance_through_capture - FileNotFoundError: [Errno 2] No such file or directory: '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/.megaplan/schemas/finalize_capture.json'
+7 failed, 2375 passed, 1 skipped in 240.18s (0:04:00)

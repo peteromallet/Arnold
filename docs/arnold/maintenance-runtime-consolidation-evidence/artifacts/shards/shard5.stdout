@@ -1,0 +1,713 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+..............................FF........................................ [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+................................EEEE.................................... [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+.................................FF..................................... [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+..............................F......................................... [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of TestCanonicalSourceIsSemanticAuthority.test_installed_wheel_ships_canonical_pypeline_resource _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x10bbb9110>, _basetemp=PosixPath...s/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def installed_megaplan_wheel(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> InstalledWheelArtifact:
+        tmp = tmp_path_factory.mktemp("megaplan-installed-wheel")
+        wheel_dir = tmp / "wheelhouse"
+        wheel_dir.mkdir()
+    
+        venv_dir = tmp / "venv"
+        venv.create(venv_dir, with_pip=True)
+        python = venv_dir / "bin" / "python"
+        pip = venv_dir / "bin" / "pip"
+>       subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "-w",
+                str(wheel_dir),
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:175: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = True, timeout = None, check = True
+popenargs = (['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', ...],)
+kwargs = {'cwd': PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution'), 'stderr': -1, 'stdout': -1, 'text': True}
+process = <Popen: returncode: 1 args: ['/private/var/folders/_w/b3tthv192m77c760dbyzvk...>
+stdout = "Processing /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution\n  Installing build depend...n  Preparing metadata (pyproject.toml): started\n  Preparing metadata (pyproject.toml): finished with status 'error'\n"
+stderr = '  error: subprocess-exited-with-error\n  \n  × Preparing metadata (pyproject.toml) did not run successfully.\n  │ exi...above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n'
+retcode = 1
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout is given, and the process takes too long, a TimeoutExpired
+        exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/subprocess.py:571: CalledProcessError
+_ ERROR at setup of TestCanonicalSourceIsSemanticAuthority.test_installed_wheel_resource_contract_preserves_native_authority _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x10bbb9110>, _basetemp=PosixPath...s/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def installed_megaplan_wheel(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> InstalledWheelArtifact:
+        tmp = tmp_path_factory.mktemp("megaplan-installed-wheel")
+        wheel_dir = tmp / "wheelhouse"
+        wheel_dir.mkdir()
+    
+        venv_dir = tmp / "venv"
+        venv.create(venv_dir, with_pip=True)
+        python = venv_dir / "bin" / "python"
+        pip = venv_dir / "bin" / "pip"
+>       subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "-w",
+                str(wheel_dir),
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:175: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = True, timeout = None, check = True
+popenargs = (['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', ...],)
+kwargs = {'cwd': PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution'), 'stderr': -1, 'stdout': -1, 'text': True}
+process = <Popen: returncode: 1 args: ['/private/var/folders/_w/b3tthv192m77c760dbyzvk...>
+stdout = "Processing /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution\n  Installing build depend...n  Preparing metadata (pyproject.toml): started\n  Preparing metadata (pyproject.toml): finished with status 'error'\n"
+stderr = '  error: subprocess-exited-with-error\n  \n  × Preparing metadata (pyproject.toml) did not run successfully.\n  │ exi...above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n'
+retcode = 1
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout is given, and the process takes too long, a TimeoutExpired
+        exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/subprocess.py:571: CalledProcessError
+_ ERROR at setup of TestCanonicalSourceIsSemanticAuthority.test_installed_wheel_reruns_required_composition_conformance_from_artifact _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x10bbb9110>, _basetemp=PosixPath...s/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def installed_megaplan_wheel(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> InstalledWheelArtifact:
+        tmp = tmp_path_factory.mktemp("megaplan-installed-wheel")
+        wheel_dir = tmp / "wheelhouse"
+        wheel_dir.mkdir()
+    
+        venv_dir = tmp / "venv"
+        venv.create(venv_dir, with_pip=True)
+        python = venv_dir / "bin" / "python"
+        pip = venv_dir / "bin" / "pip"
+>       subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "-w",
+                str(wheel_dir),
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:175: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = True, timeout = None, check = True
+popenargs = (['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', ...],)
+kwargs = {'cwd': PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution'), 'stderr': -1, 'stdout': -1, 'text': True}
+process = <Popen: returncode: 1 args: ['/private/var/folders/_w/b3tthv192m77c760dbyzvk...>
+stdout = "Processing /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution\n  Installing build depend...n  Preparing metadata (pyproject.toml): started\n  Preparing metadata (pyproject.toml): finished with status 'error'\n"
+stderr = '  error: subprocess-exited-with-error\n  \n  × Preparing metadata (pyproject.toml) did not run successfully.\n  │ exi...above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n'
+retcode = 1
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout is given, and the process takes too long, a TimeoutExpired
+        exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/subprocess.py:571: CalledProcessError
+_ ERROR at setup of TestCanonicalSourceIsSemanticAuthority.test_installed_execute_s4_parity_matches_development_checkout _
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x10bbb9110>, _basetemp=PosixPath...s/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def installed_megaplan_wheel(
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> InstalledWheelArtifact:
+        tmp = tmp_path_factory.mktemp("megaplan-installed-wheel")
+        wheel_dir = tmp / "wheelhouse"
+        wheel_dir.mkdir()
+    
+        venv_dir = tmp / "venv"
+        venv.create(venv_dir, with_pip=True)
+        python = venv_dir / "bin" / "python"
+        pip = venv_dir / "bin" / "pip"
+>       subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "-w",
+                str(wheel_dir),
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py:175: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = True, timeout = None, check = True
+popenargs = (['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', ...],)
+kwargs = {'cwd': PosixPath('/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution'), 'stderr': -1, 'stdout': -1, 'text': True}
+process = <Popen: returncode: 1 args: ['/private/var/folders/_w/b3tthv192m77c760dbyzvk...>
+stdout = "Processing /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution\n  Installing build depend...n  Preparing metadata (pyproject.toml): started\n  Preparing metadata (pyproject.toml): finished with status 'error'\n"
+stderr = '  error: subprocess-exited-with-error\n  \n  × Preparing metadata (pyproject.toml) did not run successfully.\n  │ exi...above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n'
+retcode = 1
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output & stderr attributes if those streams
+        were captured.
+    
+        If timeout is given, and the process takes too long, a TimeoutExpired
+        exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+>               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+
+../../../.pyenv/versions/3.11.11/lib/python3.11/subprocess.py:571: CalledProcessError
+=================================== FAILURES ===================================
+_______ test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts ________
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_full_runtime_marker_targe0')
+
+    def test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts(
+        tmp_path: Path,
+    ) -> None:
+        fixture = _fixture(tmp_path)
+        runtime_a, runtime_b, marker = _runtime_fixture(fixture)
+    
+        # Bootstrap order is load-bearing: the external runtime and marker move
+        # before target/seeds, and the still-new B interpreter supplies the
+        # independently verified identity while the project is later back on A.
+>       _runtime_rebind(
+            fixture,
+            source=runtime_a,
+            target=runtime_b,
+            direction="cutover",
+        )
+
+tests/arnold_pipelines/megaplan/test_chain_target_rebind.py:1325: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/arnold_pipelines/megaplan/test_chain_target_rebind.py:433: in _runtime_rebind
+    result = rebind_runtime_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+spec_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_full_runtime_marker_targe0/custody-session/.megaplan/initiatives/custody/chain.yaml')
+state = ChainState(current_milestone_index=0, current_plan_name='m10-plan', current_milestone_base_sha=None, target_base_ref='...6cdccebea4e9a48'}, 'rebind_events': []}}}, schema_version=0, milestone_boundary_evidence={}, candidate_invalidation={})
+
+    def rebind_runtime_identity(
+        spec_path: Path,
+        state: Any,
+        *,
+        expected_previous_runtime_sha256: str | None = None,
+        expected_active_runtime_sha256: str | None = None,
+        expected_previous_import_root: str | None = None,
+        expected_previous_interpreter: str | None = None,
+        expected_active_import_root: str | None = None,
+        expected_active_interpreter: str | None = None,
+        expected_current_milestone: str,
+        expected_current_plan: str,
+        reason: str,
+        actor: str = "operator",
+        direction: str = "cutover",
+        verified_external_runtime_identity: Mapping[str, Any] | None = None,
+        update_engine_root: bool = False,
+        capability: object | None = None,
+    ) -> dict[str, Any]:
+        """Adopt or roll back an exact runtime without rewriting the spec binding.
+    
+        When ``update_engine_root`` is set (the ``chain runtime-cutover`` path),
+        ``metadata.execution_environment.engine_root`` is moved old->new in the
+        same in-memory transaction: the recorded root must CAS-match the previous
+        runtime identity's ``import_root`` before ANY mutation, and the new root
+        is taken from the adopted runtime identity's ``import_root``.  Non-metadata
+        chain fields are untouched, so the CLI's post-mutation operational-field
+        check keeps the write fail-closed.
+        """
+    
+        if direction not in {"cutover", "rollback"}:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback"
+            )
+        sha_cas = bool(expected_previous_runtime_sha256 or expected_active_runtime_sha256)
+        root_cas = bool(
+            expected_previous_import_root
+            or expected_previous_interpreter
+            or expected_active_import_root
+            or expected_active_interpreter
+        )
+        if sha_cas and not root_cas:
+>           raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind CAS is import_root plus generation interpreter, not SHA-256",
+            )
+E           arnold_pipelines.megaplan.types.CliError: runtime rebind CAS is import_root plus generation interpreter, not SHA-256
+
+arnold_pipelines/megaplan/chain/execution_binding.py:1720: CliError
+____________ test_target_rollback_can_escape_pre_seed_binding_drift ____________
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_target_rollback_can_escap0')
+
+    def test_target_rollback_can_escape_pre_seed_binding_drift(
+        tmp_path: Path,
+    ) -> None:
+        fixture = _fixture(tmp_path)
+        runtime_a, runtime_b, _marker = _runtime_fixture(fixture)
+>       _runtime_rebind(
+            fixture,
+            source=runtime_a,
+            target=runtime_b,
+            direction="cutover",
+        )
+
+tests/arnold_pipelines/megaplan/test_chain_target_rebind.py:1438: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/arnold_pipelines/megaplan/test_chain_target_rebind.py:433: in _runtime_rebind
+    result = rebind_runtime_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+spec_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_target_rollback_can_escap0/custody-session/.megaplan/initiatives/custody/chain.yaml')
+state = ChainState(current_milestone_index=0, current_plan_name='m10-plan', current_milestone_base_sha=None, target_base_ref='...6cdccebea4e9a48'}, 'rebind_events': []}}}, schema_version=0, milestone_boundary_evidence={}, candidate_invalidation={})
+
+    def rebind_runtime_identity(
+        spec_path: Path,
+        state: Any,
+        *,
+        expected_previous_runtime_sha256: str | None = None,
+        expected_active_runtime_sha256: str | None = None,
+        expected_previous_import_root: str | None = None,
+        expected_previous_interpreter: str | None = None,
+        expected_active_import_root: str | None = None,
+        expected_active_interpreter: str | None = None,
+        expected_current_milestone: str,
+        expected_current_plan: str,
+        reason: str,
+        actor: str = "operator",
+        direction: str = "cutover",
+        verified_external_runtime_identity: Mapping[str, Any] | None = None,
+        update_engine_root: bool = False,
+        capability: object | None = None,
+    ) -> dict[str, Any]:
+        """Adopt or roll back an exact runtime without rewriting the spec binding.
+    
+        When ``update_engine_root`` is set (the ``chain runtime-cutover`` path),
+        ``metadata.execution_environment.engine_root`` is moved old->new in the
+        same in-memory transaction: the recorded root must CAS-match the previous
+        runtime identity's ``import_root`` before ANY mutation, and the new root
+        is taken from the adopted runtime identity's ``import_root``.  Non-metadata
+        chain fields are untouched, so the CLI's post-mutation operational-field
+        check keeps the write fail-closed.
+        """
+    
+        if direction not in {"cutover", "rollback"}:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback"
+            )
+        sha_cas = bool(expected_previous_runtime_sha256 or expected_active_runtime_sha256)
+        root_cas = bool(
+            expected_previous_import_root
+            or expected_previous_interpreter
+            or expected_active_import_root
+            or expected_active_interpreter
+        )
+        if sha_cas and not root_cas:
+>           raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind CAS is import_root plus generation interpreter, not SHA-256",
+            )
+E           arnold_pipelines.megaplan.types.CliError: runtime rebind CAS is import_root plus generation interpreter, not SHA-256
+
+arnold_pipelines/megaplan/chain/execution_binding.py:1720: CliError
+_____ test_profile_expansion_without_cli_keeps_profile_execute_tier_models _____
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_profile_expansion_without0')
+
+    def test_profile_expansion_without_cli_keeps_profile_execute_tier_models(tmp_path: Path) -> None:
+        args = Namespace(
+            profile="partnered-5",
+            phase_model=[],
+            tier_models=None,
+            vendor=None,
+            critic=None,
+            depth=None,
+            deepseek_provider=None,
+        )
+    
+        apply_profile_expansion(args, tmp_path)
+    
+>       assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
+E       assert 'execute=codex:gpt-5.6-sol:high' in ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...]
+E        +  where ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...] = Namespace(profile='partnered-5', phase_model=['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5....eepseek-v4-pro'}, 'canonical_fallback_used': {'triage': True, 'fanout': True, 'distill': True}}, _profile_applied=True).phase_model
+
+tests/arnold_pipelines/megaplan/test_profile_policy.py:422: AssertionError
+______ test_profile_expansion_execute_tiers_survive_profile_fallback_pin _______
+
+tmp_path = PosixPath('/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/test_profile_expansion_execute0')
+
+    def test_profile_expansion_execute_tiers_survive_profile_fallback_pin(tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.execute import _extract_execute_tier_map
+    
+        args = Namespace(
+            profile="partnered-5",
+            phase_model=[],
+            tier_models=None,
+            vendor="codex",
+            critic=None,
+            depth="high",
+            deepseek_provider=None,
+        )
+    
+        apply_profile_expansion(args, tmp_path)
+    
+>       assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
+E       assert 'execute=codex:gpt-5.6-sol:high' in ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...]
+E        +  where ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...] = Namespace(profile='partnered-5', phase_model=['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5....eepseek-v4-pro'}, 'canonical_fallback_used': {'triage': True, 'fanout': True, 'distill': True}}, _profile_applied=True).phase_model
+
+tests/arnold_pipelines/megaplan/test_profile_policy.py:444: AssertionError
+_______ TestStep23BC05C09AuthorityCustody.test_c06_c09_action_gate_bound _______
+
+self = <tests.m10.test_c01_c20_conformance.TestStep23BC05C09AuthorityCustody object at 0x10df57f10>
+receipt = {'bound_files': {'allowlist/repair_effect_allowlist': '134fe3d9258e91886801154dd59396ba221fad8f24d13a57403974233935563...ld_output']}, 'criterion_index': 4, 'seed_epoch_flows_through_finalize': True, 'v2_missing_epoch_rejected': True}, ...}
+
+    def test_c06_c09_action_gate_bound(self, receipt: dict) -> None:
+>       assert receipt["c06_c09"]["action_gate_hash"] != "MISSING"
+E       AssertionError: assert 'MISSING' != 'MISSING'
+
+tests/m10/test_c01_c20_conformance.py:140: AssertionError
+=========================== short test summary info ============================
+FAILED tests/arnold_pipelines/megaplan/test_chain_target_rebind.py::test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts - arnold_pipelines.megaplan.types.CliError: runtime rebind CAS is import_root plus generation interpreter, not SHA-256
+FAILED tests/arnold_pipelines/megaplan/test_chain_target_rebind.py::test_target_rollback_can_escape_pre_seed_binding_drift - arnold_pipelines.megaplan.types.CliError: runtime rebind CAS is import_root plus generation interpreter, not SHA-256
+FAILED tests/arnold_pipelines/megaplan/test_profile_policy.py::test_profile_expansion_without_cli_keeps_profile_execute_tier_models - assert 'execute=codex:gpt-5.6-sol:high' in ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...]
+ +  where ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...] = Namespace(profile='partnered-5', phase_model=['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5....eepseek-v4-pro'}, 'canonical_fallback_used': {'triage': True, 'fanout': True, 'distill': True}}, _profile_applied=True).phase_model
+FAILED tests/arnold_pipelines/megaplan/test_profile_policy.py::test_profile_expansion_execute_tiers_survive_profile_fallback_pin - assert 'execute=codex:gpt-5.6-sol:high' in ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...]
+ +  where ['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5.6-sol:high"]', 'prep=hermes:deepseek:deepseek...o","codex:gpt-5.6-sol:high"]', 'revise=hermes:deepseek:deepseek-v4-flash', 'gate=hermes:deepseek:deepseek-v4-pro', ...] = Namespace(profile='partnered-5', phase_model=['plan=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","codex:gpt-5....eepseek-v4-pro'}, 'canonical_fallback_used': {'triage': True, 'fanout': True, 'distill': True}}, _profile_applied=True).phase_model
+FAILED tests/m10/test_c01_c20_conformance.py::TestStep23BC05C09AuthorityCustody::test_c06_c09_action_gate_bound - AssertionError: assert 'MISSING' != 'MISSING'
+ERROR tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py::TestCanonicalSourceIsSemanticAuthority::test_installed_wheel_ships_canonical_pypeline_resource - subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+ERROR tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py::TestCanonicalSourceIsSemanticAuthority::test_installed_wheel_resource_contract_preserves_native_authority - subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+ERROR tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py::TestCanonicalSourceIsSemanticAuthority::test_installed_wheel_reruns_required_composition_conformance_from_artifact - subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+ERROR tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py::TestCanonicalSourceIsSemanticAuthority::test_installed_execute_s4_parity_matches_development_checkout - subprocess.CalledProcessError: Command '['/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/venv/bin/python', '-m', 'pip', 'wheel', '--no-deps', '-w', '/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-555/megaplan-installed-wheel0/wheelhouse', '/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution']' returned non-zero exit status 1.
+5 failed, 2374 passed, 4 errors in 122.75s (0:02:02)

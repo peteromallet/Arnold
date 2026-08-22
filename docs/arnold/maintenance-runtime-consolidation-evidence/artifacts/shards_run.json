@@ -1,0 +1,1892 @@
+{
+  "key": "test_shards_v1",
+  "integration_head": "6c75652572d396d32e7092b681c09375c1cb7e3b",
+  "ran_at_utc": "2026-08-22T03:57:27Z",
+  "shards": [
+    {
+      "id": "shard1",
+      "exit_code": 1,
+      "passed": 2375,
+      "failed": 7,
+      "skipped": 1,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 240.18,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard1.stdout"
+    },
+    {
+      "id": "shard2",
+      "exit_code": 1,
+      "passed": 2308,
+      "failed": 72,
+      "skipped": 3,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 228.65,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard2.stdout"
+    },
+    {
+      "id": "shard3",
+      "exit_code": 1,
+      "passed": 2333,
+      "failed": 50,
+      "skipped": 0,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 454.66,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard3.stdout"
+    },
+    {
+      "id": "shard4",
+      "exit_code": 1,
+      "passed": 2361,
+      "failed": 22,
+      "skipped": 0,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 36.93,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard4.stdout"
+    },
+    {
+      "id": "shard5",
+      "exit_code": 1,
+      "passed": 2374,
+      "failed": 5,
+      "skipped": 0,
+      "errors": 4,
+      "collected": 2383,
+      "duration_s": 122.75,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard5.stdout"
+    },
+    {
+      "id": "shard6",
+      "exit_code": 1,
+      "passed": 2344,
+      "failed": 39,
+      "skipped": 0,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 94.04,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard6.stdout"
+    },
+    {
+      "id": "shard7",
+      "exit_code": 1,
+      "passed": 2311,
+      "failed": 50,
+      "skipped": 22,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 300.71,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard7.stdout"
+    },
+    {
+      "id": "shard8",
+      "exit_code": 1,
+      "passed": 2326,
+      "failed": 56,
+      "skipped": 1,
+      "errors": 0,
+      "collected": 2383,
+      "duration_s": 434.51,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard8.stdout"
+    },
+    {
+      "id": "shard9",
+      "exit_code": 1,
+      "passed": 2222,
+      "failed": 150,
+      "skipped": 6,
+      "errors": 5,
+      "collected": 2383,
+      "duration_s": 734.27,
+      "stdout_path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard9.stdout"
+    }
+  ],
+  "expected_exits_from_manifest": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1
+  ],
+  "unexpected_failures": [
+    {
+      "shard": "shard2",
+      "node_id": "tests/arnold_pipelines/megaplan/test_maintenance_contracts.py::test_m4_handoff_view_reports_frozen_digests_without_guessing"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_cloud_chain_command.py::test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_cloud_chain_command.py::test_cloud_preflight_expands_vendor_depth_like_init"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_create_worktree_pushed_manifest"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_create_deviations_empty_and_pointer_compatibility_only"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_pointer_compatibility_only_survives_promote_and_close"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_create_stamps_allow_manifestless_permit_into_deviations"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_create_fails_loudly_on_expired_permit"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_create_fails_loudly_on_invalid_permit_duration"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_phase1_fails_on_dirty_tree"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_phase1_fails_on_open_lock_file"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_closes_clean_pushed_epic"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_refuses_unresolved_reconcile_branch_on_origin"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_refuses_open_pull_ref_on_fixer_branch"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_proceeds_once_reconcile_resolved"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_phase1_fails_on_live_pidfile"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_ignores_dead_pidfile"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_fails_loud_when_backstop_tag_push_fails"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_refuses_present_but_corrupt_manifest"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dry_run_then_restore_proven_removes"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_flag_alone_is_not_restore_evidence"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_text_marker_is_not_restore_evidence"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_torn_receipt_is_not_restore_evidence"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_receipt_bound_to_other_epic_is_not_restore_evidence"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_stale_closed_head_receipt_is_not_restore_evidence"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_never_removes_active_manifest_tree"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_manifest_needs_reconcile_never_deletes"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_schema_invalid_manifest_needs_reconcile_never_deletes"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_manifest_symlink_needs_reconcile"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_generation_store_blocks_deletion_with_exit5"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_manifest_without_generation_proof_needs_reconcile_never_deletes"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_skips_schedule_store_referenced_closed_tree"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_other_manifest_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_chain_engine_root_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_marker_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_schedule_job_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_repair_queue_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_lease_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_venv_referenced_by_lease_history_keeps_venv"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_lease_history_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_plan_lease_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_managed_run_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_managed_run_without_runtime_source_is_not_reference"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_status_snapshot_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_ops_schedule_input_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_plan_lease_store_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_reference_needs_reconcile"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_skip_emits_swept_no_marker"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_skip_emits_swept_no_marker"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_clear_sweep_emits_swept_yes"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_reference_store_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_nested_owner_claim_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_workspace_chain_state_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_referenced_by_per_project_chain_state_skips_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_per_project_chain_reference_needs_reconcile"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_present_but_inaccessible_store_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_store_symlink_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_dangling_plan_lease_root_symlink_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_genuinely_missing_store_is_not_reference"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_corrupt_nested_owner_json_blocks_deletion"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_deletes_fixer_branch_after_restore_proof"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_gc_sweep_refuses_fixer_branch_deletion_when_pr_still_open"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_verifies_fixer_branch_pushed_before_backstop_tag"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_close_passes_when_worktree_on_other_branch_but_fixer_pushed"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_fails_when_epic_branch_unpushed"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_gate_blocks_without_marker_or_flag"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_refuses_present_but_corrupt_manifest"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_cas_push_journal_warning"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_cas_rejection_exits_3"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_without_canary_flag_keeps_pointer"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_promote_with_canary_flag_advances_pointer"
+    },
+    {
+      "shard": "shard2",
+      "node_id": "tests/cloud/test_runtime_lifecycle.py::test_runtime_manifest_cli_rejects_fake_sha_generation_advance"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteAllGreen::test_default_suite_all_pass"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteAllGreen::test_all_checks_passed_in_default_suite"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteAllGreen::test_with_pipelines_all_green"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteAllGreen::test_with_contracts_all_green"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteAllGreen::test_all_four_domains_populated_all_green"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold/conformance/test_conformance.py::TestRunConformanceSuiteSeededViolations::test_assert_suite_compliant_does_not_raise_on_green"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_is_separate_from_spec_binding"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_command_moves_engine_root_atomically"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_rollback_direction_moves_engine_root_back"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_refuses_missing_engine_root_before_any_mutation"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_refuses_engine_root_mismatch_before_any_mutation"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_refuses_unbound_chain_before_any_mutation"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_inherits_runtime_sha_cas_guards"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_accepts_exact_completed_terminal_cursor"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_cas_uses_verified_legacy_persisted_digest"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_rejects_normalized_alias_for_legacy_persisted_digest"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_rejects_unverified_persisted_runtime_extensions[digest]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_rejects_unverified_persisted_runtime_extensions[unknown_field]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[milestone_guard-@terminal milestone guard]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[plan_guard-@none plan guard]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[active_plan-current plan remains]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[last_state-canonical last_state 'done']"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[missing_completion-exact ordered milestone set]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[out_of_order_completion-exact ordered milestone set]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[non_done_completion-exact ordered milestone set]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[past_terminal-outside the bound sequence]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_runtime_cutover_terminal_path_fails_closed[active_cursor_terminal_token-current milestone does not match]"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_b_cli_rolls_back_to_independently_receipted_a_runtime"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_b_cli_runtime_cutover_moves_engine_root_to_receipted_a"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_execution_binding.py::test_cli_runtime_cutover_refuses_engine_root_drift_without_writing"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_m6_ci_acceptance.py::TestFullPipelineIntegration::test_committed_proof_index_head_matches_git_order_independent"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/arnold_pipelines/megaplan/test_m6_ci_acceptance.py::TestFullPipelineIntegration::test_committed_prerequisite_head_matches_git_order_independent"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_admits_valid_unchanged_graph"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_rejects_write_set_mutation_as_cli_error"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_rejects_added_task_as_cli_error"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_rejects_estimated_minutes_change_as_cli_error"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_full_pipeline_admits_simple_graph_and_computes_batches"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_full_pipeline_with_high_complexity_splits_correctly"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_full_pipeline_rejects_mutated_graph_before_batch_computation"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_assert_admitted_raises_on_hash_mismatch"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_threads_seed_epoch_when_state_attests_and_graph_matches"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_threads_config_phase_timeout_into_admission"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/execute/test_m8a_execute_wiring.py::test_guard_preserves_backward_compat_without_seed_epoch_in_state"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_legacy_migration_survives_clearance_rewrite_and_finalize_validation"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_clearance_binds_exact_final_graph_and_execute_rejects_missing_or_mutated_custody"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_finalizer_partial_or_unknown_finding_mapping_fails_closed"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_finalize_custody_denies_canonical_authority_for_bridge_receipt"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_all_false_clearance_chain_grants_canonical_authority"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_tampered_canonical_authority_for_bridge_receipt"
+    },
+    {
+      "shard": "shard3",
+      "node_id": "tests/orchestration/test_critique_custody.py::test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_wide_independent_graph_remains_wide_and_is_admitted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_semantic_dependency_kinds_are_admitted[consumes_output]"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_semantic_dependency_kinds_are_admitted[write_conflict]"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_semantic_dependency_kinds_are_admitted[human_prerequisite]"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_routing_group_is_non_authoritative_metadata_only"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_task_budgets_fail_closed[<lambda>-task_test_time_budget_exceeded]"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_overlapping_writes_require_order_or_shared_routing_group"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_execute_recheck_rejects_post_finalize_contract_mutation"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_seriality_below_threshold_with_diamond_is_admitted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_content_hash_is_deterministic_across_recompilations"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_complexity_7_with_valid_checkpoint_is_admitted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_complexity_8_with_valid_checkpoint_is_admitted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_complexity_9_with_valid_checkpoint_is_admitted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_m8a_complexity_7_8_9_fixture_split_or_fail_cases"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_post_finalize_write_set_mutation_prevents_dispatch"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_post_finalize_added_task_prevents_dispatch"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_post_finalize_dependency_chain_mutation_prevents_dispatch"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_post_finalize_complexity_change_prevents_dispatch"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_assert_admitted_matched_epoch_is_accepted"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/arnold_pipelines/megaplan/test_task_feasibility.py::test_assert_admitted_unset_epoch_is_backward_compatible"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/cloud/test_wrapper_authority_bypass_gating.py::test_authority_risk_bypass_audit_entries_are_typed_or_fail_closed"
+    },
+    {
+      "shard": "shard4",
+      "node_id": "tests/cloud/test_wrapper_authority_bypass_gating.py::test_non_authoritative_cleanup_best_effort_remains_allowed"
+    },
+    {
+      "shard": "shard5",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_target_rebind.py::test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts"
+    },
+    {
+      "shard": "shard5",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_target_rebind.py::test_target_rollback_can_escape_pre_seed_binding_drift"
+    },
+    {
+      "shard": "shard5",
+      "node_id": "tests/arnold_pipelines/megaplan/test_profile_policy.py::test_profile_expansion_without_cli_keeps_profile_execute_tier_models"
+    },
+    {
+      "shard": "shard5",
+      "node_id": "tests/arnold_pipelines/megaplan/test_profile_policy.py::test_profile_expansion_execute_tiers_survive_profile_fallback_pin"
+    },
+    {
+      "shard": "shard5",
+      "node_id": "tests/m10/test_c01_c20_conformance.py::TestStep23BC05C09AuthorityCustody::test_c06_c09_action_gate_bound"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_happy_path_and_idempotent_retry"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-chain-state-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-plan-state-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-latest-failure-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-resume-cursor-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-pause-authority-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-runtime-manifest-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-marker-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_one_bit_cas_flip_zero_mutation[--expected-runtime-roots-sha256]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_non_operator"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_missing_pause"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_non_null_existing_identity"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_ambiguous_failure"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_refuses_unequal_roots"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_crash_after_record_and_after_request_converge"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_occurrence_adopt.py::test_cli_adopt_two_concurrent_adopters_one_record"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py::test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/cloud/test_repair_custody.py::test_live_execute_worker_is_not_a_finalized_state_contradiction"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/cloud/test_runtime_attestation.py::test_real_editable_launch_and_noneditable_supervisor_vectors"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/cloud/test_runtime_attestation.py::test_ensure_runtime_launch_seed_refuses_drifted_head"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/cloud/test_runtime_attestation.py::test_attestation_disable_without_seed_does_not_authorize_production_launch"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/cloud/test_runtime_cutover.py::test_chain_runtime_cutover_composes_with_marker_runtime_update"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/resident/test_subagent_followup.py::test_non_codex_continuation_worker_resumes_exact_session[hermes-zhipu:glm-5.2-resident_0123456789abcdef0123456789abcdef---resume-session]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/resident/test_subagent_followup.py::test_non_codex_continuation_worker_resumes_exact_session[claude-opus-019f5d2e-d5da-75f3-a617-4712a1c57cc5---resume]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/resident/test_subagent_followup.py::test_continuation_worker_resumes_exact_parent_session_and_records_acceptance"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_release_evidence_record_is_structurally_valid"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_release_evidence_cannot_claim_done_with_pending_gates"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_candidate_ready_allows_only_post_deploy_residuals_pending"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_candidate_ready_rejects_a_pending_pre_deploy_residual"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_candidate_ready_requires_bound_acceptance_evidence"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_candidate_ready_requires_complete_source_universe"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_complete_release_requires_one_immutable_acceptance_binding"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_partial_and_overlapping_shard_sets"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[failed]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[errors]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[skipped]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[xfailed]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[xpassed]"
+    },
+    {
+      "shard": "shard6",
+      "node_id": "tests/test_post_m11_release_evidence.py::test_final_no_debt_rejects_every_non_acceptance_outcome[mutations]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/agentbox/test_package_smoke.py::test_agentbox_wheel_includes_package_and_installed_entrypoint"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/agentbox/test_package_smoke.py::test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold/conformance/test_conformance_gates.py::test_current_tree_wires_conformance_suite_and_legacy_reference_gate"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold/conformance/test_conformance_gates.py::test_normative_initiative_artifacts_use_canonical_semantic_subdirectories"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold_pipelines/megaplan/test_engine_fix_ports.py::test_execute_repairs_missing_user_action_gate_for_stale_finalize"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold_pipelines/megaplan/test_engine_fix_ports.py::test_structured_plan_payload_normalizes_to_canonical_schema"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold_pipelines/megaplan/test_review_circuit.py::TestReviewQualityBlockFailure::test_quality_block_failure_has_structured_signature"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py::test_scatter_worker_unit_passes_subprocess_wbc_dispatch"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_repair_goal.py::test_watchdog_continues_to_successor_after_stale_goal_closes"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_repair_goal.py::test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_repair_goal.py::test_watchdog_preserves_goal_control_action_through_dispatch_decision"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_shell_supervisors_pin_validated_absolute_interpreter"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_runtime_library_ignores_mutating_path_python"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_runtime_library_forces_safe_path_against_shadow_cwd"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_runtime_library_pins_selected_source_for_downstream_python"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_repair_trigger_and_systemd_use_absolute_supervisor_python"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_supervisor_queue_binds_current_plan_not_chain_spec"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_supervisor_wrappers_do_not_launch_python_before_runtime_init"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/cloud/test_supervisor_runtime_isolation.py::test_timeout_bypasses_use_absolute_safe_supervisor_interpreter"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m10/test_git_mutation_inventory.py::TestCompletenessAndFreshness::test_no_unlisted_sink"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m10/test_git_mutation_inventory.py::TestScannerConsistency::test_scanned_count_matches_inventory"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_run_persists_exact_self_hashed_custody_and_terminal_receipts"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_xfail_is_counted_as_debt_not_silently_passed"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_skip_reason_rendering_is_counted_without_losing_exact_inventory"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_xpass_is_counted_as_debt_without_losing_exact_inventory"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/m11/test_validation_shard_runner.py::test_inherited_test_provenance_preserves_frozen_nodeid"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_replay_oracle_captures_legacy_action_without_requiring_routed_parity"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_default_force_proceed_captures_canonical_custody_and_artifact"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[add-note-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[abort-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-robustness-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-profile-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-model-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-vendor-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_force_proceed_from_blocked_agent_availability_matches_legacy"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_force_proceed_strict_notes_guard_matches_legacy"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_prereq_retry_budget_matches_legacy"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_quality_matches_legacy"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_unknown_phase_preserves_legacy_error"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_resume_clarify_prep_only_matches_legacy"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_replan_matches_legacy_structural_rewrite"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-profile-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-model-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-vendor-<lambda>]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/test_managed_agent.py::test_nested_hermes_launch_reenters_shared_manager[False]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/test_managed_agent.py::test_nested_hermes_launch_reenters_shared_manager[True]"
+    },
+    {
+      "shard": "shard7",
+      "node_id": "tests/test_managed_agent.py::test_real_dispatch_seams_use_shared_supervisor"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold/agent/test_codex_adapter.py::test_run_codex_step_normalizes_prompt_file_path_before_dispatch"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold/agent/test_codex_adapter.py::test_run_codex_step_execute_wires_progress_probe"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_merged_reconcile_closes_and_sweeps"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_rejected_reconcile_closes_and_sweeps"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_noop_reconcile_closes_and_sweeps"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_referenced_sweep_skip_fails_closed"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_dangling_sweep_skip_fails_closed"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_unknown_sweep_block_fails_closed"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_is_idempotent_across_close_then_sweep_crash"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_second_run_after_sweep_is_noop"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_recreates_lost_receipt_and_heals"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_repeated_crash_recovery_is_idempotent"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_dangling_manifest_symlink_fails_closed"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_refuses_non_terminal_record"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_refuses_awaiting_pr_merge"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_skips_without_session_manifest"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py::test_finalizer_noop_without_reconcile_milestone"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/test_legacy_deterministic_phase_admission.py::TestRecoverBlockedIntegration::test_recover_blocked_advances_exact_p1_state"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/test_m8a_replay_report.py::TestM8AReplayFixtures::test_all_fixtures_report_stable_diagnostics"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/test_provider_contract_failure_routing.py::test_recover_provider_contract_requires_commit_bound_receipt"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/arnold_pipelines/megaplan/test_provider_contract_failure_routing.py::test_deterministic_phase_repair_can_bind_explicit_engine_scope"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_editable_install_sync.py::test_chain_start_without_binding_never_refreshes_remote_git"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_incident_notification_ux.py::test_watchdog_source_has_no_provider_fallback"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_liveness_lease.py::test_lifecycle_terminalizes_on_cancellation"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_m1_containment_acceptance.py::test_master_plus_path_gate_and_real_l1_wrapper_fail_closed"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_launch_failure_is_truthful_without_a_manifest"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_valid_canonical_d9_manifest_is_correlated_and_deduped"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_dispatched_launch_waits_for_async_managed_start_receipt"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_dispatched_launch_rejects_trigger_manifest_run_id_mismatch"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_terminal_managed_run_is_reverified_before_any_retry"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_terminal_attempt_is_closed_when_new_evidence_changes_escalation_id"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_appends_l3_drift_evidence"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_rejects_noncanonical_trigger_argv"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_canonical_runner_test_seam_still_dispatches"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_enqueue_blocks_when_spec_is_unreadable"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_enqueue_blocks_when_transition_write_fails"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_enqueue_constructs_writer_and_emits_before_request"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_progress_auditor_controller.py::test_controller_enqueue_with_injected_seam_uses_provided_writer_and_digest"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_recovery_topology_surfaces.py::test_operator_docs_have_no_authoritative_legacy_commands"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_repair_request_hooks.py::TestLifecycleFailureEnqueue::test_lifecycle_and_supervisor_producers_converge_on_central_queue"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/cloud/test_repair_request_hooks.py::TestLifecycleFailureEnqueue::test_supervisor_preserves_execution_binding_drift_identity"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/regression/test_budget_suspension_regressions.py::test_render_step_message_overflow_is_advisory_not_blocking"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/test_outbound_coverage_catalog.py::TestOutboundCoverageCatalog::test_all_validate_payload_against_schema_sites_covered"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/test_outbound_coverage_catalog.py::TestOutboundCoverageCatalog::test_all_audit_step_payload_sites_covered"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/test_outbound_coverage_catalog.py::TestOutboundCoverageCatalog::test_all_capture_step_output_sites_covered"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/test_outbound_coverage_catalog.py::TestOutboundCoverageCatalog::test_all_validate_payload_against_schema_sites_bind_to_chokepoint_or_residual"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/m8/test_wbc_acceptance_suites.py::test_repair_acceptance_suite_quarantines_identity_gaps"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_codex_cli_runner.py::test_codex_cli_runner_exhausts_recovery_and_kills_process_group"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_provider_aware_launch.py::test_managed_worker_dispatches_non_codex_provider_and_captures_result[hermes-zhipu:glm-5.2-launch_hermes_agent.py-0-None]"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_provider_aware_launch.py::test_managed_worker_dispatches_non_codex_provider_and_captures_result[claude-opus-launch_claude_agent.py-0---permission-mode]"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_provider_aware_launch.py::test_managed_worker_dispatches_non_codex_provider_and_captures_result[claude-opus-launch_claude_agent.py-1000---dangerously-skip-permissions]"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_provider_runtime.py::test_hermes_launcher_hydrates_persisted_history_on_resume"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_scheduler_manifest.py::test_superfixer_proactive_handler_plans_dispatch_and_stays_pending"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_scheduler_manifest.py::test_superfixer_proactive_handler_fails_on_pin_mismatch"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/resident/test_scheduler_manifest.py::test_superfixer_proactive_handler_fails_closed_on_invalid_manifest"
+    },
+    {
+      "shard": "shard8",
+      "node_id": "tests/test_state_reader_audit.py::test_m2_authority_reader_grep_audit_classifies_all_raw_authority_patterns"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold/conformance/test_behavioral_suite.py::test_suite_runs_routing_checks_for_supplied_pipeline"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold/conformance/test_behavioral_suite.py::test_suite_runs_join_checks_for_supplied_hooks"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold/pipeline/test_public_contract_imports.py::test_graph_era_symbols_absent_from_root_all"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_canary_rehearsal.py::test_canary_rehearsal_full_sequence_with_rollback_injection"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/chain/test_canary_rehearsal.py::test_canary_rehearsal_identityless_adoption_sequence"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_prepare_is_provider_free_and_deterministic"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_commit_replay_is_idempotent_and_has_one_child"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_tampered_prepared_selector_is_rejected"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_existing_child_with_divergent_owner_identity_is_conflict"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_crash_after_parent_and_child_steps_recovers_without_provider"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_occurrence_child_migration.py::test_stale_owner_cursor_fails_closed_before_parent_mutation"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/migration/test_owner_adapters.py::test_prepare_rejects_r5_projection_without_authority_records"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_baseline_capture_guard.py::test_git_tree_guard_refuses_dirty_repo_root"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_cloud_quickstart_generates_canonical_initiative_from_one_brief"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_cloud_quickstart_stdout_is_single_json_payload"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_cloud_quickstart_can_infer_extra_repo_workspace_from_role"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_cloud_quickstart_extra_repo_supports_branch_and_workspace_override"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_cloud_quickstart_extra_repo_keeps_legacy_url_workspace_form"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_multi_sprint_cloud_preflight_blocks_thin_north_star"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_cloud_quickstart.py::test_multi_sprint_cloud_preflight_accepts_filled_north_star"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_custody_control_plane_unattended_policy.py::test_m5a_acceptance_gate_preserves_systemic_repair_goal_custody"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py::test_import_runtime_treats_megaplan_agent_missing_as_legacy_fallback"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_launch_hermes_agent.py::test_model_shortcut_normalizes_chain_hermes_provider_prefix"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_partnered_5_glm_profile.py::test_partnered_5_glm_preserves_phase_shape_with_finalize_as_only_gpt_route"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_partnered_5_glm_profile.py::test_partnered_5_glm_preserves_non_gpt_phase_and_critique_routes"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_phase_handoff_custody.py::test_execute_success_atomically_arms_recoverable_review_handoff"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_phase_handoff_custody.py::test_authoritative_execute_complete_transition_still_arms_recovery"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/arnold_pipelines/megaplan/test_wheel_smoke.py::TestWheelSmoke::test_skill_links_are_repository_relative_and_resolve"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/characterization/test_cli_parser_snapshot.py::TestCliParserSnapshot::test_snapshot_matches_fixture"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_cloud_status_supervisor_authority.py::test_supervisor_never_restarts_when_canonical_liveness_is_unknown"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_engine_runtime_repair_admission.py::test_horizon_a_admission_is_bound_to_exact_occurrence"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_manual_repair_trigger.py::test_manual_trigger_uses_simple_fixer_delegation"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_manual_repair_trigger.py::test_manual_trigger_rejects_legacy_trigger_bin"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_manual_repair_trigger.py::test_manual_trigger_rejects_changed_evidence_before_queue_mutation"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_manual_repair_trigger.py::test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_manual_repair_trigger.py::test_manual_trigger_rejects_terminal_history_from_a_different_phase"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_post_fixer_recovery_gate.py::test_false_success_without_live_canonical_runner_escalates_with_transcript_refs"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_post_fixer_recovery_gate.py::test_bounded_followup_without_continued_progress_fails_closed"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_recovery_decision_systemic.py::test_exhausted_deterministic_quality_dispatches_one_bounded_repair_without_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_recovery_decision_systemic.py::test_status_watchdog_and_custody_share_cursor_counts_and_unclaimed_retry"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_recovery_decision_systemic.py::test_stale_marker_cannot_override_newer_authoritative_recovery_evidence"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_pr_reconciliation.py::test_watchdog_pr_reconciliation_fetches_missing_merge_and_relaunches_auto_chain"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_pr_reconciliation.py::test_watchdog_pr_reconciliation_open_pr_queues_repair_evidence_without_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_pr_reconciliation.py::test_watchdog_pr_reconciliation_preserves_existing_repair_evidence_when_still_waiting"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_kimi_operator_running_falls_back_to_pgid_pidfile_and_clear_removes_it"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[stale-\\nsession_health_status() { echo stale; }\\nplan_phase_health_status() { echo ok; }\\nplan_progress_stall_status() { echo ok; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=ok\\n  CHAIN_HEALTH_SUMMARY=\\n  CHAIN_HEALTH_ARTIFACT_PATH=\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\nrepair_unhealthy_session() { return 0; }\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\nmechanical_relaunch_attempted_previously() { return 1; }\\nkimi_dispatch_failed_previously() { return 1; }\\nkimi_dispatch_marker_set() { :; }\\nkimi_dispatch_marker_clear() { :; }\\n-stale]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[stopped-\\nsession_health_status() { echo stopped; }\\nplan_phase_health_status() { echo ok; }\\nplan_progress_stall_status() { echo ok; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=ok\\n  CHAIN_HEALTH_SUMMARY=\\n  CHAIN_HEALTH_ARTIFACT_PATH=\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\nmechanical_relaunch_attempted_previously() { return 0; }\\nkimi_dispatch_failed_previously() { return 1; }\\nkimi_dispatch_marker_set() { :; }\\nkimi_dispatch_marker_clear() { :; }\\n-stopped]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[unhealthy-\\nsession_health_status() { echo alive; }\\nplan_phase_health_status() { echo unhealthy_plan; }\\nplan_progress_stall_status() { echo ok; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=ok\\n  CHAIN_HEALTH_SUMMARY=\\n  CHAIN_HEALTH_ARTIFACT_PATH=\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\n-unhealthy]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[progress_stall-\\nsession_health_status() { echo alive; }\\nplan_phase_health_status() { echo ok; }\\nplan_progress_stall_status() { echo progress_stall:demo-plan iteration=9; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=ok\\n  CHAIN_HEALTH_SUMMARY=\\n  CHAIN_HEALTH_ARTIFACT_PATH=\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\nrepair_unintended_stop() { return 0; }\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\n-progress_stall]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[chain_health_failure-\\nsession_health_status() { echo dead; }\\nplan_phase_health_status() { echo ok; }\\nplan_progress_stall_status() { echo ok; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=chain_large_file_push_rejection\\n  CHAIN_HEALTH_SUMMARY=chain cycle detected\\n  CHAIN_HEALTH_ARTIFACT_PATH=/tmp/chain-health.json\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\n-chain_health_failure]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_emits_incident_detection_outcomes[state_mismatch-\\nsession_health_status() { echo stopped; }\\nplan_phase_health_status() { echo ok; }\\nplan_progress_stall_status() { echo ok; }\\nchain_health_status() {\\n  CHAIN_HEALTH_STATUS=ok\\n  CHAIN_HEALTH_SUMMARY=\\n  CHAIN_HEALTH_ARTIFACT_PATH=\\n  CHAIN_HEALTH_LOG_MESSAGE=\\n}\\nplan_attention_status_env() {\\n  cat <<'EOF'\\nPLAN_STATUS_STATE_MISMATCH=1\\nPLAN_STATUS_STATE_MISMATCH_SUMMARY='plan/chain mismatch detected'\\nEOF\\n}\\ndispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }\\n-state_mismatch]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_auto_policy_merged_pr_fetches_origin_but_unknown_liveness_fences_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_auto_policy_open_pr_queues_evidence_and_preserves_wait"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_relaunch_materializers_are_non_authoritative"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_relaunch_commands_bind_only_accepted_root_on_pythonpath[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_relaunch_launch_ignores_poisoned_shared_root_pythonpath[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_plan_markers_relaunch_with_auto_not_chain_start"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_nonstale_marker_relaunch_command_is_preserved"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_chain_resume_authority_outranks_marker_command_and_discovers_plan[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_push_capable_marker_command_is_always_regenerated[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_install_capable_marker_command_is_always_regenerated[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_invocation_marker_is_regenerated[/workspace/arnold/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_invocation_marker_is_regenerated[env ARNOLD_SRC=/workspace/arnold /workspace/arnold/bin/python -P -m arnold_pipelines.megaplan chain start-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_per_epic_invocation_marker_is_preserved[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[MEGAPLAN_RUNTIME_SRC=${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold} python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[cd ${MEGAPLAN_RUNTIME_SRC:=/workspace/arnold} && python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_shared_root_param_expansion_marker_is_regenerated[${MEGAPLAN_RUNTIME_SRC:+/workspace/arnold}/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_per_epic_param_expansion_marker_is_preserved[watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[PYTHONPATH=/workspace/runtime-candidates/arnold-old:${PYTHONPATH:-} python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[cd /workspace/runtime-candidates/arnold-old && python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_foreign_per_epic_marker_command_is_regenerated[/workspace/runtime-candidates/arnold-old/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[cd {root} && python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[PYTHONPATH={root}:${{PYTHONPATH:-}} python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_persisted_accepted_root_marker_command_is_preserved[{root}/bin/python -P -m arnold_pipelines.megaplan chain start --spec chain.yaml-watchdog]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_done_plan_reports_complete_without_repair_or_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_done_plan_without_marker_plan_name_uses_newest_plan_dir"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_manual_review_plan_state_reports_needs_human_not_complete"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_legacy_stalled_manual_review_dispatches_repair_before_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_awaiting_human_plan_state_routes_to_notification_not_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_awaiting_human_verify_prep_routes_to_notification_not_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_direct_relaunch_emits_fallback_events_before_launch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_direct_relaunch_ledger_failure_blocks_marker_and_launch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_launch_tick_missing_manifest_pin_fails_closed_before_install_and_tmux"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_manual_review_superfixer_resolves_renderer_from_live_engine"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_unreadable_plan_state_falls_through_to_existing_stopped_path"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch_or_kimi"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_execution_blocked_manual_review_dispatches_l1_without_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_human"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_awaiting_human_verify_chain_state_routes_to_notification_before_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_completed_chain_state_reports_complete_without_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_partial_done_chain_state_relaunches_next_milestone"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_missing_workspace_uses_completed_repair_history_without_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_env_gone_clears_artifacts_after_strikes_threshold"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_env_gone_below_threshold_does_not_clear"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_env_gone_with_completed_history_still_treated_as_complete"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_env_gone_recovers_when_workspace_returns"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_state"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_scan_once_completes_when_chain_state_is_unreadable"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_resolves_relative_chain_specs_against_workspace"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_clears_stale_parent_sidecar_when_child_session_alive"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_launch_chain_tick_superfixer_skips_kimi_fallthrough"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_chain_health_short_circuits_plan_repair_dispatch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_alive_by_process_prevents_relaunch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_marker_only_live_worker_session_prevents_duplicate_repair"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_observes_unowned_preserve_live_goal_without_dispatch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_suppresses_unowned_goal_redispatch_for_authoritative_live_worker"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_suppresses_unowned_goal_while_runner_finishes_backstop"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_unknown_canonical_liveness_fences_all_dispatch"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_meta_repair_marker_and_pgid_helpers"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_phase_contract_path_dispatches_single_flash_babysitter"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/cloud/test_watchdog_wrappers.py::test_watchdog_phase_contract_babysitter_launch_failure_fails_closed"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/editorial_run_lifecycle.py::test_resume_plan_reenters_cursor_and_clears_failure_after_success"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/handlers/test_session_cache_noop.py::test_revise_noop_detector_raises_cache_hit_suspected"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/handlers/test_session_cache_noop.py::test_revise_cost_sanity_guard_aborts"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/m8/test_conformance_guard.py::TestM8ConformanceGuard::test_run_conformance_suite_all_passes_on_default"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/m8/test_conformance_guard.py::TestM8ConformanceGuard::test_assert_suite_compliant_on_green_suite"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/m9/test_bypass_gating.py::test_audited_authority_risk_bypasses_emit_typed_gap_or_fail_closed"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/m9/test_bypass_gating.py::test_drift_related_bypass_sites_keep_drift_visible_as_typed_evidence"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/prompts/test_finalize_task_feasibility_prompt.py::test_finalize_prompt_forbids_routing_only_dependencies_and_model_full_suite"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/resume/test_pre_m6_alias.py::test_resume_plan_with_pre_m6_planning_cursor_runs"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/resume/test_pre_m6_alias.py::test_resume_plan_accepts_matching_pipeline_manifest_hash"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/test_briefs_cli.py::test_brief_epic_scaffolds_chain_and_milestones"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/test_fix_the_fixer_skill.py::test_render_goal_binds_target_and_single_agent_contract"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/test_fix_the_fixer_skill.py::test_render_goal_preserves_target_orientation_exactly"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/test_launch_hermes_agent.py::test_import_runtime_falls_through_incomplete_megaplan_namespace"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/test_no_bare_subprocess.py::test_no_bare_subprocess_outside_runtime"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/tools/test_wbc_constants_coherence.py::test_ancestry_anchor_is_ancestor_of_head"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/tools/test_wbc_file_hash_rebind.py::test_rebound_commit_is_ancestor_of_head"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_revise_iterations_write_distinct_hashes_and_sessions"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[plan]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[prep]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[critique]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[gate]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[revise]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[finalize]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_forces_fresh_for_non_execute_phases[review]"
+    },
+    {
+      "shard": "shard9",
+      "node_id": "tests/workers/test_session_cache_regression.py::test_dispatch_preserves_execute_persistence"
+    }
+  ],
+  "verdict": "drift"
+}
