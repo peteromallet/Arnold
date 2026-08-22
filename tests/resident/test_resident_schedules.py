@@ -370,7 +370,7 @@ def test_standalone_dm_schedule_carries_destination_without_reply_custody(
     }
 
 
-def test_managed_schedule_infers_hermes_provider_from_model_spec(
+def test_managed_schedule_infers_omp_provider_from_model_spec(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = ScheduleService(tmp_path, project_root=tmp_path)
@@ -382,13 +382,13 @@ def test_managed_schedule_infers_hermes_provider_from_model_spec(
     row = row.model_copy(
         update={
             "target": row.target.model_copy(
-                update={"model": "hermes:glm-5.2", "task_kind": "autonomous"}
+                update={"model": "omp:zai/glm-5.2", "task_kind": "autonomous"}
             )
         }
     )
-    service.create(row, idempotency_key="hermes-route")
+    service.create(row, idempotency_key="omp-route")
     captured: dict = {}
-    manifest = tmp_path / "hermes-managed-manifest.json"
+    manifest = tmp_path / "omp-managed-manifest.json"
 
     def fake_launch(**kwargs):
         captured.update(kwargs)
@@ -397,7 +397,7 @@ def test_managed_schedule_infers_hermes_provider_from_model_spec(
             encoding="utf-8",
         )
         return SimpleNamespace(
-            run_id="subagent-hermes-test",
+            run_id="subagent-omp-test",
             manifest_path=str(manifest),
             status="launching",
         )
@@ -406,12 +406,12 @@ def test_managed_schedule_infers_hermes_provider_from_model_spec(
         "arnold_pipelines.megaplan.resident.subagent.launch_managed_subagent_detached",
         fake_launch,
     )
-    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="hermes-launcher"))
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="omp-launcher"))
 
     assert receipt.launched == 1
-    assert captured["backend"] == "hermes"
-    assert captured["model"] == "zhipu:glm-5.2"
-    assert captured["model_spec"] == "hermes:zhipu:glm-5.2"
+    assert captured["backend"] == "omp"
+    assert captured["model"] == "zai/glm-5.2"
+    assert captured["model_spec"] == "omp:zai/glm-5.2"
     assert captured["schedule_context"]["schedule_id"] == row.schedule_id
 
 

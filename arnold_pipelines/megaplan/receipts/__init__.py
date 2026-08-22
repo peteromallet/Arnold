@@ -43,9 +43,6 @@ def _configured_model_for_phase(phase: str, args: Any, agent: str, worker: Any) 
     configured_chain = _configured_chain_for_phase(phase, args)
     if configured_chain:
         return configured_chain[0]
-    hermes_model = getattr(args, "hermes", None)
-    if agent == "hermes" and isinstance(hermes_model, str) and hermes_model:
-        return hermes_model
     explicit_agent = getattr(args, "agent", None)
     if isinstance(explicit_agent, str) and explicit_agent:
         return explicit_agent

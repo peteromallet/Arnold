@@ -74,7 +74,7 @@ def test_auto_judge_uses_canonical_agent_and_model_identities(
     phase_maps = {
         "claude-profile": {"plan": "claude", "execute": "claude"},
         "codex-profile": {"plan": "codex", "execute": "codex"},
-        "gpt5-profile": {"plan": "hermes:openai/gpt-5", "execute": "hermes:openai/gpt-5"},
+        "gpt5-profile": {"plan": "omp:openai/gpt-5", "execute": "omp:openai/gpt-5"},
     }
 
     import arnold_pipelines.megaplan.bakeoff.judge as judge_module

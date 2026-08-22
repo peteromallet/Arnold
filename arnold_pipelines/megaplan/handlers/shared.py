@@ -19,7 +19,7 @@ from arnold_pipelines.megaplan.fallback_chains import (
 )
 from arnold_pipelines.megaplan.observability.routing_ledger import format_selected_spec
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
-from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt
 from arnold_pipelines.megaplan.receipts import build_receipt
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt, write_receipt
 from arnold_pipelines.megaplan.execute.step_edit import next_plan_artifact_name

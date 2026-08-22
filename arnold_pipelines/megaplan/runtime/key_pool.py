@@ -1,4 +1,4 @@
-"""Dynamic API key pooling for Hermes-backed providers.
+"""Dynamic API key pooling for provider-backed models.
 
 KeyPool is re-exported from the canonical SSoT at arnold.agent.providers.pool.
 This module retains the megaplan-specific wrappers, blocking guards, and the
@@ -105,7 +105,7 @@ def has_keys(provider: str) -> bool:
 def _raise_claude_via_openrouter_blocked(reason: str) -> None:
     """Refuse to silently route Claude through OpenRouter.
 
-    The harness historically defaulted bare hermes calls (model=None, or a
+    The harness historically defaulted bare model calls (model=None, or a
     non-prefixed ``anthropic/claude-*`` slash form) to OpenRouter's
     ``anthropic/claude-opus-4.6`` endpoint. That route consumes OPENROUTER_API_KEY
     quotas instead of the operator's Claude Code (shannon) subscription, and the
@@ -134,12 +134,12 @@ def _raise_claude_via_openrouter_blocked(reason: str) -> None:
             "  --phase-model <phase>=claude:claude-opus-4-7:medium\n"
             "If you actually want OpenRouter for some reason, set the model "
             "explicitly with a provider prefix, e.g. "
-            "--hermes openrouter:anthropic/claude-opus-4.6"
+            "--phase-model <phase>=omp:openrouter/anthropic/claude-opus-4.6"
         ),
         valid_next=[
             "rerun with --agent shannon",
             "rerun with --phase-model <phase>=claude:claude-opus-4-7:medium",
-            "rerun with --hermes openrouter:anthropic/claude-opus-4.6 (explicit)",
+            "rerun with --phase-model <phase>=omp:openrouter/anthropic/claude-opus-4.6 (explicit)",
         ],
     )
 
@@ -154,7 +154,7 @@ def _is_claude_model_name(name: str) -> bool:
 
 
 # ChatGPT-subscription Codex backend.  The same OAuth bundle the `codex` CLI
-# uses (imported from ~/.codex/auth.json into ~/.hermes/auth.json) is the only
+# uses (imported from ~/.codex/auth.json) is the only
 # credential — no OPENAI_API_KEY required.
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -215,15 +215,15 @@ def _raise_codex_via_openrouter_blocked(reason: str) -> None:
             "Codex models (gpt-5.5, gpt-5.4, etc.) will not be silently billed "
             "to your OpenRouter key. Pick an explicit path:\n"
             "  --agent codex                    (use the codex vendor path)\n"
-            "  --hermes codex:gpt-5.6-sol:high  (ChatGPT subscription, no API key)\n"
-            "  --hermes openrouter:gpt-5.5      (explicit OpenRouter opt-in)\n"
+            "  --phase-model <phase>=omp:openai-codex/gpt-5.6-sol  (ChatGPT subscription, no API key)\n"
+            "  --phase-model <phase>=omp:openrouter/gpt-5.5  (explicit OpenRouter opt-in)\n"
             "If you actually want OpenRouter, set the model explicitly with "
             "an ``openrouter:`` prefix."
         ),
         valid_next=[
             "rerun with --agent codex",
-            "rerun with --hermes codex:gpt-5.6-sol:high (subscription token)",
-            "rerun with --hermes openrouter:gpt-5.5 (explicit)",
+            "rerun with --phase-model <phase>=omp:openai-codex/gpt-5.6-sol (subscription token)",
+            "rerun with --phase-model <phase>=omp:openrouter/gpt-5.5 (explicit)",
         ],
     )
 
@@ -246,14 +246,14 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
             "To use OpenRouter, prefix the model with ``openrouter:``. "
             "To use a native provider, use the appropriate prefix "
             "(``deepseek:``, ``fireworks:``, ``google:``, ``kimi:``, "
-            "``zhipu:``, ``minimax:``, ``mimo:``, ``xai:``) or the ``hermes:`` agent."
+            "``zhipu:``, ``minimax:``, ``mimo:``, ``xai:``) or an ``omp:`` spec."
         ),
         valid_next=[
-            "rerun with --hermes openrouter:<model>",
-            "rerun with --hermes deepseek:<model>",
-            "rerun with --hermes kimi:<model>",
-            "rerun with --hermes mimo:<model>",
-            "rerun with --hermes xai:grok-4.6",
+            "rerun with --phase-model <phase>=omp:openrouter/<model>",
+            "rerun with --phase-model <phase>=omp:deepseek/<model>",
+            "rerun with --phase-model <phase>=omp:moonshot/<model>",
+            "rerun with --phase-model <phase>=omp:openrouter/xiaomi/<model>",
+            "rerun with --phase-model <phase>=omp:grok/grok-4.6",
             "rerun with --agent claude / --agent codex / --agent shannon",
         ],
     )
@@ -331,8 +331,8 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, Any]]:
         # GPT-5.x via the ChatGPT-subscription Codex backend
         # (chatgpt.com/backend-api/codex) using the Codex OAuth bundle — the
         # same subscription the `codex` CLI uses, no API key required.  The
-        # tokens live in the Hermes auth store (~/.hermes/auth.json) and are
-        # imported from ~/.codex/auth.json on first use, so the CLI's token is
+        # tokens live in the Codex auth store (~/.codex/auth.json) and are
+        # imported on first use, so the CLI's token is
         # honored without sharing the CLI's refresh session.
         resolved_model = resolved_model[len("codex:"):]
         effort = None
@@ -351,11 +351,10 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, Any]]:
                 message=(
                     "No Codex (ChatGPT subscription) credentials available for "
                     f"model {resolved_model!r}: {exc} "
-                    "Log in once with `codex login` (or `hermes login "
-                    "--provider openai-codex`) so the OAuth bundle can be "
+                    "Log in once with `codex login` so the OAuth bundle can be "
                     "imported."
                 ),
-                valid_next=["rerun after `codex login` / `hermes login`"],
+                valid_next=["rerun after `codex login`"],
             )
         api_key = str(creds.get("api_key") or "").strip()
         if not api_key:

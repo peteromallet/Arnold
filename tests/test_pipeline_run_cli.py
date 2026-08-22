@@ -1205,7 +1205,7 @@ def test_render_credential_failure_recommends_available_vendor_profile(
     monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
 
     missing = [
-        {"slot": "plan", "spec": "hermes:fireworks:deepseek-v4-pro",
+        {"slot": "plan", "spec": "omp:fireworks/deepseek-v4-pro",
          "agent": "hermes/fireworks", "env_var": "FIREWORKS_API_KEY"},
     ]
     msg = render_credential_failure(

@@ -27,9 +27,9 @@ from arnold_pipelines.megaplan.fallback_chains import (
 def test_normalize_scalar_and_list_values() -> None:
     assert normalize_fallback_spec_list("codex", path="phase.plan") == ("codex",)
     assert normalize_fallback_spec_value(
-        ["codex", "hermes:deepseek:deepseek-v4-pro"],
+        ["codex", "omp:deepseek/deepseek-v4-pro"],
         path="phase.execute",
-    ) == ["codex", "hermes:deepseek:deepseek-v4-pro"]
+    ) == ["codex", "omp:deepseek/deepseek-v4-pro"]
 
 
 @pytest.mark.parametrize(
@@ -55,13 +55,13 @@ def test_map_and_select_helpers_preserve_shape() -> None:
 
 
 def test_encoded_round_trip_helpers_are_compact_and_decode_back() -> None:
-    chain = FallbackSpecChain.from_value(["codex", "hermes:deepseek:deepseek-v4-pro"])
+    chain = FallbackSpecChain.from_value(["codex", "omp:deepseek/deepseek-v4-pro"])
     encoded = encode_fallback_specs(chain)
-    assert encoded == '__fallback_json__:["codex","hermes:deepseek:deepseek-v4-pro"]'
+    assert encoded == '__fallback_json__:["codex","omp:deepseek/deepseek-v4-pro"]'
     assert decode_fallback_specs(encoded) == chain.specs
 
     phase_entry = encode_phase_model_value("execute", chain)
-    assert phase_entry == 'execute=__fallback_json__:["codex","hermes:deepseek:deepseek-v4-pro"]'
+    assert phase_entry == 'execute=__fallback_json__:["codex","omp:deepseek/deepseek-v4-pro"]'
     phase, decoded_chain = decode_phase_model_value(phase_entry)
     assert phase == "execute"
     assert decoded_chain == chain
@@ -86,10 +86,10 @@ def test_malformed_encoded_values_fail_loudly(value: str, message: str) -> None:
     [
         ("codex:gpt-5.4", "codex"),
         ("claude:sonnet", "claude"),
-        ("hermes:deepseek:deepseek-v4-pro", "deepseek"),
-        ("hermes:fireworks:accounts/fireworks/models/kimi-k2p6", "fireworks"),
-        ("hermes:mimo:mimo-v2-pro", "mimo"),
-        ("hermes:openai:gpt-5", "openai"),
+        ("omp:deepseek/deepseek-v4-pro", "deepseek"),
+        ("omp:fireworks/kimi-k2.6", "fireworks"),
+        ("omp:mimo/mimo-v2-pro", "mimo"),
+        ("omp:openai/gpt-5", "openai"),
     ],
 )
 def test_provider_family_classification(spec: str, family: str) -> None:
@@ -340,11 +340,11 @@ def test_same_family_quota_stays_fail_closed() -> None:
 def test_execute_fallback_unsafe_carries_selected_attempt_metadata() -> None:
     error = ExecuteFallbackUnsafe(
         phase="execute",
-        configured_specs=["codex", "hermes:deepseek:deepseek-v4-pro"],
+        configured_specs=["codex", "omp:deepseek/deepseek-v4-pro"],
         attempted_index=1,
     )
     assert error.code == "execute_fallback_unsafe"
     assert error.phase == "execute"
-    assert error.selected_spec == "hermes:deepseek:deepseek-v4-pro"
+    assert error.selected_spec == "omp:deepseek/deepseek-v4-pro"
     assert error.attempted_index == 1
     assert error.attempted_total == 2

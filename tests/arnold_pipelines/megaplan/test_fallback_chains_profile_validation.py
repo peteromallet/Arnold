@@ -170,12 +170,12 @@ class TestTierModelsScalarPreserved:
         result = _validate_tier_models(
             _PROFILE_PATH, "test-profile",
             {
-                "execute": {1: "codex:gpt-5.4", 2: "hermes:deepseek:deepseek-v4-pro"},
+                "execute": {1: "codex:gpt-5.4", 2: "omp:deepseek/deepseek-v4-pro"},
                 "critique": {1: "claude:sonnet"},
             },
         )
         assert result == {
-            "execute": {1: "codex:gpt-5.4", 2: "hermes:deepseek:deepseek-v4-pro"},
+            "execute": {1: "codex:gpt-5.4", 2: "omp:deepseek/deepseek-v4-pro"},
             "critique": {1: "claude:sonnet"},
         }
 
@@ -227,12 +227,12 @@ class TestTierModelsTomlArrays:
             _PROFILE_PATH, "test-profile",
             {
                 "execute": {
-                    1: ["codex:gpt-5.4", "hermes:deepseek:deepseek-v4-pro"],
+                    1: ["codex:gpt-5.4", "omp:deepseek/deepseek-v4-pro"],
                     2: "claude:sonnet",
                 },
             },
         )
-        assert result["execute"][1] == ["codex:gpt-5.4", "hermes:deepseek:deepseek-v4-pro"]
+        assert result["execute"][1] == ["codex:gpt-5.4", "omp:deepseek/deepseek-v4-pro"]
         assert result["execute"][2] == "claude:sonnet"
 
     def test_empty_array_tier_spec_rejected(self) -> None:
@@ -276,9 +276,9 @@ class TestPrepModelsScalarPreserved:
     def test_scalar_prep_accepted(self) -> None:
         result = _validate_prep_models(
             _PROFILE_PATH, "test-profile",
-            {"triage": "hermes:deepseek:deepseek-v4-pro"},
+            {"triage": "omp:deepseek/deepseek-v4-pro"},
         )
-        assert result == {"triage": "hermes:deepseek:deepseek-v4-pro"}
+        assert result == {"triage": "omp:deepseek/deepseek-v4-pro"}
 
     def test_scalar_prep_with_claude_accepted(self) -> None:
         result = _validate_prep_models(
@@ -328,18 +328,18 @@ class TestPrepModelsTomlArrays:
     def test_array_prep_spec_accepted(self) -> None:
         result = _validate_prep_models(
             _PROFILE_PATH, "test-profile",
-            {"triage": ["hermes:deepseek:deepseek-v4-pro", "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"]},
+            {"triage": ["omp:deepseek/deepseek-v4-pro", "omp:fireworks/kimi-k2.6"]},
         )
         assert result == {
-            "triage": ["hermes:deepseek:deepseek-v4-pro", "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"],
+            "triage": ["omp:deepseek/deepseek-v4-pro", "omp:fireworks/kimi-k2.6"],
         }
 
     def test_array_with_claude_accepted(self) -> None:
         result = _validate_prep_models(
             _PROFILE_PATH, "test-profile",
-            {"triage": ["claude:sonnet", "hermes:deepseek:deepseek-v4-pro"]},
+            {"triage": ["claude:sonnet", "omp:deepseek/deepseek-v4-pro"]},
         )
-        assert result == {"triage": ["claude:sonnet", "hermes:deepseek:deepseek-v4-pro"]}
+        assert result == {"triage": ["claude:sonnet", "omp:deepseek/deepseek-v4-pro"]}
 
     def test_empty_array_prep_spec_rejected(self) -> None:
         with pytest.raises(CliError, match="must not be empty"):
@@ -389,12 +389,12 @@ class TestPrepModelsTomlArrays:
         result = _validate_prep_models(
             _PROFILE_PATH, "test-profile",
             {
-                "triage": ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"],
-                "fanout": "hermes:deepseek:deepseek-v4-pro",
+                "triage": ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"],
+                "fanout": "omp:deepseek/deepseek-v4-pro",
             },
         )
-        assert result["triage"] == ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]
-        assert result["fanout"] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["triage"] == ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]
+        assert result["fanout"] == "omp:deepseek/deepseek-v4-pro"
 
 
 # ---------------------------------------------------------------------------
@@ -406,19 +406,19 @@ class TestValidatePrepStageProvider:
 
     def test_returns_scalar_for_string_input(self) -> None:
         result = validate_prep_stage_provider(
-            "hermes:deepseek:deepseek-v4-pro",
+            "omp:deepseek/deepseek-v4-pro",
             stage="triage",
         )
         assert isinstance(result, str)
-        assert result == "hermes:deepseek:deepseek-v4-pro"
+        assert result == "omp:deepseek/deepseek-v4-pro"
 
     def test_returns_list_for_array_input(self) -> None:
         result = validate_prep_stage_provider(
-            ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"],
+            ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"],
             stage="triage",
         )
         assert isinstance(result, list)
-        assert result == ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]
+        assert result == ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]
 
     def test_rejects_empty_array(self) -> None:
         with pytest.raises(CliError, match="must not be empty"):
@@ -443,17 +443,17 @@ class TestValidatePrepStageProvider:
 
     def test_strips_whitespace_from_scalar(self) -> None:
         result = validate_prep_stage_provider(
-            "  hermes:deepseek:deepseek-v4-pro  ",
+            "  omp:deepseek/deepseek-v4-pro  ",
             stage="triage",
         )
-        assert result == "hermes:deepseek:deepseek-v4-pro"
+        assert result == "omp:deepseek/deepseek-v4-pro"
 
     def test_strips_whitespace_from_array_elements(self) -> None:
         result = validate_prep_stage_provider(
-            ["  hermes:deepseek:deepseek-v4-pro  ", " claude:sonnet "],
+            ["  omp:deepseek/deepseek-v4-pro  ", " claude:sonnet "],
             stage="triage",
         )
-        assert result == ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]
+        assert result == ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ plan = "codex"
 execute = "codex"
 
 [profiles.test.tier_models.execute]
-1 = ["codex:gpt-5.4", "hermes:deepseek:deepseek-v4-pro"]
+1 = ["codex:gpt-5.4", "omp:deepseek/deepseek-v4-pro"]
 2 = "claude:sonnet"
 
 [profiles.test.tier_models.critique]
@@ -501,7 +501,7 @@ execute = "codex"
         )
         assert "test" in metadata
         tier_models = metadata["test"]["tier_models"]
-        assert tier_models["execute"][1] == ["codex:gpt-5.4", "hermes:deepseek:deepseek-v4-pro"]
+        assert tier_models["execute"][1] == ["codex:gpt-5.4", "omp:deepseek/deepseek-v4-pro"]
         assert tier_models["execute"][2] == "claude:sonnet"
         assert tier_models["critique"][1] == "claude:sonnet"
 
@@ -513,8 +513,8 @@ plan = "codex"
 execute = "codex"
 
 [profiles.test.prep_models]
-triage = ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]
-fanout = "hermes:deepseek:deepseek-v4-pro"
+triage = ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]
+fanout = "omp:deepseek/deepseek-v4-pro"
 """
         from arnold_pipelines.megaplan.profiles import _parse_profiles_doc
 
@@ -523,8 +523,8 @@ fanout = "hermes:deepseek:deepseek-v4-pro"
         )
         assert "test" in metadata
         prep_models = metadata["test"]["prep_models"]
-        assert prep_models["triage"] == ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]
-        assert prep_models["fanout"] == "hermes:deepseek:deepseek-v4-pro"
+        assert prep_models["triage"] == ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]
+        assert prep_models["fanout"] == "omp:deepseek/deepseek-v4-pro"
 
     def test_empty_array_rejected_in_toml_phase(self) -> None:
         toml_content = """\

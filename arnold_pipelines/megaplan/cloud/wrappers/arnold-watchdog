@@ -1283,7 +1283,7 @@ PY
 # ─────────────────────────────────────────────────────────────────────────────
 # Single-flash babysitter launch machinery (Q1/Q2). The watchdog's ONLY repair
 # dispatch is the status-trigger babysitter: one managed
-# hermes:deepseek:deepseek-v4-flash agent whose goal prompt does
+# omp:deepseek/deepseek-v4-flash agent whose goal prompt does
 # swarm -> Codex -> implement -> relaunch -> prove. Everything else in the
 # repair-dispatch stack (L1 repair-loop, L2 meta-repair, repair-trigger) has
 # been removed; there is deliberately NO fallthrough.
@@ -1693,7 +1693,7 @@ def _progress_logs(payload, run_root):
     """Files that actually move while a babysitter is working.
 
     ``run.log`` is the managed-agent capture. It is silent during a model
-    call: the hermes spinner is non-TTY (PIPE), so it writes ``[tool]`` at
+    call: the omp launcher is non-TTY (PIPE), so it writes ``[tool]`` at
     tool start and ``[done]`` at tool end, and nothing while the LLM thinks.
     ``babysitter.stdout.log`` is a tee of that same stream (managed_agent
     tee_output=True); ``babysitter.stderr.log`` is the supervisor. Watching
@@ -2910,7 +2910,6 @@ sync_extra_cloud_skills() {
     "$HOME/.claude/skills"
     "$HOME/.codex/skills"
     "$HOME/.agents/skills"
-    "$HOME/.hermes/skills"
   )
   local skill_dir name target_dir dest created skipped updated
   created=0

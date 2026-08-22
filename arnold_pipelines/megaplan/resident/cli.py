@@ -1100,7 +1100,7 @@ def _require_discord_runtime_launch(
 
 
 def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None = None):
-    if config.model_provider in {"codex", "hermes", "claude"}:
+    if config.model_provider in {"codex", "claude", "omp"}:
         state_root = Path(
             getattr(store, "root", None) or root / ".megaplan" / "resident"
         )

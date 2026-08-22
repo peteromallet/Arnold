@@ -408,7 +408,6 @@ def _deduplicate_areas(
 def _prep_worker_args() -> argparse.Namespace:
     return argparse.Namespace(
         agent=None,
-        hermes=None,
         phase_model=[],
         ephemeral=True,
         fresh=False,
@@ -921,10 +920,10 @@ def run_research_fanout(
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
     schema = dict(PREP_RESEARCH_FINDING_SCHEMA)
-    seam_tier = ModelTier.ENFORCED if model.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
+    seam_tier = ModelTier.ENFORCED if model.agent in {"codex", "omp"} else ModelTier.NON_ENFORCED
     units = []
     for index, area in enumerate(areas):
-        output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
+        output_path = plan_dir / ".omp_state" / f"prep_research_{index}.json"
         units.append(
             WorkerUnit(
                 step="prep-research",

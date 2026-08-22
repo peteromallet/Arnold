@@ -7,7 +7,7 @@
 #   execute tier  10  -> deepseek-v4-pro (floor) then codex:gpt-5.6-sol:high
 #   plan              -> deepseek-v4-pro (floor) then codex:gpt-5.6-sol:high
 #   finalize          -> deepseek-v4-pro (floor) then codex:gpt-5.6-sol:high (same as plan)
-#   revise            -> hermes:deepseek:deepseek-v4-flash
+#   revise            -> omp:deepseek/deepseek-v4-flash
 #   review            -> deepseek-v4-pro (floor) then codex:gpt-5.6-sol:medium
 #   critique_evaluator-> deepseek-v4-pro (floor) then codex:gpt-5.6-sol:high
 #   prep / critique / gate -> DeepSeek Pro (unchanged from prior partnered-5)
@@ -15,40 +15,40 @@
 #
 # 2026-08-19 (astrid-first m6, occurrence fc98376b2f10): the OpenAI account
 # backing codex exec has no credits, so every codex-routed phase now LEADS with
-# hermes:deepseek:deepseek-v4-pro (proven working) and keeps the operator's
+# omp:deepseek/deepseek-v4-pro (proven working) and keeps the operator's
 # chosen codex:gpt-5.6-sol spec as the trailing slot for when credits return.
 [profiles.partnered-5]
 adaptive_critique = true
-plan                  = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-prep                  = "hermes:deepseek:deepseek-v4-pro"
-critique              = "hermes:deepseek:deepseek-v4-pro"
-critique_evaluator    = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-revise                = "hermes:deepseek:deepseek-v4-flash"
-gate                  = "hermes:deepseek:deepseek-v4-pro"
-finalize              = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-execute               = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-feedback              = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
-loop_plan             = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-loop_execute          = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
-review                = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
-tiebreaker_researcher = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
-tiebreaker_challenger = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+plan                  = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+prep                  = "omp:deepseek/deepseek-v4-pro"
+critique              = "omp:deepseek/deepseek-v4-pro"
+critique_evaluator    = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+revise                = "omp:deepseek/deepseek-v4-flash"
+gate                  = "omp:deepseek/deepseek-v4-pro"
+finalize              = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+execute               = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+feedback              = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
+loop_plan             = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+loop_execute          = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
+review                = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
+tiebreaker_researcher = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+tiebreaker_challenger = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
 
 [profiles.partnered-5.tier_models.execute]
-1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-flash"
-3 = "hermes:deepseek:deepseek-v4-flash"
-4 = "hermes:deepseek:deepseek-v4-flash"
-5 = "hermes:deepseek:deepseek-v4-flash"
-6 = "hermes:deepseek:deepseek-v4-flash"
-7 = "hermes:deepseek:deepseek-v4-pro"
-8 = "hermes:deepseek:deepseek-v4-pro"
-9 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
-10 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+1 = "omp:deepseek/deepseek-v4-flash"
+2 = "omp:deepseek/deepseek-v4-flash"
+3 = "omp:deepseek/deepseek-v4-flash"
+4 = "omp:deepseek/deepseek-v4-flash"
+5 = "omp:deepseek/deepseek-v4-flash"
+6 = "omp:deepseek/deepseek-v4-flash"
+7 = "omp:deepseek/deepseek-v4-pro"
+8 = "omp:deepseek/deepseek-v4-pro"
+9 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:medium"]
+10 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
 
 [profiles.partnered-5.tier_models.critique]
-1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-pro"
-3 = "hermes:deepseek:deepseek-v4-pro"
-4 = "hermes:deepseek:deepseek-v4-pro"
-5 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.6-sol:high"]
+1 = "omp:deepseek/deepseek-v4-flash"
+2 = "omp:deepseek/deepseek-v4-pro"
+3 = "omp:deepseek/deepseek-v4-pro"
+4 = "omp:deepseek/deepseek-v4-pro"
+5 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.6-sol:high"]

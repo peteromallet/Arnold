@@ -193,7 +193,7 @@ def parse_agent_spec(spec: str) -> AgentSpec:
     AgentSpec(agent='claude', model='sonnet-4.6', effort='medium')
     >>> parse_agent_spec("codex:gpt-5.3-codex:high")
     AgentSpec(agent='codex', model='gpt-5.3-codex', effort='high')
-    >>> parse_agent_spec("hermes:fireworks:accounts/foo")
+    >>> parse_agent_spec("omp:fireworks/accounts/foo")
     AgentSpec(agent='hermes', model='fireworks:accounts/foo', effort=None)
     """
     if ":" not in spec:
@@ -244,7 +244,7 @@ def format_agent_spec(spec: AgentSpec) -> str:
     >>> format_agent_spec(AgentSpec("codex", model="gpt-5.3-codex", effort="high"))
     'codex:gpt-5.3-codex:high'
     >>> format_agent_spec(AgentSpec("hermes", model="fireworks:accounts/foo"))
-    'hermes:fireworks:accounts/foo'
+    'omp:fireworks/accounts/foo'
     """
     if spec.model is not None:
         base = f"{spec.agent}:{spec.model}"

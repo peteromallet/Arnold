@@ -152,7 +152,7 @@ STEP_CONTRACTS: dict[str, StepContract] = {
         capture_schema_key="prep.json",
         output_kind="produce",
         compatibility_mode=CompatibilityMode.NATIVE,
-        default_routing="hermes",
+        default_routing="omp",
         prompt_key="prep",
         slot="prep",
     ),

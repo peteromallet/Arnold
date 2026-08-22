@@ -154,7 +154,7 @@ Profiles are keyed by phase name:
 ```toml
 [profiles.default]
 plan = "claude"
-execute = "hermes:deepseek:deepseek-v4-pro"
+execute = "omp:deepseek/deepseek-v4-pro"
 review = "claude"
 ```
 

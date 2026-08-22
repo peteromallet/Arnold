@@ -265,7 +265,6 @@ def _prompt(step_id: str) -> PromptComponent:
             "builder_family_refs": (
                 "arnold_pipelines.megaplan.prompts:_CLAUDE_PROMPT_BUILDERS",
                 "arnold_pipelines.megaplan.prompts:_CODEX_PROMPT_BUILDERS",
-                "arnold_pipelines.megaplan.prompts:_HERMES_PROMPT_BUILDERS",
             ),
         },
     )

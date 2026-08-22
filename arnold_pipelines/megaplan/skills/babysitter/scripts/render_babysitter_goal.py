@@ -2,7 +2,7 @@
 """Render the status-trigger babysitter operator contract.
 
 The watchdog status trigger renders this goal and launches ONE detached
-hermes:deepseek:deepseek-v4-flash managed agent — the BABYSITTER — whose
+omp:deepseek/deepseek-v4-flash managed agent — the BABYSITTER — whose
 prompt drives the entire recovery flow itself:
 
     (a) deploy a bounded read-only swarm via skills/subagent-launcher/fan.py
@@ -123,7 +123,7 @@ def render_babysitter_goal(
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
-    The goal is the prompt for ONE hermes:deepseek:deepseek-v4-flash managed
+    The goal is the prompt for ONE omp:deepseek/deepseek-v4-flash managed
     agent that orchestrates the whole recovery itself: swarm -> codex ->
     implement -> relaunch -> prove.  It includes the session/workspace/plan
     context and the durable failure evidence (``latest_failure``,
@@ -171,11 +171,11 @@ the chain out of the blocked/failed state."""
   bounded, read-only investigator per scoping question through foreground
   `codex exec` commands using `-m {routing.investigator_model.split(':', 1)[1]}`
   and a read-only sandbox.  Record the actual provider/model/transport in every
-  report.  Do not invoke Hermes, DeepSeek, or another provider under this
+  report.  Do not invoke another provider under this
   explicit override."""
     else:
         controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
-hermes:deepseek:deepseek-v4-flash managed agent and the ORCHESTRATOR of the
+omp:deepseek/deepseek-v4-flash managed agent and the ORCHESTRATOR of the
 whole recovery flow.  You do the job yourself, end to end: deploy a bounded
 read-only swarm over the failure evidence, hand the packed context to codex
 for a proper solution proposal, implement the narrowest source-level fix,
@@ -184,7 +184,7 @@ back; you drive the chain out of the blocked/failed state."""
         investigator_step = """- STEP 1 — DEPLOY THE SWARM: over the failure evidence, fan out one bounded,
   read-only investigator per scoping question in parallel through
   $subagent-launcher / skills/subagent-launcher/fan.py, using
-  hermes:deepseek:deepseek-v4-flash investigators.  Record the actual
+  omp:deepseek/deepseek-v4-flash investigators.  Record the actual
   model/provider/transport in every report.  If Flash is unavailable, stop at
   that exact gate — do not silently substitute another model for the
   investigator role."""

@@ -14,8 +14,8 @@ from arnold_pipelines.megaplan._core.io import (
 )
 from arnold_pipelines.megaplan.prompts._projection import PromptProjectionCapabilities
 
-_READABLE_HERMES_TOOLSETS = {"file", "file-readonly", "terminal"}
-_WRITABLE_HERMES_TOOLSETS = {"file", "terminal"}
+_READABLE_OMP_TOOLSETS = {"file", "file-readonly", "terminal"}
+_WRITABLE_OMP_TOOLSETS = {"file", "terminal"}
 
 REBUILD_METADATA_SCHEMA_VERSION = 1
 
@@ -36,11 +36,11 @@ def codex_projection_capabilities(
     )
 
 
-def hermes_projection_capabilities(toolsets: Sequence[str] | None) -> PromptProjectionCapabilities:
-    """Resolve prompt capabilities from Hermes toolset selection."""
+def omp_projection_capabilities(toolsets: Sequence[str] | None) -> PromptProjectionCapabilities:
+    """Resolve prompt capabilities from omp toolset selection."""
     selected = set(toolsets or [])
-    can_read = bool(selected & _READABLE_HERMES_TOOLSETS)
-    can_write = bool(selected & _WRITABLE_HERMES_TOOLSETS)
+    can_read = bool(selected & _READABLE_OMP_TOOLSETS)
+    can_write = bool(selected & _WRITABLE_OMP_TOOLSETS)
     return PromptProjectionCapabilities(
         can_read_plan_dir=can_read,
         can_read_project_dir=can_read,
@@ -173,7 +173,7 @@ def caps_rebuild_metadata(
 __all__ = [
     "REBUILD_METADATA_SCHEMA_VERSION",
     "codex_projection_capabilities",
-    "hermes_projection_capabilities",
+    "omp_projection_capabilities",
     "shannon_projection_capabilities",
     "compute_caps_projection_digest",
     "capture_caps_source_cursor",

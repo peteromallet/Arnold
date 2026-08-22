@@ -7,7 +7,7 @@ Re-exports the generic (non-review) process fan-out primitives from
 This is *process fan-out* — each unit runs in a separate process via
 ``scatter_gather_processes``.  For thread-based injected-dispatcher fan-out, see
 :func:`megaplan.agent_runtime.scatter_agent_units`.  For worker fan-out that
-drives CLI backends (Claude/Shannon, Codex, Hermes) through
+drives CLI backends (Claude/Shannon, Codex, omp) through
 ``run_step_with_worker``, see :mod:`megaplan._core.worker_fanout`.
 
 This module deliberately excludes critique/review-specific names such as

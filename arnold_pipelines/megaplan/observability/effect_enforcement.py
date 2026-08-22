@@ -11,8 +11,8 @@ across megaplan/_pipeline + megaplan/workers, 2026-05-30):
   CostTracker at megaplan/_pipeline/runtime.py:58-77 is a READER only
   (``should_abort`` / ``current_cost``); the plan's reference to a
   ``CostTracker.bump`` method was a phantom — no such method exists.
-  Worker-layer producers (workers/_impl.py:2229, hermes.py:1201,
-  shannon.py:1589) construct WorkerResult.cost_usd which then flows
+  Worker-layer producers (workers/_impl.py:2229, shannon.py:1589) construct
+  WorkerResult.cost_usd which then flows
   through append_history at the discovered seam.
 
   Dispatch-backend wiring: T7 (subprocess) is landed; T8 (async) is

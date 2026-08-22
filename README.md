@@ -43,7 +43,7 @@ Each phase can run on a different model. For example, here's how the default **`
 
 That split isn't fixed. The harder the work, the more it justifies premium models on more phases; the simpler it is, the more aggressively it can run on open models. The named profiles are five rungs of exactly this trade-off — `solo` (all-open, for mechanical work) → `directed` → `partnered` (the default) → `premium` → `apex` (all-premium) — and you can define custom profiles to combine models any way you like.
 
-**A note on the word "premium."** In megaplan's internals there is an *agent spec* `premium` (e.g., `premium:low`) — a symbolic placeholder that means "the operator's selected premium vendor." It appears in `DEFAULT_AGENT_ROUTING` and in unlocked profile TOMLs to keep vendor-neutral premium phases from silently locking to a single provider. Do not confuse it with the **profile** named `premium` (the fourth built-in tier). The agent spec never reaches dispatch; it is always resolved to `claude` or `codex` based on the `--vendor` flag (or `[agent] vendor` in config, or the project default) before any worker is launched. User `agents.<phase>` config entries must be concrete (`claude`, `codex`, `hermes`), never `premium`.
+**A note on the word "premium."** In megaplan's internals there is an *agent spec* `premium` (e.g., `premium:low`) — a symbolic placeholder that means "the operator's selected premium vendor." It appears in `DEFAULT_AGENT_ROUTING` and in unlocked profile TOMLs to keep vendor-neutral premium phases from silently locking to a single provider. Do not confuse it with the **profile** named `premium` (the fourth built-in tier). The agent spec never reaches dispatch; it is always resolved to `claude` or `codex` based on the `--vendor` flag (or `[agent] vendor` in config, or the project default) before any worker is launched. User `agents.<phase>` config entries must be concrete (`claude`, `codex`, `omp`), never `premium`.
 
 **[docs/megaplan-prep.md](docs/megaplan-prep.md)** is a skill document for you and your agents — hand it the task and it picks the profile, robustness level, and thinking tier to match.
 
@@ -82,7 +82,7 @@ The setup command detects your installed agents and walks you through credential
 - **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`). The public `claude` agent route always uses the Shannon-backed interactive tmux worker — it preserves OAuth subscription billing and never falls back to a headless `claude -p` subprocess.
 - **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
 
-Direct-provider keys live in `~/.hermes/.env`. Then point megaplan at an idea:
+Provider keys are read from the process environment (and `auto_improve/api_keys.json` where configured). Then point megaplan at an idea:
 
 ```bash
 python -m arnold_pipelines.megaplan init --project-dir . "Fix the authentication bug in login.py"

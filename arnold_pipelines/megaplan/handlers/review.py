@@ -39,12 +39,11 @@ from arnold_pipelines.megaplan.orchestration.transition_policy import (
 )
 from arnold_pipelines.megaplan.workflows.handler_contract import (
     apply_state_projection,
-    dispatch_review_panel,
 )
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
-from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion, normalize_robustness
 from arnold_pipelines.megaplan.types import (
     MOCK_ENV_VAR,
@@ -369,8 +368,6 @@ def _build_review_prompt_override(
 ) -> str:
     if agent_type == "claude":
         return create_claude_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
-    if agent_type == "hermes":
-        return create_hermes_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
     return create_codex_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
 
 
@@ -2095,7 +2092,7 @@ def _finalize_review_outcome(
 ) -> StepResponse:
     """Post-worker bookkeeping shared by both review paths.
 
-    The single-worker (claude/codex/mock) and parallel-hermes branches of
+    The single-worker (claude/codex/omp/mock) branches of
     :func:`handle_review` previously inlined the same ~100-line block of
     verdict-merging, state advancement, receipt emission, and response
     construction. This helper is the single owner of that flow.
@@ -2598,7 +2595,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             # Prefer valid filled review_output.json over worker.payload;
             # fall back to worker.payload when scratch is missing/unmodified;
             # fail hard on modified invalid scratch when file-fill was
-            # instructed (hermes agent).  Canonical promotion to
+            # instructed.  Canonical promotion to
             # review.json is preserved unchanged below.
             from arnold_pipelines.megaplan.handlers.structured_output import (
                 promote_scratch,
@@ -2614,7 +2611,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 except (OSError, UnicodeDecodeError):
                     _seed_json = None
 
-            _file_fill_instructed = agent == "hermes"
+            _file_fill_instructed = False
 
             _, _promoted = promote_scratch(
                 plan_dir,
@@ -2664,195 +2661,95 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
-            if agent_type != "hermes" or os.getenv(MOCK_ENV_VAR) == "1":
-                worker, agent, mode, refreshed = _run_worker(
-                    "review",
-                    state,
-                    plan_dir,
-                    args,
-                    root=root,
-                    resolved=(agent_type, mode, refreshed, model),
-                    read_only=True,
-                )
+            worker, agent, mode, refreshed = _run_worker(
+                "review",
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=(agent_type, mode, refreshed, model),
+                read_only=True,
+            )
 
-                # --- M9: work ledger — review/proof inference event (extreme path) ---
-                try:
-                    from arnold_pipelines.megaplan.observability.work_ledger import (
-                        WorkClass,
-                        emit_worker_inference,
-                    )
-
-                    emit_worker_inference(
-                        plan_dir,
-                        phase="review",
-                        worker=worker,
-                        work_class=WorkClass.REVIEW_PROOF,
-                        task_id=None,
-                        batch_id=None,
-                        attempt_id=state.get("meta", {}).get("current_invocation_id"),
-                        agent=agent,
-                        metadata={
-                            "robustness": robustness,
-                            "boundary": "review_worker_extreme",
-                        },
-                    )
-                except Exception:
-                    log.debug("Work ledger review event emission skipped", exc_info=True)
-                # --- end work ledger ---
-
-                # ── T11: Scratch promotion for review (single-worker, extreme) ──
-                from arnold_pipelines.megaplan.handlers.structured_output import (
-                    promote_scratch,
-                    require_scratch_filename_for_phase,
-                )
-
-                _scratch_filename = require_scratch_filename_for_phase("review")
-                _seed_path = plan_dir / _scratch_filename
-                _seed_json: str | None = None
-                if _seed_path.exists():
-                    try:
-                        _seed_json = _seed_path.read_text(encoding="utf-8")
-                    except (OSError, UnicodeDecodeError):
-                        _seed_json = None
-
-                _file_fill_instructed = agent == "hermes"
-
-                _, _promoted = promote_scratch(
-                    plan_dir,
-                    _scratch_filename,
-                    _review_scratch_known_keys(),
-                    worker,
-                    seed_json=_seed_json,
-                    file_fill_instructed=_file_fill_instructed,
-                )
-                worker.payload = _promoted
-                # ──────────────────────────────────────────────────────────────
-
-                _prepare_review_payload(worker.payload)
-                _audit_review_payload_or_raise(
-                    plan_dir=plan_dir,
-                    state=state,
-                    payload=worker.payload,
-                    raw_output=worker.raw_output,
-                    duration_ms=worker.duration_ms,
-                )
-                write_plan_artifact_json(
-                    plan_dir, "review.json", worker.payload,
-                    contract_context=create_step_io_contract_context(
-                        operation=StepIOOperation.WRITE,
-                        explicit_root=plan_dir,
-                    ),
-                )
-                return _finalize_review_outcome(
-                    root=root,
-                    args=args,
-                    plan_dir=plan_dir,
-                    state=state,
-                    worker=worker,
-                    agent=agent,
-                    mode=mode,
-                    refreshed=refreshed,
-                    robustness=robustness,
-                )
-
-            run_id = None
+            # --- M9: work ledger — review/proof inference event (extreme path) ---
             try:
-                run_id = set_active_step(
-                    state,
-                    step="review",
-                    agent=agent_type,
-                    mode=mode,
-                    model=model,
-                    **_active_step_fallback_fields("review", args, agent=agent_type, model=model),
+                from arnold_pipelines.megaplan.observability.work_ledger import (
+                    WorkClass,
+                    emit_worker_inference,
                 )
-                _emit_phase_notice("review")
-                save_state_merge_meta(plan_dir, state)
-                checks = review_checks.checks_for_robustness("extreme")
-                parallel_result = dispatch_review_panel(
-                    state,
+
+                emit_worker_inference(
                     plan_dir,
-                    root=root,
-                    model=model if agent_type == "hermes" else None,
-                    checks=checks,
-                    pre_check_flags=pre_check_flags,
+                    phase="review",
+                    worker=worker,
+                    work_class=WorkClass.REVIEW_PROOF,
+                    task_id=None,
+                    batch_id=None,
+                    attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                    agent=agent,
+                    metadata={
+                        "robustness": robustness,
+                        "boundary": "review_worker_extreme",
+                    },
                 )
-                # --- M9: work ledger — review/proof inference event (parallel extreme) ---
-                try:
-                    from arnold_pipelines.megaplan.observability.work_ledger import (
-                        WorkClass,
-                        emit_worker_inference,
-                    )
-
-                    emit_worker_inference(
-                        plan_dir,
-                        phase="review",
-                        worker=parallel_result,
-                        work_class=WorkClass.REVIEW_PROOF,
-                        task_id=None,
-                        batch_id=None,
-                        attempt_id=run_id,
-                        agent=agent_type,
-                        model_calls=len(checks) if checks else 1,
-                        metadata={
-                            "robustness": robustness,
-                            "parallel_checks": len(checks) if checks else 0,
-                            "boundary": "parallel_review",
-                        },
-                    )
-                except Exception:
-                    log.debug("Work ledger parallel review event emission skipped", exc_info=True)
-                # --- end work ledger ---
-                criteria_payload = parallel_result.payload.get("criteria_payload")
-                if not isinstance(criteria_payload, dict):
-                    raise CliError("worker_parse_error", "Parallel review did not return a criteria payload object")
-                merged_payload = dict(criteria_payload)
-                merged_payload["checks"] = _prepare_parallel_review_checks(
-                    list(parallel_result.payload.get("checks", [])),
-                    check_specs=checks,
-                )
-                merged_payload["verified_flag_ids"] = list(parallel_result.payload.get("verified_flag_ids", []))
-                merged_payload["disputed_flag_ids"] = list(parallel_result.payload.get("disputed_flag_ids", []))
-                _prepare_review_payload(merged_payload, pre_check_flags=pre_check_flags)
-
-                review_rework_items = _synthesize_review_rework_items(merged_payload["checks"])
-                merged_payload.setdefault("rework_items", [])
-                merged_payload.setdefault("issues", [])
-                if review_rework_items:
-                    merged_payload["rework_items"].extend(review_rework_items)
-                    existing_issues = {str(issue) for issue in merged_payload["issues"] if isinstance(issue, str)}
-                    for item in review_rework_items:
-                        if item["issue"] not in existing_issues:
-                            merged_payload["issues"].append(item["issue"])
-                            existing_issues.add(item["issue"])
-                    merged_payload["review_verdict"] = "needs_rework"
-
-                _prepare_review_payload(merged_payload, pre_check_flags=pre_check_flags)
-                _audit_review_payload_or_raise(
-                    plan_dir=plan_dir,
-                    state=state,
-                    payload=merged_payload,
-                    raw_output=parallel_result.raw_output,
-                    duration_ms=parallel_result.duration_ms,
-                )
-                write_plan_artifact_json(
-                    plan_dir, "review.json", merged_payload,
-                    contract_context=create_step_io_contract_context(
-                        operation=StepIOOperation.WRITE,
-                        explicit_root=plan_dir,
-                    ),
-                )
-                _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
-                worker = _wrap_parallel_review_worker(merged_payload, parallel_result)
-                agent, mode, refreshed = "hermes", "persistent", True
-            except CliError as error:
-                clear_active_step(state, run_id=run_id)
-                record_step_failure(plan_dir, state, step="review", iteration=state["iteration"], error=error)
-                raise
             except Exception:
-                clear_active_step(state, run_id=run_id)
-                save_state_merge_meta(plan_dir, state)
-                raise
+                log.debug("Work ledger review event emission skipped", exc_info=True)
+            # --- end work ledger ---
 
+            # ── T11: Scratch promotion for review (single-worker, extreme) ──
+            from arnold_pipelines.megaplan.handlers.structured_output import (
+                promote_scratch,
+                require_scratch_filename_for_phase,
+            )
+
+            _scratch_filename = require_scratch_filename_for_phase("review")
+            _seed_path = plan_dir / _scratch_filename
+            _seed_json: str | None = None
+            if _seed_path.exists():
+                try:
+                    _seed_json = _seed_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    _seed_json = None
+
+            _file_fill_instructed = False
+
+            _, _promoted = promote_scratch(
+                plan_dir,
+                _scratch_filename,
+                _review_scratch_known_keys(),
+                worker,
+                seed_json=_seed_json,
+                file_fill_instructed=_file_fill_instructed,
+            )
+            worker.payload = _promoted
+            # ──────────────────────────────────────────────────────────────
+
+            _prepare_review_payload(worker.payload)
+            _audit_review_payload_or_raise(
+                plan_dir=plan_dir,
+                state=state,
+                payload=worker.payload,
+                raw_output=worker.raw_output,
+                duration_ms=worker.duration_ms,
+            )
+            write_plan_artifact_json(
+                plan_dir, "review.json", worker.payload,
+                contract_context=create_step_io_contract_context(
+                    operation=StepIOOperation.WRITE,
+                    explicit_root=plan_dir,
+                ),
+            )
+            return _finalize_review_outcome(
+                root=root,
+                args=args,
+                plan_dir=plan_dir,
+                state=state,
+                worker=worker,
+                agent=agent,
+                mode=mode,
+                refreshed=refreshed,
+                robustness=robustness,
+            )
         return _finalize_review_outcome(
             root=root,
             args=args,

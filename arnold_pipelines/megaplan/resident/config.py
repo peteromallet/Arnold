@@ -31,8 +31,8 @@ class ResidentConfig(BaseModel):
     allowed_channel_ids: tuple[str, ...] = Field(default_factory=tuple)
     allowed_user_ids: tuple[str, ...] = Field(default_factory=tuple)
     admin_user_ids: tuple[str, ...] = Field(default_factory=tuple)
-    model_provider: str = "hermes"
-    model_name: str = "zhipu:glm-5.2"
+    model_provider: str = "omp"
+    model_name: str = "zai/glm-5.2"
     model_api_key_env: str | None = None
     model_base_url: str | None = None
     codex_reasoning_effort: str = "low"
@@ -112,8 +112,8 @@ class ResidentConfig(BaseModel):
             allowed_channel_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_CHANNELS")),
             allowed_user_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_USERS") or arnold_user_whitelist),
             admin_user_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ADMIN_USERS") or arnold_user_whitelist),
-            model_provider=env.get("MEGAPLAN_RESIDENT_MODEL_PROVIDER", "hermes"),
-            model_name=env.get("MEGAPLAN_RESIDENT_MODEL", "zhipu:glm-5.2"),
+            model_provider=env.get("MEGAPLAN_RESIDENT_MODEL_PROVIDER", "omp"),
+            model_name=env.get("MEGAPLAN_RESIDENT_MODEL", "zai/glm-5.2"),
             model_api_key_env=env.get("MEGAPLAN_RESIDENT_MODEL_API_KEY_ENV"),
             model_base_url=env.get("MEGAPLAN_RESIDENT_MODEL_BASE_URL") or env.get("OPENAI_BASE_URL"),
             codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "low"),

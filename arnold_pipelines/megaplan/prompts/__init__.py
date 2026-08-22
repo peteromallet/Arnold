@@ -197,7 +197,6 @@ _CODEX_REVIEW_OVERLAY = partial(
 # Exported agent builder maps assembled from the shared base + per-agent review.
 _CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CLAUDE_REVIEW_OVERLAY}
 _CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CODEX_REVIEW_OVERLAY}
-_HERMES_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CLAUDE_REVIEW_OVERLAY}
 
 _NESTED_HARNESS_GUARD = (
     "You are already running inside the megaplan harness for this step. "
@@ -354,7 +353,6 @@ _ROOT_BEARING_STEPS = {"prep", "prep-triage", "critique", "critique_evaluator", 
 _AGENT_REGISTRY: dict[str, tuple[dict[str, "_PromptBuilder"], str]] = {
     "claude": (_CLAUDE_PROMPT_BUILDERS, "Claude"),
     "codex": (_CODEX_PROMPT_BUILDERS, "Codex"),
-    "hermes": (_HERMES_PROMPT_BUILDERS, "Hermes"),
     # omp (the omp RPC worker) uses the same neutral prompt shape as codex:
     # the harness-guard prefix, schema block, and phase builder are
     # transport-agnostic.
@@ -372,7 +370,7 @@ def create_prompt(
 ) -> str:
     """Render the prompt for ``(agent, step)``.
 
-    ``agent`` is one of ``"claude"`` / ``"codex"`` / ``"hermes"``. All
+    ``agent`` is one of ``"claude"`` / ``"codex"`` / ``"omp"``. All
     three resolve to the same shape:
 
     * ``step == "review"`` forwards ``prompt_kwargs`` to the builder.
@@ -381,9 +379,8 @@ def create_prompt(
 
     The output always carries the harness-guard prefix.
 
-    Thin per-agent wrappers — ``create_claude_prompt``, ``create_codex_prompt``,
-    ``create_hermes_prompt`` — preserve the historical API used by 80+
-    call sites across the codebase.
+    Thin per-agent wrappers — ``create_claude_prompt``, ``create_codex_prompt``
+    — preserve the historical API used by call sites across the codebase.
     """
     try:
         builders, label = _AGENT_REGISTRY[agent]
@@ -480,12 +477,6 @@ def create_codex_prompt(
     return create_prompt("codex", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
-def create_hermes_prompt(
-    step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
-) -> str:
-    return create_prompt("hermes", step, state, plan_dir, root=root, **prompt_kwargs)
-
-
 def create_claude_prompt_components(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> PromptComponents:
@@ -498,18 +489,11 @@ def create_codex_prompt_components(
     return create_prompt_components("codex", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
-def create_hermes_prompt_components(
-    step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
-) -> PromptComponents:
-    return create_prompt_components("hermes", step, state, plan_dir, root=root, **prompt_kwargs)
-
-
 __all__ = [
     "PLAN_TEMPLATE",
     "PromptComponents",
     "_CLAUDE_PROMPT_BUILDERS",
     "_CODEX_PROMPT_BUILDERS",
-    "_HERMES_PROMPT_BUILDERS",
     "_collect_critique_summaries",
     "_critique_prompt",
     "_critique_creative_prompt",
@@ -560,8 +544,6 @@ __all__ = [
     "create_claude_prompt_components",
     "create_codex_prompt",
     "create_codex_prompt_components",
-    "create_hermes_prompt",
-    "create_hermes_prompt_components",
     "create_prompt",
     "create_prompt_components",
     "render_reconcile_prompt",

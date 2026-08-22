@@ -28,10 +28,10 @@ dependencies = [
     # supported `python -m pytest` workflow.  They run in the same editable
     # Arnold interpreter, so the base install must include its test runner.
     "pytest>=8.0",
-    # --- Hermes/agent backend (core) ---------------------------------------
-    # The hermes/agent runtime backs prep research, critique, fanout, and the
+    # --- omp/agent backend (core) ------------------------------------------
+    # The omp/agent runtime backs prep research, critique, fanout, and the
     # agentic phases. It is NOT optional: the canonical prep models route to
-    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
+    # `omp:deepseek/...` for every run, so a chain that does prep WILL import
     # this backend. Historically these lived in the `[agent]` optional extra
     # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
     # silently ignore `default-extras`, producing a fresh install that imports
@@ -101,7 +101,7 @@ dev = [
 ]
 
 [tool.uv]
-# The hermes/agent backend's packages are now core [project].dependencies, so a
+# The omp/agent backend's packages are now core [project].dependencies, so a
 # plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
 # longer rely on `default-extras` (some uv versions silently ignore it, which is
 # what produced the confusing mid-prep `agent_deps_missing` failures).
@@ -143,6 +143,7 @@ artifacts = [
     "arnold_pipelines/megaplan/skills/fix-the-fixer/references/*.md",
     "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "agentbox/systemd/*.service",
+    "agentbox/agents/*.md",
 ]
 exclude = [
     "**/__pycache__/**",

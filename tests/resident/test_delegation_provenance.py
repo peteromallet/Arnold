@@ -290,10 +290,10 @@ def test_caller_origin_cannot_override_inherited_reply_route(tmp_path, monkeypat
     assert launched is False
 
 
-def test_hermes_override_cannot_discard_inherited_discord_custody(
+def test_omp_override_cannot_discard_inherited_discord_custody(
     tmp_path, monkeypatch
 ) -> None:
-    source, message = "msg_hermescustody1", "1525300000000000111"
+    source, message = "msg_ompcustody1", "1525300000000000111"
     _persist_source(tmp_path, source=source, message=message)
     inherited = normalize_delegation_provenance(_origin(source=source, message=message))
     monkeypatch.setenv(DELEGATION_CONTEXT_ENV, encoded_provenance(inherited))
@@ -302,7 +302,7 @@ def test_hermes_override_cannot_discard_inherited_discord_custody(
     def fake_run(*args, **kwargs):
         nonlocal launched
         launched = True
-        raise AssertionError("Hermes must not start for Discord-origin work")
+        raise AssertionError("omp must not start for Discord-origin work")
 
     monkeypatch.setattr(subagent_module.subprocess, "run", fake_run)
     with pytest.raises(DelegationProvenanceError, match="cannot discard inherited custody"):
@@ -311,7 +311,7 @@ def test_hermes_override_cannot_discard_inherited_discord_custody(
                 ResidentConfig(),
                 task="must remain durable",
                 project_dir=str(tmp_path),
-                backend="hermes",
+                backend="omp",
                 background=False,
                 launch_origin={
                     "transport": "non_discord",

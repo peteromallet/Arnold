@@ -119,13 +119,6 @@ export CODEX_HOME=/workspace/.codex
 export ARNOLD_RESIDENT_UNBOUNDED_REQUEST=1
 umask 077
 
-# Seed /root/.hermes/.env from DEEPSEEK_API_KEY (idempotent; never overwrite an
-# existing key line).
-if [[ -n "${DEEPSEEK_API_KEY:-}" ]] && ! grep -q '^DEEPSEEK_API_KEY=' /root/.hermes/.env 2>/dev/null; then
-    printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" >> /root/.hermes/.env
-    chmod 600 /root/.hermes/.env
-fi
-
 # --- dependency roots + auth guards ------------------------------------------
 for dep in fire openai requests; do
     if [[ ! -f "$dependency_root/$dep/__init__.py" ]]; then

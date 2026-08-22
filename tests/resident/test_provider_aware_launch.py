@@ -23,7 +23,7 @@ def _isolate_resident_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("model_spec", "backend", "runtime_model"),
     [
-        ("hermes:glm-5.2", "hermes", "zhipu:glm-5.2"),
+        ("omp:zai/glm-5.2", "omp", "zai/glm-5.2"),
         ("codex:gpt-5.6-terra", "codex", "gpt-5.6-terra"),
         ("claude:opus", "claude", "opus"),
     ],
@@ -57,7 +57,7 @@ def test_auto_route_creates_one_durable_provider_manifest(
     assert manifest["backend"] == backend
     assert manifest["model"] == runtime_model
     assert manifest["model_spec"] == (
-        "hermes:zhipu:glm-5.2" if backend == "hermes" else model_spec
+        "omp:zai/glm-5.2" if backend == "omp" else model_spec
     )
     assert manifest["provider_route"] == {
         "backend": backend,
@@ -76,7 +76,7 @@ def test_auto_route_creates_one_durable_provider_manifest(
     ):
         assert Path(manifest[field]).exists()
     assert manifest["telemetry"]["raw_streams_are_provider_specific"] is True
-    if backend in {"hermes", "claude"}:
+    if backend in {"omp", "claude"}:
         assert manifest["model_session"]["provider"] == backend
         assert manifest["model_session"]["state"] == "reserved"
     assert launches and "--run-managed" in launches[0]
@@ -98,7 +98,7 @@ def test_explicit_mismatch_fails_before_manifest_creation(
                 task="must not launch",
                 project_dir=str(tmp_path),
                 backend="codex",
-                model="hermes:glm-5.2",
+                model="omp:zai/glm-5.2",
             )
         )
 
@@ -112,12 +112,12 @@ def test_provider_and_control_changes_are_part_of_launch_idempotency(
         subagent.subprocess, "Popen", lambda *args, **kwargs: _DetachedProcess()
     )
 
-    hermes = asyncio.run(
+    omp_run = asyncio.run(
         subagent.launch_subagent_task(
             ResidentConfig(),
             task="same bounded task",
             project_dir=str(tmp_path),
-            model="hermes:glm-5.2",
+            model="omp:zai/glm-5.2",
         )
     )
     claude = asyncio.run(
@@ -129,11 +129,11 @@ def test_provider_and_control_changes_are_part_of_launch_idempotency(
         )
     )
 
-    assert hermes.run_id != claude.run_id
-    assert hermes.manifest_path != claude.manifest_path
+    assert omp_run.run_id != claude.run_id
+    assert omp_run.manifest_path != claude.manifest_path
 
 
-def test_hermes_auto_route_preserves_discord_custody_and_delivery(
+def test_omp_auto_route_preserves_discord_custody_and_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -147,7 +147,7 @@ def test_hermes_auto_route_preserves_discord_custody_and_delivery(
             task="durable Hermes work",
             description="Run durable Hermes work",
             project_dir=str(tmp_path),
-            model="hermes:glm-5.2",
+            model="omp:zai/glm-5.2",
             launch_origin={
                 "transport": "discord",
                 "applicability": "applicable",
@@ -163,7 +163,7 @@ def test_hermes_auto_route_preserves_discord_custody_and_delivery(
     )
 
     manifest = json.loads(Path(result.manifest_path or "").read_text(encoding="utf-8"))
-    assert manifest["backend"] == "hermes"
+    assert manifest["backend"] == "omp"
     assert manifest["launch_provenance"]["source_record_id"] == "msg_providerroute1"
     assert manifest["completion_delivery"]["transport"] == "discord"
     assert manifest["completion_delivery"]["status"] == "pending"
@@ -223,7 +223,7 @@ def _worker_manifest(tmp_path: Path, *, backend: str, model: str) -> Path:
 @pytest.mark.parametrize(
     ("backend", "model", "launcher_name", "effective_uid", "permission_flag"),
     [
-        ("hermes", "zhipu:glm-5.2", "launch_hermes_agent.py", 0, None),
+        ("omp", "zai/glm-5.2", "launch_omp_agent.py", 0, None),
         ("claude", "opus", "launch_claude_agent.py", 0, "--permission-mode"),
         (
             "claude",
@@ -256,8 +256,11 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
             return 0
 
     def fake_popen(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs.get("env")
+        # Skip the post-session summarizer (launches without --session-id and
+        # without --resume).
+        if "--session-id" in argv or "--resume" in argv:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs.get("env")
         output = kwargs.get("stdout")
         assert output is not None
         if backend == "claude":
@@ -333,7 +336,7 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
 
 @pytest.mark.parametrize(
     ("backend", "model"),
-    [("hermes", "zhipu:glm-5.2"), ("claude", "opus")],
+    [("omp", "zai/glm-5.2"), ("claude", "opus")],
 )
 def test_managed_worker_completion_emits_git_custody_event_without_unbound_local(
     tmp_path: Path,
@@ -448,7 +451,7 @@ def test_managed_non_codex_worker_rejects_empty_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest_path = _worker_manifest(
-        tmp_path, backend="hermes", model="zhipu:glm-5.2"
+        tmp_path, backend="omp", model="zai/glm-5.2"
     )
 
     class _Worker:
@@ -491,7 +494,7 @@ def test_markerless_legacy_timeout_is_not_a_supervisor_deadline() -> None:
 def test_provider_timeout_is_enforced_and_captured_durably(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manifest_path = _worker_manifest(tmp_path, backend="hermes", model="zhipu:glm-5.2")
+    manifest_path = _worker_manifest(tmp_path, backend="omp", model="zai/glm-5.2")
 
     class _TimedOutWorker:
         pid = 223
@@ -499,7 +502,7 @@ def test_provider_timeout_is_enforced_and_captured_durably(
 
         def wait(self, timeout=None):
             if not self.terminated:
-                raise subagent.subprocess.TimeoutExpired(cmd="hermes", timeout=timeout)
+                raise subagent.subprocess.TimeoutExpired(cmd="omp", timeout=timeout)
             return -15
 
         def poll(self):

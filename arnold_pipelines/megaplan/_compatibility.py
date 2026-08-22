@@ -313,7 +313,6 @@ def _namespace_from_argv(
         confirm_self_review=False,
         batch=None,
         agent=None,
-        hermes=None,
         phase_model=[],
         tier_models=None,
         max_execute_tier=None,
@@ -353,9 +352,6 @@ def _namespace_from_argv(
             index += 1
         elif token == "--agent" and index + 1 < len(argv):
             args.agent = str(argv[index + 1])
-            index += 1
-        elif token == "--hermes" and index + 1 < len(argv):
-            args.hermes = str(argv[index + 1])
             index += 1
         elif token == "--phase-model" and index + 1 < len(argv):
             args.phase_model.append(str(argv[index + 1]))

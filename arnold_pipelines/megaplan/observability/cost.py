@@ -63,8 +63,8 @@ def _classify_vendor(model: str | None) -> str:
     if "gemini" in m:
         return "other"
 
-    # DeepSeek / Hermes / Shannon
-    if "deepseek" in m or "hermes" in m or "shannon" in m:
+    # DeepSeek / omp / Shannon
+    if "deepseek" in m or "omp" in m or "shannon" in m:
         return "deepseek"
 
     return "other"

@@ -5,12 +5,12 @@ Verified 2026-05-12. Update when Fireworks revises rates.
 
 Each model entry is ``(input, cached_input, output)`` per 1M tokens.
 
-Note on cached input: hermes_worker currently passes a single
+Note on cached input: the omp worker currently passes a single
 ``prompt_tokens`` count (uncached + cached summed). We don't yet have a
 breakdown of cached vs. uncached at the megaplan layer, so
 ``cost_from_usage`` uses the full ``input`` rate for everything in
 ``prompt_tokens``. This OVER-estimates cost for cache-heavy runs. If
-hermes starts surfacing a `cached_input_tokens` field, switch to billing
+the provider starts surfacing a `cached_input_tokens` field, switch to billing
 those separately at the cached rate.
 """
 

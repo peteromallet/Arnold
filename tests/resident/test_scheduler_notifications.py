@@ -187,7 +187,7 @@ def _superfixer_schedule_definition(
                 "prompt_ref": "resident-prompt://superfixer/v1",
                 "prompt": prompt,
                 "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest(),
-                "model": "hermes:deepseek:deepseek-v4-flash",
+                "model": "omp:deepseek/deepseek-v4-flash",
                 "profile": "resident-subagent-standard",
                 "toolsets": ["repo_read"],
                 "work_intent": "execution",
@@ -287,7 +287,7 @@ def test_superfixer_proactive_consumer_launches_once_with_receipt_linkage(
     assert captured["launch_origin"]["source_kind"] == "scheduled_turn"
     assert captured["launch_origin"]["superfixer_proactive"] is True
     assert captured["launch_origin"]["occurrence_id"] == projection.occurrence.occurrence_id
-    assert captured["model_spec"] == "hermes:deepseek:deepseek-v4-flash"
+    assert captured["model_spec"] == "omp:deepseek/deepseek-v4-flash"
     # Durable launch receipt linkage on the occurrence.
     launched = service.load_occurrence(projection.occurrence.occurrence_id)
     assert launched.state == "launched"
@@ -460,7 +460,7 @@ def test_superfixer_proactive_crash_reclaim_launches_once_after_lease(
     assert launched.run_id == "sfx-run-1"
 
 
-def test_superfixer_proactive_managed_launch_routes_hermes_with_custody(
+def test_superfixer_proactive_managed_launch_routes_omp_with_custody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from arnold_pipelines.megaplan.resident import subagent as subagent_module
@@ -490,9 +490,9 @@ def test_superfixer_proactive_managed_launch_routes_hermes_with_custody(
             "occurrence_id": "occ_1",
         },
     )
-    assert captured["backend"] == "hermes"
-    assert captured["model"] == "deepseek:deepseek-v4-flash"
-    assert captured["model_spec"] == "hermes:deepseek:deepseek-v4-flash"
+    assert captured["backend"] == "omp"
+    assert captured["model"] == "deepseek/deepseek-v4-flash"
+    assert captured["model_spec"] == "omp:deepseek/deepseek-v4-flash"
     assert captured["task_kind"] == "autonomous"
     assert captured["work_intent"] == "execution"
     assert captured["request_id"] == "occ_1"
@@ -500,12 +500,12 @@ def test_superfixer_proactive_managed_launch_routes_hermes_with_custody(
     assert result.run_id == "sfx-run"
 
 
-def test_superfixer_proactive_managed_launch_rejects_non_hermes_spec(
+def test_superfixer_proactive_managed_launch_rejects_non_omp_spec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold_pipelines.megaplan.resident import subagent as subagent_module
 
-    with pytest.raises(ValueError, match="hermes"):
+    with pytest.raises(ValueError, match="omp"):
         subagent_module.launch_superfixer_proactive_managed(
             task="x", model_spec="codex:gpt-5"
         )

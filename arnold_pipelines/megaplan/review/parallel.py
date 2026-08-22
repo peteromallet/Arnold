@@ -1,4 +1,4 @@
-"""Parallel Hermes review runner.
+"""Parallel omp review runner.
 
 The preloaded-template-ID convention is the preferred way to get structured
 output from focused review agents: write the exact slot shape first, then have
@@ -61,7 +61,7 @@ def _review_worker_db_path(plan_dir: Path, identifier: str) -> Path:
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
     if len(sanitized) > 100:
         sanitized = sanitized[:100]
-    return plan_dir / ".hermes_state" / f"state_{sanitized or 'default'}.db"
+    return plan_dir / ".omp_state" / f"state_{sanitized or 'default'}.db"
 
 
 def _review_reasoning_config(resolved_model: str | None) -> dict[str, bool] | None:
@@ -74,7 +74,7 @@ def _review_reasoning_config(resolved_model: str | None) -> dict[str, bool] | No
 
 def _review_agent_mode(model: str | None, resolved_model: str | None) -> AgentMode:
     return AgentMode(
-        agent="hermes",
+        agent="omp",
         mode="persistent",
         refreshed=False,
         model=model,
@@ -229,7 +229,7 @@ def run_parallel_review(
         },
     )
 
-    args = argparse.Namespace(agent=None, hermes=None, phase_model=[], ephemeral=False, fresh=False, persist=False)
+    args = argparse.Namespace(agent=None, phase_model=[], ephemeral=False, fresh=False, persist=False)
     sr = scatter_worker_units(
         units=units,
         side_units=[criteria_unit],

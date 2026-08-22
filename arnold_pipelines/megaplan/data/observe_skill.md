@@ -85,7 +85,7 @@ Each entry: the `introspect` signature, the recovery, and a worked example from 
 - Check `block_details.outstanding_flags` — if the critique found flags it can't resolve, it may have looped without producing artifacts.
 
 **Worked example:**
-> *Session:* `prompt-registry-and-reminder-bundling-v5`, critique phase. 4 of 5 checks completed, last check at 14:25:11Z. At 14:55:00Z, `introspect` shows `liveness: quiet`, `last_artifact_rel: 29m 49s ago`. Subprocess PID 58800 still has an open TCP socket to Fireworks. `trace --follow --format narrative` shows: "Token stream stopped 28m ago. 4,200 tokens emitted at 18 tok/s. Last token at 14:26:31Z — no tokens since." The model finished producing but hermes didn't close the call — likely a provider-side hang. Kill the phase, `megaplan resume` picks up from where critique left off.
+> *Session:* `prompt-registry-and-reminder-bundling-v5`, critique phase. 4 of 5 checks completed, last check at 14:25:11Z. At 14:55:00Z, `introspect` shows `liveness: quiet`, `last_artifact_rel: 29m 49s ago`. Subprocess PID 58800 still has an open TCP socket to Fireworks. `trace --follow --format narrative` shows: "Token stream stopped 28m ago. 4,200 tokens emitted at 18 tok/s. Last token at 14:26:31Z — no tokens since." The model finished producing but the omp RPC session didn't close the call — likely a provider-side hang. Kill the phase, `megaplan resume` picks up from where critique left off.
 
 ### Blocked state
 

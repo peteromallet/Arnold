@@ -11,7 +11,7 @@ from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentLoopError,
     AgentRequest,
     ManagedProviderCliAgentRunner,
-    _hermes_resume_session_missing,
+    _omp_resume_session_missing,
 )
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.cli import _resident_runner
@@ -32,7 +32,7 @@ def _manifests(root: Path) -> list[Path]:
     return sorted((root / "provider_runs").glob("*/*/manifest.json"))
 
 
-def _write_hermes_launcher(
+def _write_omp_launcher(
     path: Path,
     *,
     sleep: bool = False,
@@ -54,7 +54,7 @@ def _write_hermes_launcher(
             "marker=Path(os.environ['MISSING_RESUME_MARKER'])\n"
             "if a.resume_session and not marker.exists():\n"
             " marker.write_text('failed once')\n"
-            " print(f'error: Hermes session {a.session_id} does not exist', file=__import__('sys').stderr)\n"
+            " print(f'error: omp session {a.session_id} does not exist', file=__import__('sys').stderr)\n"
             " raise SystemExit(8)\n"
             if fail_first_resume_as_missing
             else ""
@@ -64,10 +64,10 @@ def _write_hermes_launcher(
             if change_session_id_on_resume
             else "reported_session=a.session_id\n"
         )
-        + "metadata={'schema_version':'arnold-hermes-launcher-metadata-v1','session_id':reported_session,'resolved_model':'glm-5.2','toolsets':a.toolsets.split(','),'usage':{'output_tokens':3},'events':[]}\n"
+        + "metadata={'schema_version':'arnold-omp-launcher-metadata-v1','session_id':reported_session,'resolved_model':'glm-5.2','toolsets':a.toolsets.split(','),'usage':{'output_tokens':3},'events':[]}\n"
         + "metadata.update({'resumed_session_id':a.session_id} if a.resume_session else {})\n"
         + "Path(a.metadata_file).write_text(json.dumps(metadata))\n"
-        "print('HERMES_RESIDENT_OK')\n",
+        "print('OMP_RESIDENT_OK')\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -81,30 +81,30 @@ def test_resident_cli_selects_managed_glm_runner_and_store_custody(
     runner = _resident_runner(ResidentConfig(), tmp_path, store=store)
 
     assert isinstance(runner, ManagedProviderCliAgentRunner)
-    assert runner.config.model_provider == "hermes"
-    assert runner.config.model_name == "zhipu:glm-5.2"
+    assert runner.config.model_provider == "omp"
+    assert runner.config.model_name == "zai/glm-5.2"
     assert runner.state_root == store.root
 
 
-def test_hermes_resident_runner_persists_artifacts_and_resumes_exact_session(
+def test_omp_resident_runner_persists_artifacts_and_resumes_exact_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = tmp_path / "fake_hermes.py"
+    launcher = tmp_path / "fake_omp.py"
     calls = tmp_path / "calls.jsonl"
-    _write_hermes_launcher(launcher)
+    _write_omp_launcher(launcher)
     monkeypatch.setenv("PROVIDER_CALLS", str(calls))
     state_root = tmp_path / "state"
     runner = ManagedProviderCliAgentRunner(
         ResidentConfig(
-            model_provider="hermes",
-            model_name="zhipu:glm-5.2",
+            model_provider="omp",
+            model_name="zai/glm-5.2",
             model_timeout_s=5,
             model_max_tokens=1234,
             model_toolsets="file,terminal",
         ),
         cwd=tmp_path,
         state_root=state_root,
-        hermes_launcher=launcher,
+        omp_launcher=launcher,
     )
 
     first = asyncio.run(runner.run(_request(), ToolRegistry()))
@@ -128,31 +128,31 @@ def test_hermes_resident_runner_persists_artifacts_and_resumes_exact_session(
         manifest = json.loads(manifest_path.read_text())
         run_dir = manifest_path.parent
         assert manifest["status"] == "completed"
-        assert manifest["provider"] == "hermes"
+        assert manifest["provider"] == "omp"
         assert manifest["resident_turn_id"] == "turn-provider-test"
         assert manifest["model_session"]["state"] == "persisted"
         assert manifest["telemetry"]["raw_stream_equivalence"] == (
             "provider_specific_not_byte_identical"
         )
         assert (run_dir / "prompt.md").is_file()
-        assert (run_dir / "result.md").read_text().strip() == "HERMES_RESIDENT_OK"
+        assert (run_dir / "result.md").read_text().strip() == "OMP_RESIDENT_OK"
         assert (run_dir / "run.log").is_file()
         assert (run_dir / "provider.raw").is_file()
         assert (run_dir / "events.jsonl").is_file()
 
 
-def test_hermes_resume_preserves_stable_handle_when_metadata_reports_internal_id(
+def test_omp_resume_preserves_stable_handle_when_metadata_reports_internal_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = tmp_path / "fake_hermes.py"
+    launcher = tmp_path / "fake_omp.py"
     calls = tmp_path / "calls.jsonl"
-    _write_hermes_launcher(launcher, change_session_id_on_resume=True)
+    _write_omp_launcher(launcher, change_session_id_on_resume=True)
     monkeypatch.setenv("PROVIDER_CALLS", str(calls))
     runner = ManagedProviderCliAgentRunner(
-        ResidentConfig(model_provider="hermes", model_name="zhipu:glm-5.2"),
+        ResidentConfig(model_provider="omp", model_name="zai/glm-5.2"),
         cwd=tmp_path,
         state_root=tmp_path / "state",
-        hermes_launcher=launcher,
+        omp_launcher=launcher,
     )
 
     asyncio.run(runner.run(_request(), ToolRegistry()))
@@ -168,27 +168,27 @@ def test_hermes_resume_preserves_stable_handle_when_metadata_reports_internal_id
     assert json.loads(session_file.read_text())["session_id"] == stable_session_id
 
 
-def test_hermes_missing_resume_is_quarantined_and_retried_fresh_without_turn_replay(
+def test_omp_missing_resume_is_quarantined_and_retried_fresh_without_turn_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = tmp_path / "fake_hermes.py"
+    launcher = tmp_path / "fake_omp.py"
     calls = tmp_path / "calls.jsonl"
     marker = tmp_path / "missing-resume.failed"
-    _write_hermes_launcher(launcher, fail_first_resume_as_missing=True)
+    _write_omp_launcher(launcher, fail_first_resume_as_missing=True)
     monkeypatch.setenv("PROVIDER_CALLS", str(calls))
     monkeypatch.setenv("MISSING_RESUME_MARKER", str(marker))
     state_root = tmp_path / "state"
     runner = ManagedProviderCliAgentRunner(
-        ResidentConfig(model_provider="hermes", model_name="zhipu:glm-5.2"),
+        ResidentConfig(model_provider="omp", model_name="zai/glm-5.2"),
         cwd=tmp_path,
         state_root=state_root,
-        hermes_launcher=launcher,
+        omp_launcher=launcher,
     )
 
     first = asyncio.run(runner.run(_request(), ToolRegistry()))
     recovered = asyncio.run(runner.run(_request(), ToolRegistry()))
 
-    assert first.final_text == recovered.final_text == "HERMES_RESIDENT_OK"
+    assert first.final_text == recovered.final_text == "OMP_RESIDENT_OK"
     rows = [json.loads(line) for line in calls.read_text().splitlines()]
     assert [row["resume_session"] for row in rows] == [False, True, False]
     manifests = [json.loads(path.read_text()) for path in _manifests(state_root)]
@@ -203,24 +203,24 @@ def test_hermes_missing_resume_is_quarantined_and_retried_fresh_without_turn_rep
     assert json.loads(active_sessions[0].read_text())["state"] == "persisted"
 
 
-def test_hermes_missing_resume_detection_requires_pre_dispatch_evidence(
+def test_omp_missing_resume_detection_requires_pre_dispatch_evidence(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "run.log"
     raw_path = tmp_path / "provider.raw"
     metadata_path = tmp_path / "provider-metadata.json"
-    diagnostic = "error: Hermes session stale-handle does not exist\n"
+    diagnostic = "error: omp session stale-handle does not exist\n"
     log_path.write_text(diagnostic)
     raw_path.write_text("")
     metadata_path.write_text("")
 
-    assert _hermes_resume_session_missing(
+    assert _omp_resume_session_missing(
         log_path=log_path,
         raw_path=raw_path,
         metadata_path=metadata_path,
         returncode=8,
     )
-    assert not _hermes_resume_session_missing(
+    assert not _omp_resume_session_missing(
         log_path=log_path,
         raw_path=raw_path,
         metadata_path=metadata_path,
@@ -229,7 +229,7 @@ def test_hermes_missing_resume_detection_requires_pre_dispatch_evidence(
 
     log_path.write_text("provider failed without a pre-dispatch diagnostic\n")
     raw_path.write_text(diagnostic)
-    assert not _hermes_resume_session_missing(
+    assert not _omp_resume_session_missing(
         log_path=log_path,
         raw_path=raw_path,
         metadata_path=metadata_path,
@@ -239,7 +239,7 @@ def test_hermes_missing_resume_detection_requires_pre_dispatch_evidence(
     raw_path.write_text("")
     log_path.write_text(diagnostic)
     metadata_path.write_text('{"session_id":"possibly-started"}')
-    assert not _hermes_resume_session_missing(
+    assert not _omp_resume_session_missing(
         log_path=log_path,
         raw_path=raw_path,
         metadata_path=metadata_path,
@@ -329,23 +329,23 @@ def test_claude_resident_runner_preserves_auth_failure_evidence(
     assert "Not logged in" in Path(manifest["provider_raw_output_path"]).read_text()
 
 
-def test_hermes_resident_runner_captures_timeout_terminally(
+def test_omp_resident_runner_captures_timeout_terminally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = tmp_path / "slow_hermes.py"
+    launcher = tmp_path / "slow_omp.py"
     calls = tmp_path / "calls.jsonl"
-    _write_hermes_launcher(launcher, sleep=True)
+    _write_omp_launcher(launcher, sleep=True)
     monkeypatch.setenv("PROVIDER_CALLS", str(calls))
     state_root = tmp_path / "state"
     runner = ManagedProviderCliAgentRunner(
         ResidentConfig(
-            model_provider="hermes",
-            model_name="zhipu:glm-5.2",
+            model_provider="omp",
+            model_name="zai/glm-5.2",
             model_timeout_s=0.05,
         ),
         cwd=tmp_path,
         state_root=state_root,
-        hermes_launcher=launcher,
+        omp_launcher=launcher,
     )
 
     with pytest.raises(AgentLoopError, match="timeout"):
@@ -361,21 +361,21 @@ def test_hermes_resident_runner_captures_timeout_terminally(
 def test_provider_environment_preserves_absent_provenance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = tmp_path / "fake_hermes.py"
+    launcher = tmp_path / "fake_omp.py"
     calls = tmp_path / "calls.jsonl"
-    _write_hermes_launcher(launcher)
+    _write_omp_launcher(launcher)
     monkeypatch.setenv("PROVIDER_CALLS", str(calls))
     monkeypatch.setenv("ARNOLD_RESIDENT_DELEGATION_CONTEXT", "stale")
     runner = ManagedProviderCliAgentRunner(
-        ResidentConfig(model_provider="hermes", model_name="zhipu:glm-5.2"),
+        ResidentConfig(model_provider="omp", model_name="zai/glm-5.2"),
         cwd=tmp_path,
         state_root=tmp_path / "state",
-        hermes_launcher=launcher,
+        omp_launcher=launcher,
     )
 
     response = asyncio.run(runner.run(_request(), ToolRegistry()))
 
-    assert response.final_text == "HERMES_RESIDENT_OK"
+    assert response.final_text == "OMP_RESIDENT_OK"
     # The child did not need the variable; the assertion documents that the
     # runner succeeded after environment_with_provenance removed stale custody.
     assert os.environ["ARNOLD_RESIDENT_DELEGATION_CONTEXT"] == "stale"

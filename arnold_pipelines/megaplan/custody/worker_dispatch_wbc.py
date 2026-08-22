@@ -77,7 +77,7 @@ _WRITER_SPECS: tuple[WorkerDispatchWriterSpec, ...] = (
         contract_ids=(
             "provider_dispatch",
             "fallback_chain",
-            "hermes_dispatch",
+            "omp_dispatch",
             "shannon_dispatch",
             "shannon_stream_dispatch",
             "shannon_session_dispatch",
@@ -92,7 +92,7 @@ _WRITER_SPECS: tuple[WorkerDispatchWriterSpec, ...] = (
         contract_ids=(
             "worker_subprocess_dispatch",
             "fallback_chain",
-            "hermes_dispatch",
+            "omp_dispatch",
             "shannon_dispatch",
             "shannon_stream_dispatch",
             "shannon_session_dispatch",

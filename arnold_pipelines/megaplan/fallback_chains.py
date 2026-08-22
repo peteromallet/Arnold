@@ -322,7 +322,7 @@ def fallback_observability_fields(
 def provider_family(spec: str) -> str:
     """Return the provider-family boundary used for fallback independence."""
     parsed = parse_agent_spec(spec)
-    if parsed.agent == "hermes" and isinstance(parsed.model, str) and parsed.model:
+    if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
         family = parsed.model.split(":", 1)[0].strip().lower()
         alias_map = {
             "openai-codex": "codex",
@@ -353,7 +353,7 @@ def _object_field(value: object, name: str) -> Any:
     found = getattr(value, name, None)
     if found is not None:
         return found
-    # Worker wrappers (workers/hermes.py) raise CliError("worker_error", ...,
+    # Worker wrappers raise CliError("worker_error", ...,
     # extra={"_external_error": <ExternalError dict>}) — the structured
     # status_code/error_kind/message live nested in extra, not on the error
     # object.  Consult that nested shape so classify_retryability sees the

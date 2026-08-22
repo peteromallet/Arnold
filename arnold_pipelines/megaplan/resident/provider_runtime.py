@@ -25,7 +25,7 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
-_HERMES_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_OMP_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _CLAUDE_TOOLS = {
     "file": ("Read", "Edit", "Write", "Glob", "Grep"),
     "web": ("WebFetch", "WebSearch"),
@@ -73,7 +73,7 @@ def provider_execution_contract(
     if backend == "codex" and normalized != FULL_GENERIC_TOOLSETS:
         raise ValueError(
             "Codex CLI cannot enforce a narrowed generic toolset; use the full "
-            "file,web,terminal policy or select Hermes/Claude"
+            "file,web,terminal policy or select omp/Claude"
         )
     if max_tokens <= 0:
         raise ValueError("max_tokens must be positive")
@@ -111,7 +111,7 @@ def provider_execution_contract(
 def reserve_session_id(backend: str) -> str | None:
     if backend == "claude":
         return str(uuid.uuid4())
-    if backend == "hermes":
+    if backend == "omp":
         return f"resident_{uuid.uuid4().hex}"
     return None
 
@@ -119,8 +119,8 @@ def reserve_session_id(backend: str) -> str | None:
 def valid_session_id(backend: str, session_id: str) -> bool:
     if backend in {"codex", "claude"}:
         return bool(_UUID_RE.fullmatch(session_id))
-    if backend == "hermes":
-        return bool(_HERMES_SESSION_RE.fullmatch(session_id))
+    if backend == "omp":
+        return bool(_OMP_SESSION_RE.fullmatch(session_id))
     return False
 
 
@@ -263,17 +263,17 @@ def _normalize_claude(
     return session_id, final_text, events, usage, failure_category, failure_message
 
 
-def _normalize_hermes(
+def _normalize_omp(
     metadata_path: Path, expected_session_id: str | None
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError):
         metadata = {}
-    # Hermes reports two different identifiers after a resumed turn:
+    # The launcher reports two different identifiers after a resumed turn:
     # ``resumed_session_id`` is the stable handle accepted by the next
     # ``--resume-session`` invocation, while ``session_id`` may be an internal
-    # conversation identifier that SessionDB cannot resolve.  Keep the stable
+    # conversation identifier that cannot be resolved.  Keep the stable
     # resume handle whenever it is available so one successful continuation
     # cannot poison every later resident turn.
     session_id = str(
@@ -285,7 +285,7 @@ def _normalize_hermes(
     usage = dict(metadata.get("usage") or {})
     events = [
         _event(
-            "hermes",
+            "omp",
             "session.started",
             session_id=session_id,
             model=metadata.get("resolved_model"),
@@ -296,14 +296,14 @@ def _normalize_hermes(
         if isinstance(entry, dict):
             events.append(
                 _event(
-                    "hermes",
+                    "omp",
                     str(entry.get("event") or "tool.requested"),
                     tool=entry.get("tool"),
                     tool_call_id=entry.get("tool_call_id"),
                 )
             )
     if metadata:
-        events.append(_event("hermes", "turn.completed", usage=usage))
+        events.append(_event("omp", "turn.completed", usage=usage))
     return session_id, events, usage
 
 
@@ -331,8 +331,8 @@ def collect_provider_evidence(
             failure_category,
             failure_message,
         ) = _normalize_claude(rows, expected_session_id)
-    elif backend == "hermes":
-        session_id, events, usage = _normalize_hermes(
+    elif backend == "omp":
+        session_id, events, usage = _normalize_omp(
             metadata_path, expected_session_id
         )
         try:
@@ -359,7 +359,7 @@ def collect_provider_evidence(
         if "not logged in" in lowered or "authentication_failed" in lowered:
             failure_category = "authentication_failed"
             failure_message = "Claude CLI reported that no authenticated session is available"
-    if returncode == 0 and backend in {"hermes", "claude"} and not final_text:
+    if returncode == 0 and backend in {"omp", "claude"} and not final_text:
         failure_category = "empty_result"
         failure_message = "provider returned success without a final response"
 

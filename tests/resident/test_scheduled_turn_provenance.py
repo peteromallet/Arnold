@@ -201,7 +201,7 @@ def _sfx_row() -> ScheduleDefinition:
                 "prompt_ref": "resident-prompt://superfixer/v1",
                 "prompt": prompt,
                 "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest(),
-                "model": "hermes:deepseek:deepseek-v4-flash",
+                "model": "omp:deepseek/deepseek-v4-flash",
                 "profile": "resident-subagent-standard",
                 "toolsets": ["repo_read"],
                 "work_intent": "execution",

@@ -8,7 +8,7 @@ registers a :class:`TemplateRegistration` keyed by
 
 Import contract
     This module may import prompt builders but must **not** import handlers
-    or workers.  It is a leaf dependency for ``workers/hermes.py`` and the
+    or workers.  It is a leaf dependency for the worker dispatch and the
     handler layer; an import cycle through handlers/workers would deadlock
     the process.
 """
@@ -39,7 +39,7 @@ TemplateBuilder = Callable[..., Path]
 #: Supported registry modes.
 #:
 #: ``file_fill``
-#:     The phase has a scratch template builder.  Hermes/file-tool workers
+#:     The phase has a scratch template builder.  Legacy file-tool workers
 #:     write the seed before invocation; handlers promote filled scratch
 #:     files to canonical artifacts.
 #: ``batch_assembly``
@@ -290,7 +290,7 @@ for _reg in [
     # with STRICT field-level validation (worker_structural_audit). Models
     # that do not see the schema in the user prompt systematically deviate
     # from the required field names/types (observed: deepseek-led fallback,
-    # occurrence 528540c5cfd2). Registering as ``deferred`` makes the hermes
+    # occurrence 528540c5cfd2). Registering as ``deferred`` makes the worker
     # worker append the schema-derived inline JSON template to the prompt
     # (_append_inline_json), giving every model the exact output contract.
     TemplateRegistration(

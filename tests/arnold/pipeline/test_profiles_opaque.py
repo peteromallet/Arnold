@@ -25,7 +25,7 @@ def _write_profiles(path: Path, content: str) -> None:
 
 
 _STAGE_KEYS = frozenset({"synth", "panel_review", "revise"})
-_AGENTS = frozenset({"claude", "codex", "hermes"})
+_AGENTS = frozenset({"claude", "codex", "omp"})
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ class TestNoValidatorRegression:
 [profiles.panel]
 synth = "claude"
 panel_review.optimist = "codex"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "claude"
 """,
         )
@@ -75,7 +75,7 @@ revise = "claude"
         panel = loaded["panel"]
         assert panel["synth"] == "claude"
         assert panel["panel_review.optimist"] == "codex"
-        assert panel["panel_review.pessimist"] == "hermes:provider:model"
+        assert panel["panel_review.pessimist"] == "omp:provider/model"
 
     def test_sub_table_flattened_to_strings_without_validator(self, tmp_path: Path) -> None:
         """Without a validator, TOML sub-tables are flattened to dotted string
@@ -89,7 +89,7 @@ synth = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         loaded = load_profiles(
@@ -100,7 +100,7 @@ pessimist = "hermes:provider:model"
         # Sub-table flattened into dotted string keys — no error.
         panel = loaded["panel"]
         assert panel["panel_review.optimist"] == "codex"
-        assert panel["panel_review.pessimist"] == "hermes:provider:model"
+        assert panel["panel_review.pessimist"] == "omp:provider/model"
 
     def test_dotted_keys_still_flatten_without_validator(self, tmp_path: Path) -> None:
         """Inline dotted keys (e.g. panel_review.optimist) still flatten normally."""
@@ -162,7 +162,7 @@ revise = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         loaded = load_profiles(
@@ -174,7 +174,7 @@ pessimist = "hermes:provider:model"
         panel = loaded["panel"]
         # The validator returns a canonical string from the dict.
         assert "optimist=codex" in panel["panel_review"]
-        assert "pessimist=hermes:provider:model" in panel["panel_review"]
+        assert "pessimist=omp:provider/model" in panel["panel_review"]
         # String keys still validated normally.
         assert panel["synth"] == "claude"
 
@@ -214,7 +214,7 @@ revise = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         loaded = load_profiles(
@@ -281,7 +281,7 @@ revise = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         loaded = load_profiles(
@@ -332,7 +332,7 @@ synth = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         sources = load_profile_sources(

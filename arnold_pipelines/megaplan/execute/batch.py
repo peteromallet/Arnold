@@ -2348,7 +2348,7 @@ def _strip_provider_prefix(model: str | None) -> str | None:
         "codex",
         "deepseek",
         "fireworks",
-        "hermes",
+        "omp",
         "local",
         "minimax",
         "nous",
@@ -2652,7 +2652,7 @@ def _weight_aware_max_tasks_per_batch(
 ) -> int:
     """Shrink the batch for heavy tasks so one worker can finish it.
 
-    The execute worker runs under a fixed tool-iteration budget (Hermes
+    The execute worker runs under a fixed tool-iteration budget (omp
     max_turns, default 90). A batch whose tasks each need many tool calls
     (implementation + multiple test runs) exhausts that budget mid-batch: the
     worker dies, no authority envelopes are stamped, the pending frontier

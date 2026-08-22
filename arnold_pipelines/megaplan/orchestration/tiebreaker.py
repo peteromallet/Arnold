@@ -161,7 +161,7 @@ def _render_tiebreaker_prompt(
     root: Path,
 ):
     schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES[step])
-    tier = ModelTier.ENFORCED if resolved[0] in {"codex", "hermes"} else ModelTier.NON_ENFORCED
+    tier = ModelTier.ENFORCED if resolved[0] in {"codex", "omp"} else ModelTier.NON_ENFORCED
     return render_prompt_for_dispatch(
         resolved[0],
         step,
@@ -241,17 +241,10 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         help="Agent to use for tiebreaker steps",
     )
     parser.add_argument(
-        "--hermes",
-        nargs="?",
-        const="",
-        default=None,
-        help="Use Hermes agent. Optional: specify model",
-    )
-    parser.add_argument(
         "--phase-model",
         action="append",
         default=[],
-        help="Per-step model override, e.g. --phase-model tiebreaker_researcher=hermes:openai/gpt-5",
+        help="Per-step model override, e.g. --phase-model tiebreaker_researcher=omp:deepseek/deepseek-v4-pro",
     )
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--persist", action="store_true")

@@ -12,7 +12,7 @@ def test_babysitter_routing_defaults_to_legacy_deepseek() -> None:
     route = resolve_babysitter_routing({})
     assert route.mode == "legacy"
     assert route.controller_backend == "hermes"
-    assert route.controller_model == "hermes:deepseek:deepseek-v4-flash"
+    assert route.controller_model == "omp:deepseek/deepseek-v4-flash"
     assert route.investigator_model == route.controller_model
 
 

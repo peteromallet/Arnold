@@ -352,7 +352,6 @@ def run_parallel_critique(
     # available at this layer and the downstream uses of args (explicit-agent
     # detection, phase-model overrides) are handled by the caller.
     _args = argparse.Namespace(
-        hermes=None,
         agent=None,
         phase_model=[],
     )
@@ -368,13 +367,13 @@ def run_parallel_critique(
     # ------------------------------------------------------------------
     # Build one WorkerUnit per check
     # ------------------------------------------------------------------
-    # Each unit runs in its OWN process and opens a hermes SessionDB. The
-    # step+agent session_key collapses to a single shared db path
-    # (state_hermes_critic.db), so without an override every concurrent worker
-    # writes the SAME SQLite file → "database is locked". Give each check its
-    # own session db (the legacy _run_check path did this); the override is
-    # plumbed through WorkerUnit.extra["worker_options"]["session_db_path"]
-    # (worker_fanout.py) → run_hermes_step db_override (hermes.py).
+    # Each unit runs in its OWN process and opens its own session DB. The
+    # step+agent session_key collapses to a single shared db path, so without
+    # an override every concurrent worker writes the SAME SQLite file →
+    # "database is locked". Give each check its own session db (the legacy
+    # _run_check path did this); the override is plumbed through
+    # WorkerUnit.extra["worker_options"]["session_db_path"] (worker_fanout.py)
+    # → the worker step's db_override.
     from arnold_pipelines.megaplan.workers._payload import _worker_db_path
 
     units: list[WorkerUnit] = []
@@ -392,7 +391,7 @@ def run_parallel_critique(
         )
         _prompt = _prompt_builder(state, plan_dir, root, _check, _output_path)
         _seam_tier = (
-            ModelTier.ENFORCED if _resolved.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
+            ModelTier.ENFORCED if _resolved.agent in {"codex", "omp"} else ModelTier.NON_ENFORCED
         )
 
         units.append(

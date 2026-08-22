@@ -187,7 +187,7 @@ three-hour backstop:
   the investigation, adjudicates the evidence, makes the meaningful judgement
   calls, and separates the immediate recovery from the category-level fix.
 - **Flash investigators:**
-  `hermes:deepseek:deepseek-v4-flash`. Flash handles the bounded, parallel,
+  `omp:deepseek/deepseek-v4-flash`. Flash handles the bounded, parallel,
   read-only evidence questions that Sol assigns. It is not allowed to invent
   architecture or self-authorize a repair.
 - **Execution:** the bounded recovery owner acts only on Sol's Horizon A
@@ -301,7 +301,7 @@ must satisfy the managed completion contract. Write
   },
   "authoritative_before_fingerprint": "sha256:...",
   "authoritative_after_fingerprint": "sha256:...",
-  "models": {"observer": "hermes:deepseek:deepseek-v4-flash"},
+  "models": {"observer": "omp:deepseek/deepseek-v4-flash"},
   "transport": "resident-managed"
 }
 ```
@@ -400,7 +400,7 @@ evidence pack before dispatching explorers.
 Run one independent, read-only DeepSeek V4 Flash investigator per Sol question.
 Parallelize the questions; keep each report bounded and write one Markdown result
 per question. Use the explicit model
-`hermes:deepseek:deepseek-v4-flash`, normally
+`omp:deepseek/deepseek-v4-flash`, normally
 through the approved `subagent-launcher/fan.py`. Flash is a fast non-reasoning
 evidence worker, so the brief must name the exact artifacts and decision it
 informs; do not ask it for unconstrained architecture. Record the actual model,

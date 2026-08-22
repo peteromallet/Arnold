@@ -361,7 +361,7 @@ def _critique_producer_binding(
         "parallel_reduce"
         if parallel_reduced
         else "registered_file_fill"
-        if agent == "hermes"
+        if agent == "omp"
         else "inline_response"
     )
     binding: dict[str, Any] = {
@@ -824,7 +824,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     # Prefer valid filled critique_evaluator_output.json
                     # over worker.payload; fall back to worker.payload when
                     # scratch is missing/unmodified; fail hard on modified
-                    # invalid scratch when file-fill was instructed (hermes
+                    # invalid scratch when file-fill was instructed (omp
                     # agent).  Raw debug captures above are unaffected.
                     from arnold_pipelines.megaplan.handlers.structured_output import (
                         promote_scratch,
@@ -841,7 +841,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         except (OSError, UnicodeDecodeError):
                             _seed_json = None
 
-                    _file_fill_instructed = eval_agent == "hermes"
+                    _file_fill_instructed = eval_agent == "omp"
 
                     _worker_payload = dict(eval_worker.payload)
                     _, _promoted = promote_scratch(
@@ -1129,7 +1129,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             _revise_ctx = "\n\n".join(_parts)
         # Establish the registered scratch boundary before dispatch.  Prompt
         # rendering writes the same template again, but taking this snapshot
-        # now is what lets promotion distinguish a current-invocation Hermes
+        # now is what lets promotion distinguish a current-invocation omp
         # write from an untouched seed.  Reading the "seed" after dispatch
         # would make every completed file look unmodified and, worse, would
         # leave a pre-existing file outside the current invocation boundary.
@@ -1220,9 +1220,9 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         # Prefer valid filled critique_output.json over worker.payload;
         # fall back to worker.payload when scratch is missing/unmodified;
         # fail hard on modified invalid scratch when file-fill was
-        # instructed (hermes agent).  Canonical promotion to
+        # instructed (omp agent).  Canonical promotion to
         # critique_v{iteration}.json is preserved unchanged below.
-        _file_fill_instructed = agent == "hermes"
+        _file_fill_instructed = agent == "omp"
 
         if _parallel_critique_reduced:
             _scratch_status = "not_applicable"

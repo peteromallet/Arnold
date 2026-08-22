@@ -744,7 +744,6 @@ def _init_args(project_root: Path, plan: str, idea: str, payload: Mapping[str, A
         phase_model=payload.get("phase_model") or [],
         strict_notes=payload.get("strict_notes"),
         profile=payload.get("profile"),
-        hermes=payload.get("hermes"),
         auto_start=False,
     )
 

@@ -40,7 +40,7 @@ from arnold_pipelines.megaplan.workers._projection_caps import (
     capture_caps_source_cursor,
     caps_rebuild_metadata,
     codex_projection_capabilities,
-    hermes_projection_capabilities,
+    omp_projection_capabilities,
     shannon_projection_capabilities,
 )
 from arnold_pipelines.megaplan.orchestration.advisory_projection import (
@@ -253,8 +253,8 @@ class TestCapsProjectionDigest:
         caps2 = codex_projection_capabilities(resumed_session=True)
         assert compute_caps_projection_digest(caps1) != compute_caps_projection_digest(caps2)
 
-    def test_hermes_caps_digest(self) -> None:
-        caps = hermes_projection_capabilities(["file", "terminal"])
+    def test_omp_caps_digest(self) -> None:
+        caps = omp_projection_capabilities(["file", "terminal"])
         digest = compute_caps_projection_digest(caps)
         assert digest.startswith("sha256:")
 

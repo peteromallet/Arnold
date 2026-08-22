@@ -53,7 +53,7 @@ def test_worker_unit_clone_keeps_fallback_metadata_independent() -> None:
         fallback_trigger="availability",
     )
 
-    configured_specs.append("hermes:deepseek:deepseek-v4-pro")
+    configured_specs.append("omp:deepseek/deepseek-v4-pro")
     attempted_specs.append("mutated")
     failed_attempt_reasons.append("mutated")
 
@@ -645,8 +645,8 @@ def test_cross_family_quota_advances(monkeypatch) -> None:
     unit = dataclasses.replace(
         _chain_unit(
             configured_specs=[
-                "hermes:zhipu:glm-5.2",
-                "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+                "omp:zai/glm-5.2",
+                "omp:fireworks/glm-5.2",
             ]
         ),
         resolved=_hermes_mode("zhipu:glm-5.2"),
@@ -666,8 +666,8 @@ def test_cross_family_quota_advances(monkeypatch) -> None:
     assert unit_result.payload == {"attempt": "fallback"}
     assert unit_result.attempt_index == 1
     assert unit_result.attempted_specs == (
-        "hermes:zhipu:glm-5.2",
-        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "omp:zai/glm-5.2",
+        "omp:fireworks/glm-5.2",
     )
     assert unit_result.failed_attempt_reasons == ("quota",)
     assert unit_result.fallback_trigger == "quota"
@@ -691,8 +691,8 @@ def test_same_family_quota_does_not_advance(monkeypatch) -> None:
     unit = dataclasses.replace(
         _chain_unit(
             configured_specs=[
-                "hermes:zhipu:glm-5.2",
-                "hermes:zhipu:glm-4.7",
+                "omp:zai/glm-5.2",
+                "omp:zai/glm-4.7",
             ]
         ),
         resolved=_hermes_mode("zhipu:glm-5.2"),

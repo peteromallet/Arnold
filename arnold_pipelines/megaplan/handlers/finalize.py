@@ -2857,16 +2857,16 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # Prefer valid filled finalize_output.json over worker.payload;
         # fall back to worker.payload when scratch is missing/unmodified;
         # fail hard on modified invalid scratch when file-fill was
-        # instructed (hermes agent).
+        # instructed.
         from arnold_pipelines.megaplan.handlers.structured_output import (
             build_promotion_evidence,
             promote_scratch,
         )
 
-        # Only the Hermes agent can receive file-fill instructions;
+        # Only file-fill workers receive file-fill instructions; the omp/
         # Shannon/Codex workers use inline JSON and should never
         # hard-fail on a modified invalid scratch.
-        file_fill_instructed = agent == "hermes"
+        file_fill_instructed = False
 
         scratch_status, promoted_payload = promote_scratch(
             plan_dir,

@@ -74,7 +74,7 @@ identities (runtime/request/grant/claim/WBC).
 - `python3 -P -m arnold_pipelines.megaplan resume --plan <plan> --project-dir <p>`
   — re-drive a blocked plan.
 - Trigger the superfixer: `resident schedule add` (one-shot or hourly) with
-  `--prompt-file <render_goal>` `--model hermes:deepseek:deepseek-v4-flash`
+  `--prompt-file <render_goal>` `--model omp:deepseek/deepseek-v4-flash`
   `--task-kind autonomous`; then `resident schedule run-once` to fire it.
 - The fixer is triggered two ways (both the SAME deepseek → Sol → deepseek flow):
   - **Hourly schedule** — recurring `PT1H` superfixer backstop.

@@ -13,18 +13,18 @@ from typing import Mapping
 from arnold.agent.contracts import AgentSpec, format_agent_spec, parse_agent_spec
 
 
-MANAGED_AGENT_BACKENDS = frozenset({"hermes", "codex", "claude"})
+MANAGED_AGENT_BACKENDS = frozenset({"omp", "codex", "claude"})
 MANAGED_AGENT_BACKEND_ALIASES = {
     "chatgpt": "codex",
     "shannon": "claude",
 }
 DEFAULT_MANAGED_AGENT_MODELS = {
-    "hermes": "deepseek:deepseek-v4-pro",
+    "omp": "deepseek/deepseek-v4-pro",
     "codex": "gpt-5.6-terra",
     "claude": "opus",
 }
 
-_HERMES_PROVIDER_PREFIXES = (
+_OMP_PROVIDER_PREFIXES = (
     "deepseek:",
     "fireworks:",
     "google:",
@@ -35,7 +35,7 @@ _HERMES_PROVIDER_PREFIXES = (
     "xai:",
     "zhipu:",
 )
-_HERMES_BARE_PREFIXES = (
+_OMP_BARE_PREFIXES = (
     "deepseek-",
     "glm-",
     "kimi-",
@@ -43,11 +43,11 @@ _HERMES_BARE_PREFIXES = (
     "mimo-",
     "qwen-",
 )
-_HERMES_MODEL_ALIASES = {
-    # The direct Zhipu route is Arnold's canonical GLM 5.2 provider path.
-    "glm-5.2": "zhipu:glm-5.2",
+_OMP_MODEL_ALIASES = {
+    # The z.ai route is Arnold's canonical GLM 5.2 provider path.
+    "glm-5.2": "zai/glm-5.2",
     # Preserve the existing Fireworks spelling used in managed profiles.
-    "glm-5p2": "fireworks:accounts/fireworks/models/glm-5p2",
+    "glm-5p2": "fireworks/glm-5.2",
 }
 
 
@@ -83,13 +83,13 @@ MANAGED_AGENT_CAPABILITIES = {
         provider_timeout="supervisor_enforced",
         raw_stream="codex_cli_jsonl",
     ),
-    "hermes": ManagedAgentCapabilities(
+    "omp": ManagedAgentCapabilities(
         persistent_session=True,
         exact_session_resume=True,
         generic_tool_policy="native_toolset_filter",
         max_output_tokens="native_request_cap",
         provider_timeout="supervisor_enforced",
-        raw_stream="hermes_launcher_stdout_and_stderr",
+        raw_stream="omp_launcher_stdout_and_stderr",
     ),
     "claude": ManagedAgentCapabilities(
         persistent_session=True,
@@ -147,16 +147,39 @@ def infer_managed_agent_backend(model: str) -> str | None:
         return "codex"
     if any(token in lowered for token in ("claude", "sonnet", "opus", "haiku")):
         return "claude"
-    if lowered.startswith(_HERMES_PROVIDER_PREFIXES) or lowered.startswith(
-        _HERMES_BARE_PREFIXES
+    if lowered.startswith(_OMP_PROVIDER_PREFIXES) or lowered.startswith(
+        _OMP_BARE_PREFIXES
     ):
-        return "hermes"
+        return "omp"
+    # omp-native selector form ``provider/model`` (e.g. ``deepseek/deepseek-v4-pro``,
+    # ``zai/glm-5.2``) — provider-slash-model with a known omp provider.
+    if any(
+        lowered.startswith(f"{prefix}/")
+        for prefix in (
+            "deepseek",
+            "zai",
+            "zhipu",
+            "fireworks",
+            "google",
+            "kimi",
+            "moonshot",
+            "kimi-code",
+            "minimax",
+            "mimo",
+            "openrouter",
+            "xai",
+            "grok",
+            "anthropic",
+            "openai-codex",
+        )
+    ):
+        return "omp"
     return None
 
 
-def _normalize_hermes_model(model: str) -> str:
+def _normalize_omp_model(model: str) -> str:
     normalized = str(model).strip()
-    return _HERMES_MODEL_ALIASES.get(normalized.lower(), normalized)
+    return _OMP_MODEL_ALIASES.get(normalized.lower(), normalized)
 
 
 def resolve_managed_agent_route(
@@ -217,8 +240,8 @@ def resolve_managed_agent_route(
         runtime_model = parsed.model or defaults[resolved_backend]
     else:
         runtime_model = normalized_model or defaults[resolved_backend]
-    if resolved_backend == "hermes":
-        runtime_model = _normalize_hermes_model(runtime_model)
+    if resolved_backend == "omp":
+        runtime_model = _normalize_omp_model(runtime_model)
 
     model_spec = format_agent_spec(
         AgentSpec(agent=resolved_backend, model=runtime_model, effort=effort)

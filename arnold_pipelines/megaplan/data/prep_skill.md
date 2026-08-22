@@ -290,7 +290,7 @@ pin the critique **phase/orchestrator**. They do not by themselves pin the
 per-lens critics chosen by adaptive critique. In the normal adaptive path, a
 premium evaluator/director may run first and then dispatch the selected critique
 lenses to cheaper DeepSeek/Kimi-style workers; seeing `critique_evaluator` on a
-premium model followed by `critique` on Hermes/DeepSeek is expected. Only pin
+premium model followed by `critique` on omp/DeepSeek is expected. Only pin
 `execution.critic_model` when you intentionally want to override that adaptive
 critic-worker routing.
 

@@ -1117,7 +1117,7 @@ def _resident_core_prompt() -> str:
         "and verify in this turn — act on them yourself with the resident tools; do not over-delegate.\n"
         "2) MULTI-STEP or UNKNOWN work — anything that needs investigation before a fix, spans repos or "
         "surfaces, or where the right solution is not obvious — run the fixer-style loop: (a) dispatch a "
-        "small read-only SWARM (parallel subagents via the resident subagent/launch surface: deepseek/hermes "
+        "small read-only SWARM (parallel subagents via the resident subagent/launch surface: deepseek/omp "
         "investigators) to map the problem and collect evidence; (b) get a SOLUTION from a strong "
         "decision-maker (codex via route_delegated_task) that names the durable fix; (c) EXECUTE the fix "
         "yourself with the resident tools and verify it with the same evidence standard the fixer uses — "
@@ -1438,7 +1438,7 @@ class MegaplanResidentProfile:
                     "standard": MANAGED_RUN_SCHEMA,
                     "delegation_policy": delegation_policy_hot_context(),
                     "backend": "auto",
-                    "providers": ["hermes", "codex", "claude"],
+                    "providers": ["omp", "codex", "claude"],
                     "provider_routing": "model spec inferred; explicit compatible override allowed",
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
@@ -1858,7 +1858,7 @@ class MegaplanResidentProfile:
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
             ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
             ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
-            ToolRegistration("launch_subagent", "Launch or durably queue a provider-aware resident-managed agent through Hermes, Codex, or Claude with one durable manifest, bounded predecessor references, concise description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Singular or multi-predecessor successors preserve provenance and make the newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch or durably queue a provider-aware resident-managed agent through omp, Codex, or Claude with one durable manifest, bounded predecessor references, concise description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Singular or multi-predecessor successors preserve provenance and make the newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)

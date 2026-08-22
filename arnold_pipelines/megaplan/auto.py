@@ -142,7 +142,7 @@ DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
 # manual state surgery, whereas over-waiting on a genuinely-dead phase only
 # costs wall-clock. Tighten once a stall becomes cheaply recoverable (resume
 # the resume_cursor instead of terminal-failing). The accurate per-stream
-# heartbeat (workers/hermes.py) is the primary signal; this is the net.
+# heartbeat (the worker) is the primary signal; this is the net.
 DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 1800
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
@@ -7886,7 +7886,7 @@ def build_auto_parser(subparsers: Any) -> None:
         default=None,
         help=(
             "Live phase routing override forwarded to phase subprocesses, "
-            "for example --phase-model execute=hermes:deepseek:deepseek-v4-pro."
+            "for example --phase-model execute=omp:deepseek/deepseek-v4-pro."
         ),
     )
     auto_parser.add_argument(

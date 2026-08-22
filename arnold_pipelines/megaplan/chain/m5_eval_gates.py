@@ -112,7 +112,7 @@ _VENDOR_SUBSTRINGS: tuple[str, ...] = (
     "openai",
     "anthropic",
     "deepseek",
-    "hermes",
+    "omp",
     "gemini",
     "kimi",
 )

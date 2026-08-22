@@ -49,7 +49,7 @@ from arnold_pipelines.megaplan.strategy.contract import (
 from arnold_pipelines.megaplan.strategy.projection import project_strategy
 from arnold_pipelines.megaplan.workers._projection_caps import (
     codex_projection_capabilities,
-    hermes_projection_capabilities,
+    omp_projection_capabilities,
     shannon_projection_capabilities,
 )
 
@@ -197,7 +197,7 @@ def _worker_capabilities_builder(
 ) -> dict[str, Any]:
     payload = _payload(records)
     codex = codex_projection_capabilities(**payload["codex"])
-    hermes = hermes_projection_capabilities(payload["hermes_toolsets"])
+    omp_caps = omp_projection_capabilities(payload["omp_toolsets"])
     shannon = shannon_projection_capabilities(**payload["shannon"])
     return _projection_view(
         "worker-capabilities",
@@ -205,7 +205,7 @@ def _worker_capabilities_builder(
         {
             "capabilities": {
                 "codex": vars(codex),
-                "hermes": vars(hermes),
+                "omp": vars(omp_caps),
                 "shannon": vars(shannon),
             }
         },
@@ -458,7 +458,7 @@ def rebuild_registry(tmp_path: Path) -> ProjectionRegistry:
             "worker-capabilities",
             {
                 "codex": {"resumed_session": False},
-                "hermes_toolsets": ["file-readonly"],
+                "omp_toolsets": ["file-readonly"],
                 "shannon": {"read_only": True},
             },
             {
@@ -467,7 +467,7 @@ def rebuild_registry(tmp_path: Path) -> ProjectionRegistry:
                     "session_has_plan_dir_access": True,
                     "checkpoint_write_access": False,
                 },
-                "hermes_toolsets": ["terminal"],
+                "omp_toolsets": ["terminal"],
                 "shannon": {"read_only": False},
             },
         ),

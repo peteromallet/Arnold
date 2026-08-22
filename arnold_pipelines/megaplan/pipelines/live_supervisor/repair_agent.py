@@ -50,8 +50,8 @@ class FakeRepairAgent:
         return RepairRecommendation(command="doctor", context={"plan_name": incident.plan_entry.plan_name})
 
 
-class HermesRepairAgent:
-    """Repair agent backed by a Hermes/Codex-style model launcher.
+class OmpRepairAgent:
+    """Repair agent backed by an omp/Codex-style model launcher.
 
     When the launcher handle is absent, raises ``RepairUnavailable`` so the
     pipeline degrades to report-only rather than crashing.
@@ -68,12 +68,12 @@ class HermesRepairAgent:
         if self._launcher is None:
             raise RepairUnavailable("no repair-agent launcher configured")
         # Real launch would go here; the protocol keeps the surface testable.
-        raise NotImplementedError("HermesRepairAgent.launch not implemented in MVP")
+        raise NotImplementedError("OmpRepairAgent.launch not implemented in MVP")
 
 
 __all__ = [
     "RepairAgent",
     "RepairUnavailable",
     "FakeRepairAgent",
-    "HermesRepairAgent",
+    "OmpRepairAgent",
 ]

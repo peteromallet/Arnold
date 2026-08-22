@@ -480,7 +480,7 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
     # ----- prompt-size guard: keep the assembled context under ~150K tokens -----
     # Estimate tokens ≈ chars / 4.  The full plan text is the dominant contributor;
     # a 1.6M-token prompt silently overflows the model context and produces an
-    # empty response (see hermes retry-on-empty guard).
+    # empty response (see the worker retry-on-empty guard).
     _TOKEN_BUDGET = 150_000
     _CHAR_BUDGET = _TOKEN_BUDGET * 4  # ~600K chars
 

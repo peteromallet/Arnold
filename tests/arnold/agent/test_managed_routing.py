@@ -11,9 +11,9 @@ from arnold.agent.routing import (
 @pytest.mark.parametrize(
     ("model", "backend"),
     [
-        ("hermes:glm-5.2", "hermes"),
-        ("hermes:zhipu:glm-5.2", "hermes"),
-        ("zhipu:glm-5.2", "hermes"),
+        ("omp:zai/glm-5.2", "omp"),
+        ("zhipu:glm-5.2", "omp"),
+        ("omp:fireworks/kimi-k2.6", "omp"),
         ("codex:gpt-5.6-terra", "codex"),
         ("gpt-5.6-sol", "codex"),
         ("claude:opus", "claude"),
@@ -26,12 +26,12 @@ def test_infers_backend_from_agent_specs_and_model_families(
     assert infer_managed_agent_backend(model) == backend
 
 
-def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
-    route = resolve_managed_agent_route(model="hermes:glm-5.2")
+def test_omp_glm_52_uses_direct_zhipu_route() -> None:
+    route = resolve_managed_agent_route(model="omp:zai/glm-5.2")
 
-    assert route.backend == "hermes"
-    assert route.model == "zhipu:glm-5.2"
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.backend == "omp"
+    assert route.model == "zai/glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
     assert route.backend_source == "model_spec"
 
 
@@ -40,7 +40,7 @@ def test_hermes_glm_52_uses_direct_zhipu_route() -> None:
     [
         ("codex:gpt-5.6-sol:high", "codex", "gpt-5.6-sol", "high"),
         ("claude:opus:high", "claude", "opus", "high"),
-        ("hermes:zhipu:glm-5.2", "hermes", "zhipu:glm-5.2", None),
+        ("omp:zai/glm-5.2", "omp", "zai/glm-5.2", None),
     ],
 )
 def test_resolves_each_supported_provider(
@@ -68,8 +68,7 @@ def test_explicit_compatible_backend_is_preserved() -> None:
 @pytest.mark.parametrize(
     ("backend", "model", "expected"),
     [
-        ("codex", "hermes:glm-5.2", "hermes"),
-        ("hermes", "codex:gpt-5.6-sol", "codex"),
+        ("omp", "codex:gpt-5.6-sol", "codex"),
         ("claude", "gpt-5.6-sol", "codex"),
     ],
 )
@@ -85,11 +84,11 @@ def test_rejects_explicit_backend_model_mismatch(
 
 def test_backend_default_can_be_overridden_without_a_model() -> None:
     route = resolve_managed_agent_route(
-        backend="hermes",
-        default_models={"hermes": "zhipu:glm-5.2"},
+        backend="omp",
+        default_models={"omp": "zai/glm-5.2"},
     )
 
-    assert route.model_spec == "hermes:zhipu:glm-5.2"
+    assert route.model_spec == "omp:zai/glm-5.2"
 
 
 def test_unknown_backend_fails_clearly() -> None:

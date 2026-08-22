@@ -201,8 +201,8 @@ DELEGATION_DELIVERY_INSTRUCTION_HEADER = (
 )
 
 # resident/ -> megaplan/ -> skills/subagent-launcher/
-LAUNCHER_PATH = (
-    Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_hermes_agent.py"
+OMP_LAUNCHER_PATH = (
+    Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_omp_agent.py"
 )
 CLAUDE_LAUNCHER_PATH = (
     Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_claude_agent.py"
@@ -3423,7 +3423,7 @@ def launch_managed_subagent_detached(
     The supervisor process owns the manifest transitions and durable output, so
     the Discord resident can return immediately without losing lifecycle state.
     """
-    if backend not in {"hermes", "codex", "claude"}:
+    if backend not in {"omp", "codex", "claude"}:
         raise ValueError(f"unsupported durable managed-agent backend: {backend}")
     provider_contract = provider_execution_contract(
         backend=backend,
@@ -4665,12 +4665,12 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(result_path),
                 prompt,
             ]
-        elif backend == "hermes":
-            if not LAUNCHER_PATH.exists():
-                raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
+        elif backend == "omp":
+            if not OMP_LAUNCHER_PATH.exists():
+                raise FileNotFoundError(f"omp launcher not found: {OMP_LAUNCHER_PATH}")
             argv = [
                 sys.executable,
-                str(LAUNCHER_PATH),
+                str(OMP_LAUNCHER_PATH),
                 "--model",
                 str(manifest["model"]),
                 "--toolsets",
@@ -4735,10 +4735,10 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env = environment_with_provenance(worker_provenance)
         if worker_env is None:
             worker_env = os.environ.copy()
-        if backend == "hermes":
+        if backend == "omp":
             # The launcher is executed from the resident package, but its
             # process cwd is the target project.  Without an explicit runtime
-            # root, launch_hermes_agent's fallback discovery selects the
+            # root, the launcher's fallback discovery selects the
             # target checkout (or a stale global PYTHONPATH), so an editable
             # runtime patch is not actually the code the fixer imports.
             # Bind the provider process to the same approved runtime source
@@ -4764,7 +4764,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 worker_env["PYTHONPATH"] = os.pathsep.join(
                     part for part in (runtime_root, prior_pythonpath) if part
                 )
-        if backend == "hermes" and timeout_s is None:
+        if backend == "omp" and timeout_s is None:
             worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
@@ -4878,7 +4878,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                     ),
                 )
         write_normalized_events(events_path, evidence.events)
-        if backend in {"hermes", "claude"} and evidence.final_text:
+        if backend in {"omp", "claude"} and evidence.final_text:
             _atomic_text(result_path, evidence.final_text.rstrip() + "\n")
         result_path.touch(exist_ok=True)
         if evidence.failure_category and returncode == 0:
@@ -7600,7 +7600,7 @@ def list_managed_resident_agents(
     }
 
 
-SUPERFIXER_PROACTIVE_MODEL_SPEC = "hermes:deepseek:deepseek-v4-flash"
+SUPERFIXER_PROACTIVE_MODEL_SPEC = "omp:deepseek/deepseek-v4-flash"
 
 
 def launch_superfixer_proactive_managed(
@@ -7620,17 +7620,17 @@ def launch_superfixer_proactive_managed(
     the durable manifest (``schedule_occurrence``), and ``launch_origin``
     carries the scheduled-turn source kind, so the durable launch receipt
     links back to the occurrence claim and forward to the final run receipt.
-    The model spec defaults to the fixed hermes/deepseek-v4-flash backstop
+    The model spec defaults to the fixed omp deepseek-v4-flash backstop
     identity used by the hourly schedule; anything else fails closed.
     """
-    if model_spec.count(":") < 1:
+    if not model_spec.startswith("omp:"):
         raise ValueError(
-            f"superfixer model spec requires a provider prefix: {model_spec!r}"
+            f"superfixer model spec requires the omp backend: {model_spec!r}"
         )
     backend, _, model = model_spec.partition(":")
-    if backend != "hermes":
+    if backend != "omp":
         raise ValueError(
-            f"superfixer backstop requires the hermes backend: {model_spec!r}"
+            f"superfixer backstop requires the omp backend: {model_spec!r}"
         )
     return launch_managed_subagent_detached(
         task=task,
@@ -7679,10 +7679,10 @@ async def launch_subagent_task(
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
-    The model/agent spec selects Hermes, Codex, or Claude when ``backend`` is
+    The model/agent spec selects omp, Codex, or Claude when ``backend`` is
     ``"auto"``.  Explicit compatible overrides remain supported.  All three
     providers use the same durable background manifest and delivery lifecycle;
-    old non-Discord callers may still request synchronous Hermes explicitly.
+    old non-Discord callers may still request synchronous omp explicitly.
     """
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
@@ -7704,7 +7704,7 @@ async def launch_subagent_task(
         default_backend="codex",
         default_models={
             "codex": route.model,
-            "hermes": config.subagent_model_name,
+            "omp": config.subagent_model_name,
             "claude": "opus",
         },
     )
@@ -7767,9 +7767,9 @@ async def launch_subagent_task(
             **launch_kwargs,
         )
 
-    if provider_route.backend != "hermes" or backend == "auto":
+    if provider_route.backend != "omp" or backend == "auto":
         raise ValueError(
-            "non-Hermes resident subagents and inferred provider routes require "
+            "non-omp resident subagents and inferred provider routes require "
             "background=True for durable lifecycle tracking"
         )
     compatibility_provenance = _canonical_launch_provenance(
@@ -7779,14 +7779,14 @@ async def launch_subagent_task(
     )
     if compatibility_provenance["applicability"] == "applicable":
         raise ValueError(
-            "Hermes compatibility launches are synchronous and cannot satisfy durable Discord custody"
+            "omp compatibility launches are synchronous and cannot satisfy durable Discord custody"
         )
-    if not LAUNCHER_PATH.exists():
-        raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
+    if not OMP_LAUNCHER_PATH.exists():
+        raise FileNotFoundError(f"omp launcher not found: {OMP_LAUNCHER_PATH}")
 
     argv: list[str] = [
         sys.executable,
-        str(LAUNCHER_PATH),
+        str(OMP_LAUNCHER_PATH),
         "--model",
         provider_route.model,
         "--toolsets",
@@ -7856,7 +7856,7 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     launch.add_argument(
         "--backend",
         default="auto",
-        choices=("auto", "hermes", "codex", "claude", "chatgpt", "shannon"),
+        choices=("auto", "omp", "codex", "claude", "chatgpt", "shannon"),
         help="Provider override; auto infers from --model and is the default",
     )
     launch.add_argument("--model")

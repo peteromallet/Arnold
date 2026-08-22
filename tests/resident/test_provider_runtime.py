@@ -37,7 +37,7 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
             timeout_s=90,
             timeout_source="trusted_cli",
         )
-        for backend in ("codex", "hermes", "claude")
+        for backend in ("codex", "omp", "claude")
     }
 
     for backend, contract in contracts.items():
@@ -48,7 +48,7 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
         assert contract["controls"]["max_tokens"] == 4096
         assert contract["controls"]["timeout_s"] == 90.0
         assert contract["backend"] == backend
-    assert contracts["hermes"]["capabilities"]["max_output_tokens"] == "native_request_cap"
+    assert contracts["omp"]["capabilities"]["max_output_tokens"] == "native_request_cap"
     assert contracts["claude"]["capabilities"]["max_output_tokens"] == (
         "claude_code_environment_cap"
     )
@@ -59,7 +59,7 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
 
 def test_unbounded_provider_contract_is_explicit_and_provenanced() -> None:
     contract = provider_execution_contract(
-        backend="hermes",
+        backend="omp",
         toolsets="file,web,terminal",
         max_tokens=4096,
         timeout_s=None,
@@ -77,7 +77,7 @@ def test_unbounded_provider_contract_is_explicit_and_provenanced() -> None:
 def test_explicit_provider_timeout_requires_trusted_provenance() -> None:
     with pytest.raises(ValueError, match="trusted ingress provenance"):
         provider_execution_contract(
-            backend="hermes",
+            backend="omp",
             toolsets="file,web,terminal",
             max_tokens=4096,
             timeout_s=30,
@@ -106,8 +106,8 @@ def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
     [
         ("codex", "019f5d2e-d5da-75f3-a617-4712a1c57cc4", True),
         ("claude", "019f5d2e-d5da-75f3-a617-4712a1c57cc4", True),
-        ("hermes", "resident_0123456789abcdef", True),
-        ("hermes", "contains spaces", False),
+        ("omp", "resident_0123456789abcdef", True),
+        ("omp", "contains spaces", False),
         ("claude", "not-a-uuid", False),
     ],
 )
@@ -217,60 +217,3 @@ def test_claude_launcher_persists_new_sessions_and_resumes_exact_id() -> None:
         )
 
 
-def test_hermes_launcher_hydrates_persisted_history_on_resume(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    launcher = _load_launcher("launch_hermes_agent.py")
-    session_id = "resident_0123456789abcdef"
-    captured: dict[str, object] = {}
-
-    class _DB:
-        def get_session(self, requested):
-            return {"id": requested}
-
-        def get_messages_as_conversation(self, requested):
-            assert requested == session_id
-            return [{"role": "user", "content": "prior turn"}]
-
-    class _Agent:
-        def __init__(self, **kwargs):
-            self.session_id = kwargs["session_id"]
-            self.context_compressor = type(
-                "Compressor",
-                (),
-                {"threshold_tokens": 1000, "context_length": 2000, "threshold_percent": 0.5},
-            )()
-            self._print_fn = None
-
-        def run_conversation(self, **kwargs):
-            captured.update(kwargs)
-            return {
-                "final_response": "RESUMED",
-                "messages": [],
-                "output_tokens": 2,
-            }
-
-    monkeypatch.setattr(launcher, "_load_hermes_env", lambda: None)
-    monkeypatch.setattr(launcher, "_prefer_legacy_megaplan_distribution", lambda: None)
-    monkeypatch.setattr(launcher, "_add_fallback_megaplan_paths", lambda: None)
-    monkeypatch.setattr(
-        launcher,
-        "_import_runtime",
-        lambda: (_Agent, _DB, lambda model: (model, {"api_key": "present"})),
-    )
-
-    metadata = tmp_path / "metadata.json"
-    launcher.run(
-        model="zhipu:glm-5.2",
-        query="new turn",
-        session_id=session_id,
-        resume_session=True,
-        metadata_file=str(metadata),
-        project_dir=str(tmp_path),
-    )
-
-    assert captured["conversation_history"] == [
-        {"role": "user", "content": "prior turn"}
-    ]
-    assert json.loads(metadata.read_text())["session_id"] == session_id
-    assert "RESUMED" in capsys.readouterr().out

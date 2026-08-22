@@ -63,7 +63,7 @@ def test_adopt_rebinds_plan_project_dir_and_clears_active_step(tmp_path: Path) -
                     "phase_model": ["plan=claude:low", "execute=claude:high"],
                     "tier_models": {
                         "execute": {
-                            "1": "hermes:deepseek:deepseek-v4-pro",
+                            "1": "omp:deepseek/deepseek-v4-pro",
                             "4": "claude:low",
                         }
                     },

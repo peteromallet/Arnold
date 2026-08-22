@@ -3,7 +3,7 @@
 
 The watchdog's status trigger (``MEGAPLAN_SUPERFIXER_ONLY=1``) Popen's
 ``arnold-babysitter``, which executes this module.  The babysitter is ONE
-detached ``hermes:deepseek:deepseek-v4-flash`` managed agent whose goal prompt
+detached ``omp:deepseek/deepseek-v4-flash`` managed agent whose goal prompt
 drives the entire recovery flow itself — bounded swarm -> codex -> implement
 -> relaunch -> prove (see the rendered goal).  There is deliberately NO coded
 multi-stage orchestrator: the single agent IS the orchestrator.
@@ -24,7 +24,7 @@ non-zero rc into a hard abort, never a fallthrough to another repair route):
        compatible engine-root resolution).
     4. Launch ONE managed Flash agent through
        ``arnold_pipelines.megaplan.managed_agent`` (backend=babysitter); the
-       worker is ``launch_hermes_agent.py --model=hermes:deepseek:deepseek-v4-flash
+       worker is ``launch_omp_agent.py --model=omp:deepseek/deepseek-v4-flash
        --toolsets=file,web,terminal --query-file=<goal> --project-dir=<engine>``
        so the agent can run fan.py and codex exec.  This process stays alive
        as the managed-agent supervisor for the whole run, so the watchdog's
@@ -36,7 +36,7 @@ non-zero rc into a hard abort, never a fallthrough to another repair route):
 Env overrides (all optional):
     ARNOLD_BABYSITTER_SESSION / _WORKSPACE / _PLAN / _RUN_KIND / _OCCURRENCE /
     _GOAL_FILE / _MARKER_DIR / _REPAIR_DATA_DIR   watchdog-provided context
-    ARNOLD_BABYSITTER_MODEL       Flash model (default hermes:deepseek:deepseek-v4-flash)
+    ARNOLD_BABYSITTER_MODEL       Flash model (default omp:deepseek/deepseek-v4-flash)
     ARNOLD_BABYSITTER_DIFFICULTY  managed-run difficulty D1-D10 (default 8)
 """
 
@@ -67,7 +67,7 @@ LAUNCH_RECEIPT_SCHEMA = "arnold.superfixer.babysitter_launch_receipt.v1"
 DISPATCH_RECEIPT_NAME = "{session}.babysitter-receipt.json"
 LAUNCH_RECEIPT_NAME = "{session}.babysitter-launch-receipt.json"
 
-DEFAULT_MODEL = "hermes:deepseek:deepseek-v4-flash"
+DEFAULT_MODEL = "omp:deepseek/deepseek-v4-flash"
 TOOLSETS = "file,web,terminal"
 RUN_KIND = "automatic_watchdog_source_repair"
 ORIGIN_KIND = "watchdog_source_repair"
@@ -133,7 +133,7 @@ def _engine_roots() -> list[Path]:
     """Live engine roots in watchdog precedence, our own tree as the fallback.
 
     Mirrors the watchdog's ``_superfixer_engine_roots`` so the babysitter
-    resolves the goal renderer / hermes launcher from the SAME runtime the
+    resolves the goal renderer / omp launcher from the SAME runtime the
     watchdog dispatch used, never a stale hardcoded tree.
     """
     roots: list[Path] = []
@@ -164,12 +164,12 @@ def _resolve_asset(relative: str) -> Path:
 
 def _resolve_engine_root() -> Path:
     """The live engine root: the first candidate tree carrying the babysitter
-    assets (renderer + hermes subagent launcher), mirroring the watchdog."""
+    assets (renderer + omp subagent launcher), mirroring the watchdog."""
     renderer_rel = (
         "arnold_pipelines/megaplan/skills/babysitter/scripts/render_babysitter_goal.py"
     )
     launcher_rel = (
-        "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
     )
     for root in _engine_roots():
         if (root / renderer_rel).is_file() and (root / launcher_rel).is_file():
@@ -181,7 +181,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m arnold_pipelines.megaplan.cloud.babysitter.launch",
         description=(
-            "Launch ONE detached hermes:deepseek:deepseek-v4-flash managed "
+            "Launch ONE detached omp:deepseek/deepseek-v4-flash managed "
             "babysitter whose goal prompt drives swarm -> codex -> implement "
             "-> relaunch -> prove."
         ),
@@ -456,11 +456,11 @@ def _managed_spec(
     else:
         launcher = (
             engine_root
-            / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+            / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
         )
         if not launcher.is_file():
-            raise RuntimeError(f"hermes subagent launcher unavailable: {launcher}")
-        # Strip the managed-agent env vars the supervisor injects, so the hermes
+            raise RuntimeError(f"omp subagent launcher unavailable: {launcher}")
+        # Strip the managed-agent env vars the supervisor injects, so the omp
         # launcher runs the goal as a DIRECT worker of this managed run instead
         # of re-exec'ing itself as a nested "research" run.
         worker_argv = [

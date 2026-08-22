@@ -84,7 +84,7 @@ def run_gate_checks(
         "project_dir_writable": os.access(project_dir, os.W_OK),
         "success_criteria_present": bool(meta.get("success_criteria")),
     }
-    if configured_agent != "hermes":
+    if configured_agent != "omp":
         checks["claude_available"] = bool(lookup("claude"))
         checks["codex_available"] = bool(lookup("codex"))
     return {

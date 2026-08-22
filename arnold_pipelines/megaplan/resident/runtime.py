@@ -1564,12 +1564,20 @@ class ResidentRuntime:
         system_prompt: str,
         hot_context: dict[str, Any],
     ) -> dict[str, Any]:
-        try:
-            normalized_model, agent_kwargs = resolve_model(self.config.model_name)
-        except Exception:
-            if ":" in self.config.model_name:
-                raise
-            normalized_model, agent_kwargs = self.config.model_name, {}
+        if self.config.model_provider in {"omp", "codex", "claude"}:
+            # Managed-provider runners receive the canonical model selector
+            # directly (omp:provider/model, codex gpt-5.x, claude model).
+            # The legacy OpenAI-compatible resolver below only applies to
+            # non-managed providers and would reject omp selectors.
+            normalized_model = self.config.model_name
+            agent_kwargs: dict[str, Any] = {}
+        else:
+            try:
+                normalized_model, agent_kwargs = resolve_model(self.config.model_name)
+            except Exception:
+                if ":" in self.config.model_name:
+                    raise
+                normalized_model, agent_kwargs = self.config.model_name, {}
         rendered = render_step_message(
             StepInvocation(
                 kind="model",

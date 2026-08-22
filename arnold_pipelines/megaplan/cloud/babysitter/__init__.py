@@ -2,7 +2,7 @@
 
 The watchdog's status trigger (``MEGAPLAN_SUPERFIXER_ONLY=1``) launches the
 ``arnold-babysitter`` wrapper, which runs this package's ``launch`` module.
-The launch module spawns ONE managed ``hermes:deepseek:deepseek-v4-flash``
+The launch module spawns ONE managed ``omp:deepseek/deepseek-v4-flash``
 agent whose goal prompt drives the whole swarm -> codex -> implement ->
 relaunch -> prove recovery flow.  There is no coded multi-stage orchestrator
 anymore: the single agent IS the orchestrator.

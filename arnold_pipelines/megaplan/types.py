@@ -489,7 +489,7 @@ def resolved_default_model_for_agent(agent: str) -> str | None:
     'claude-opus-4-7'
     >>> resolved_default_model_for_agent("codex")
     'gpt-5.5'
-    >>> resolved_default_model_for_agent("hermes") is None
+    >>> resolved_default_model_for_agent("omp") is None
     True
     """
     from arnold_pipelines.megaplan.defaults import CLAUDE_DEFAULT_MODEL, CODEX_DEFAULT_MODEL

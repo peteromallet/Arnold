@@ -254,12 +254,12 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
 
     assert config.profile == "agentbox_operator"
     assert dry_run["profile"] == "agentbox_operator"
-    assert dry_run["model_provider"] == "hermes"
-    assert dry_run["model"] == "zhipu:glm-5.2"
+    assert dry_run["model_provider"] == "omp"
+    assert dry_run["model"] == "zai/glm-5.2"
     assert isinstance(selected, AgentBoxOperatorProfile)
     assert ResidentConfig().profile == "megaplan"
-    assert ResidentConfig().model_provider == "hermes"
-    assert ResidentConfig().model_name == "zhipu:glm-5.2"
+    assert ResidentConfig().model_provider == "omp"
+    assert ResidentConfig().model_name == "zai/glm-5.2"
     assert env_config.profile == "agentbox_operator"
 
 

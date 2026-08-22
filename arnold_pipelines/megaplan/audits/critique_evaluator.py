@@ -78,12 +78,12 @@ def roster_for_vendor(vendor: str) -> tuple[_RosterEntry, ...]:
     )
 
 
-def _normalize_hermes_spec(spec: str) -> str:
-    """Extract the model name from a hermes provider spec.
+def _normalize_omp_spec(spec: str) -> str:
+    """Extract the model name from an omp provider spec.
 
-    ``hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`` → ``deepseek-v4-pro``
-    ``hermes:deepseek:deepseek-v4-flash``              → ``deepseek-v4-flash``
-    ``hermes:glm-5.1``                                 → ``glm-5.1``
+    ``omp:fireworks/deepseek-v4-pro`` → ``deepseek-v4-pro``
+    ``omp:deepseek/deepseek-v4-flash``              → ``deepseek-v4-flash``
+    ``omp:zai/glm-5.1``                                 → ``glm-5.1``
 
     The last ``/``-delimited segment wins; if there is no ``/`` the last
     ``:``-delimited segment is used.
@@ -128,9 +128,9 @@ def _resolve_canonical(model: str) -> str:
       ``claude`` → ``claude-opus-4-7``, ``codex`` → ``gpt-5.5``.
     * Fully-qualified premium specs pass through the model component:
       ``claude:claude-opus-4-7`` → ``claude-opus-4-7``.
-    * Hermes provider specs extract the trailing model name:
-      ``hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`` → ``deepseek-v4-pro``,
-      ``hermes:deepseek:deepseek-v4-flash`` → ``deepseek-v4-flash``.
+    * omp provider specs extract the trailing model name:
+      ``omp:fireworks/deepseek-v4-pro`` → ``deepseek-v4-pro``,
+      ``omp:deepseek/deepseek-v4-flash`` → ``deepseek-v4-flash``.
 
     Raises:
         ValueError: *model* does not normalise to a known roster entry.
@@ -146,9 +146,9 @@ def _resolve_canonical(model: str) -> str:
     if stripped in _ROSTER_BY_MODEL:
         return stripped
 
-    # ── hermes provider specs ──────────────────────────────────────────
-    if stripped.startswith("hermes:"):
-        normalized = _normalize_hermes_spec(stripped)
+    # ── omp provider specs ──────────────────────────────────────────
+    if stripped.startswith("omp:"):
+        normalized = _normalize_omp_spec(stripped)
     elif ":" in stripped:
         agent, rest = stripped.split(":", 1)
         agent = agent.lower()
@@ -160,14 +160,14 @@ def _resolve_canonical(model: str) -> str:
             if normalized in _AGENT_DEFAULT_MODEL:
                 normalized = _AGENT_DEFAULT_MODEL[normalized]
         else:
-            # Provider-prefixed spec without an explicit ``hermes:`` prefix
+            # Provider-prefixed spec without an explicit ``omp:`` prefix
             # (e.g. ``deepseek:deepseek-v4-pro``, which is how a DeepSeek-only
             # profile's evaluator reports its own model, or
             # ``fireworks:accounts/.../deepseek-v4-pro``). The roster ranks by
             # model family, so extract the trailing model component the same
-            # way hermes specs are normalized. An unknown model still raises
+            # way omp specs are normalized. An unknown model still raises
             # below when it is not found in the roster.
-            normalized = _normalize_hermes_spec(stripped)
+            normalized = _normalize_omp_spec(stripped)
     else:
         # Bare agent name (e.g. ``claude``, ``codex``).
         agent = stripped.lower()
@@ -206,7 +206,7 @@ def roster_dispatch_spec(model: str) -> str:
     The roster stores *ranking tokens* (``deepseek-v4-pro``), not dispatchable
     specs. Splicing such a token onto an inherited agent (as the critique
     handler used to do) produces incoherent routes — a Claude/Codex worker
-    handed a DeepSeek model name — and even in the hermes case a bare
+    handed a DeepSeek model name — and even in the omp case a bare
     ``deepseek-v4-pro`` carries no provider, so dispatch falls through to
     OpenRouter instead of DeepSeek's direct API. This returns the complete
     ``<agent>[:<provider>]:<model>`` spec so a farmed-out critic routes to the
@@ -234,7 +234,7 @@ def roster_dispatch_spec(model: str) -> str:
 
     # The evaluator may also emit an already-dispatchable spec — a bare agent
     # name ("claude"/"codex"), a premium spec ("claude:claude-sonnet-4-6"), or
-    # a hermes provider spec. Pass those through untouched; only the bare
+    # an omp provider spec. Pass those through untouched; only the bare
     # roster tokens above (which are not valid agent specs on their own) need
     # rewriting.
     if parse_agent_spec(model).agent in KNOWN_AGENTS:

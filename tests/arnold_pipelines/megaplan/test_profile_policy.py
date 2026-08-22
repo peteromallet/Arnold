@@ -39,19 +39,19 @@ class TestVendorRewriteScalarPreservation:
         assert "claude" in result["execute"]
 
     def test_list_stays_list_with_order_preserved(self) -> None:
-        profile = {"plan": ["codex:gpt-5.4", "claude:sonnet", "hermes:deepseek:deepseek-v4-pro"]}
+        profile = {"plan": ["codex:gpt-5.4", "claude:sonnet", "omp:deepseek/deepseek-v4-pro"]}
         result = apply_vendor_rewrite(profile, "claude")
         assert isinstance(result["plan"], list)
         assert len(result["plan"]) == 3
         # First element (codex) swapped to claude; second stays claude; third (hermes) unchanged
         assert result["plan"][0] != "codex:gpt-5.4"
         assert result["plan"][1] == "claude:sonnet"
-        assert result["plan"][2] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["plan"][2] == "omp:deepseek/deepseek-v4-pro"
 
     def test_mixed_scalar_and_list_phases(self) -> None:
         profile = {
             "prep": "claude",
-            "plan": ["codex:high", "hermes:deepseek:deepseek-v4-pro"],
+            "plan": ["codex:high", "omp:deepseek/deepseek-v4-pro"],
             "execute": "codex",
         }
         result = apply_vendor_rewrite(profile, "claude")
@@ -62,17 +62,17 @@ class TestVendorRewriteScalarPreservation:
 
     def test_tier_models_list_preserves_shape(self) -> None:
         profile = {"execute": "codex"}
-        tier_models = {"execute": {1: ["codex:gpt-5.4", "hermes:deepseek:deepseek-v4-pro"]}}
+        tier_models = {"execute": {1: ["codex:gpt-5.4", "omp:deepseek/deepseek-v4-pro"]}}
         result = apply_vendor_rewrite(profile, "claude", tier_models=tier_models)
         assert isinstance(result["execute"], str)
         tm = tier_models["execute"][1]
         assert isinstance(tm, list)
         assert len(tm) == 2
-        assert tm[1] == "hermes:deepseek:deepseek-v4-pro"
+        assert tm[1] == "omp:deepseek/deepseek-v4-pro"
 
     def test_prep_models_list_preserves_shape(self) -> None:
         profile = {"prep": "claude"}
-        prep_models = {"triage": ["hermes:deepseek:deepseek-v4-pro", "claude:sonnet"]}
+        prep_models = {"triage": ["omp:deepseek/deepseek-v4-pro", "claude:sonnet"]}
         apply_vendor_rewrite(profile, "claude", prep_models=prep_models)
         assert isinstance(prep_models["triage"], list)
         assert len(prep_models["triage"]) == 2
@@ -97,7 +97,7 @@ class TestCriticRewriteScalarPreservation:
     def test_kimi_list_replaced_by_scalar(self) -> None:
         """kimi critic replaces the entire spec with a scalar KIMI_SPEC."""
         profile = {
-            "critique": ["codex:high", "hermes:deepseek:deepseek-v4-pro"],
+            "critique": ["codex:high", "omp:deepseek/deepseek-v4-pro"],
             "review": "claude",
         }
         result = apply_critic_rewrite(profile, "kimi", vendor="codex")
@@ -116,14 +116,14 @@ class TestCriticRewriteScalarPreservation:
 
     def test_cross_list_maps_over_each_element(self) -> None:
         profile = {
-            "critique": ["codex", "hermes:deepseek:deepseek-v4-pro"],
+            "critique": ["codex", "omp:deepseek/deepseek-v4-pro"],
             "review": "codex",
         }
         result = apply_critic_rewrite(profile, "cross", vendor="codex")
         assert isinstance(result["critique"], list)
         assert len(result["critique"]) == 2
         # codex premium → swapped to claude; hermes non-premium → unchanged
-        assert result["critique"][1] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["critique"][1] == "omp:deepseek/deepseek-v4-pro"
 
 
 # ---------------------------------------------------------------------------
@@ -141,14 +141,14 @@ class TestDepthRewriteScalarPreservation:
         assert "max" in result["plan"]
 
     def test_list_stays_list_with_depth_applied_to_each(self) -> None:
-        profile = {"plan": ["codex:high", "claude:medium", "hermes:deepseek:deepseek-v4-pro"]}
+        profile = {"plan": ["codex:high", "claude:medium", "omp:deepseek/deepseek-v4-pro"]}
         result = apply_depth_rewrite(profile, "max")
         assert isinstance(result["plan"], list)
         assert len(result["plan"]) == 3
         # premium agents get depth appended; hermes (non-premium) unchanged
         assert "max" in result["plan"][0]
         assert "max" in result["plan"][1]
-        assert result["plan"][2] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["plan"][2] == "omp:deepseek/deepseek-v4-pro"
 
     def test_non_depth_author_phase_unchanged(self) -> None:
         profile = {"execute": ["codex:gpt-5.4", "claude:sonnet"]}
@@ -158,12 +158,12 @@ class TestDepthRewriteScalarPreservation:
 
     def test_tier_models_list_preserves_order(self) -> None:
         profile = {"execute": "codex"}
-        tier_models = {"plan": {1: ["codex:high", "hermes:deepseek:deepseek-v4-pro"]}}
+        tier_models = {"plan": {1: ["codex:high", "omp:deepseek/deepseek-v4-pro"]}}
         apply_depth_rewrite(profile, "xhigh", tier_models=tier_models)
         tm = tier_models["plan"][1]
         assert isinstance(tm, list)
         assert len(tm) == 2
-        assert tm[1] == "hermes:deepseek:deepseek-v4-pro"
+        assert tm[1] == "omp:deepseek/deepseek-v4-pro"
 
 
 # ---------------------------------------------------------------------------
@@ -211,23 +211,23 @@ class TestAvailableModelFloorScalarPreservation:
     """apply_available_model_floor preserves scalar-vs-list shape and order."""
 
     def test_scalar_stays_scalar_when_no_degradation(self, monkeypatch) -> None:
-        profile = {"execute": "hermes:deepseek:deepseek-v4-pro"}
+        profile = {"execute": "omp:deepseek/deepseek-v4-pro"}
         result = apply_available_model_floor(profile)
         assert isinstance(result["execute"], str)
-        assert result["execute"] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["execute"] == "omp:deepseek/deepseek-v4-pro"
 
     def test_list_stays_list_with_order_preserved(self) -> None:
-        profile = {"execute": ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.4"]}
+        profile = {"execute": ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.4"]}
         result = apply_available_model_floor(profile)
         assert isinstance(result["execute"], list)
         assert len(result["execute"]) == 2
         # order is preserved
-        assert result["execute"][0] == "hermes:deepseek:deepseek-v4-pro"
+        assert result["execute"][0] == "omp:deepseek/deepseek-v4-pro"
         assert result["execute"][1] == "codex:gpt-5.4"
 
     def test_tier_models_list_preserves_shape(self) -> None:
         profile = {"execute": "codex"}
-        tier_models = {"execute": {1: ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.4"]}}
+        tier_models = {"execute": {1: ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.4"]}}
         apply_available_model_floor(profile, tier_models=tier_models)
         tm = tier_models["execute"][1]
         assert isinstance(tm, list)
@@ -279,7 +279,7 @@ class TestResolvedProfileInvariantsChainAware:
             _validate_resolved_profile_invariants(
                 "test",
                 {"plan": "codex"},
-                prep_models={"triage": ["hermes:deepseek:deepseek-v4-pro", "premium"]},
+                prep_models={"triage": ["omp:deepseek/deepseek-v4-pro", "premium"]},
             )
 
 
@@ -315,16 +315,16 @@ class TestProfileHasPremiumSlotsChainAware:
         assert _profile_has_premium_slots({"plan": "codex"}) is True
 
     def test_list_premium_detected(self) -> None:
-        assert _profile_has_premium_slots({"plan": ["hermes:deepseek:deepseek-v4-pro", "codex"]}) is True
+        assert _profile_has_premium_slots({"plan": ["omp:deepseek/deepseek-v4-pro", "codex"]}) is True
 
     def test_list_no_premium_returns_false(self) -> None:
-        assert _profile_has_premium_slots({"plan": ["hermes:deepseek:deepseek-v4-pro"]}) is False
+        assert _profile_has_premium_slots({"plan": ["omp:deepseek/deepseek-v4-pro"]}) is False
 
     def test_scalar_no_premium_returns_false(self) -> None:
-        assert _profile_has_premium_slots({"plan": "hermes:deepseek:deepseek-v4-pro"}) is False
+        assert _profile_has_premium_slots({"plan": "omp:deepseek/deepseek-v4-pro"}) is False
 
     def test_premium_placeholder_detected_in_list(self) -> None:
-        assert _profile_has_premium_slots({"plan": ["hermes:deepseek:deepseek-v4-pro", "premium"]}) is True
+        assert _profile_has_premium_slots({"plan": ["omp:deepseek/deepseek-v4-pro", "premium"]}) is True
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +370,7 @@ class TestProfileToPhaseModelsChainAware:
 def test_explicit_prep_phase_model_overrides_profile_prep_models(tmp_path: Path) -> None:
     args = Namespace(
         profile="partnered-5",
-        phase_model=["prep=hermes:kimi:kimi-k2.7-code"],
+        phase_model=["prep=omp:moonshot/kimi-k2.7-code"],
         tier_models=None,
         vendor=None,
         critic=None,
@@ -381,9 +381,9 @@ def test_explicit_prep_phase_model_overrides_profile_prep_models(tmp_path: Path)
     apply_profile_expansion(args, tmp_path)
 
     assert args.prep_models == {
-        "triage": "hermes:kimi:kimi-k2.7-code",
-        "fanout": "hermes:kimi:kimi-k2.7-code",
-        "distill": "hermes:kimi:kimi-k2.7-code",
+        "triage": "omp:moonshot/kimi-k2.7-code",
+        "fanout": "omp:moonshot/kimi-k2.7-code",
+        "distill": "omp:moonshot/kimi-k2.7-code",
     }
 
 
@@ -422,7 +422,7 @@ def test_profile_expansion_without_cli_keeps_profile_execute_tier_models(tmp_pat
     assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
     assert args.tier_models is not None
     assert "execute" in args.tier_models
-    assert args.tier_models["execute"][3] == "hermes:deepseek:deepseek-v4-flash"
+    assert args.tier_models["execute"][3] == "omp:deepseek/deepseek-v4-flash"
     assert "critique" in args.tier_models
 
 
@@ -444,9 +444,9 @@ def test_profile_expansion_execute_tiers_survive_profile_fallback_pin(tmp_path: 
     assert "execute=codex:gpt-5.6-sol:high" in args.phase_model
     tier_map = _extract_execute_tier_map(args.tier_models)
     assert tier_map is not None
-    assert tier_map[1] == "hermes:deepseek:deepseek-v4-flash"
-    assert tier_map[3] == "hermes:deepseek:deepseek-v4-flash"
-    assert tier_map[5] == "hermes:deepseek:deepseek-v4-flash"
+    assert tier_map[1] == "omp:deepseek/deepseek-v4-flash"
+    assert tier_map[3] == "omp:deepseek/deepseek-v4-flash"
+    assert tier_map[5] == "omp:deepseek/deepseek-v4-flash"
     assert tier_map[9] == "codex:gpt-5.6-sol:medium"
     assert tier_map[10] == "codex:gpt-5.6-sol:high"
 
@@ -476,7 +476,7 @@ def test_profile_expansion_with_persisted_execute_pin_keeps_execute_pinned_and_s
 def test_profile_expansion_selects_first_explicit_prep_chain_for_stage_models(tmp_path: Path) -> None:
     encoded_prep = encode_phase_model_value(
         "prep",
-        ["hermes:kimi:kimi-k2.7-code", "hermes:deepseek:deepseek-v4-pro"],
+        ["omp:moonshot/kimi-k2.7-code", "omp:deepseek/deepseek-v4-pro"],
     )
     args = Namespace(
         profile="partnered-5",
@@ -492,7 +492,7 @@ def test_profile_expansion_selects_first_explicit_prep_chain_for_stage_models(tm
 
     assert encoded_prep in args.phase_model
     assert args.prep_models == {
-        "triage": "hermes:kimi:kimi-k2.7-code",
-        "fanout": "hermes:kimi:kimi-k2.7-code",
-        "distill": "hermes:kimi:kimi-k2.7-code",
+        "triage": "omp:moonshot/kimi-k2.7-code",
+        "fanout": "omp:moonshot/kimi-k2.7-code",
+        "distill": "omp:moonshot/kimi-k2.7-code",
     }

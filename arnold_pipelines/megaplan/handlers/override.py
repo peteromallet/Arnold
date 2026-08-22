@@ -704,7 +704,7 @@ def _resolved_profile_phase_spec(phase: str, state: PlanState, root: Path) -> st
         depth=state.get("config", {}).get("depth"),
         deepseek_provider=state.get("config", {}).get("deepseek_provider"),
         agent=None,
-        hermes=None,
+        omp=None,
         _profile_applied=False,
     )
     try:
@@ -1900,7 +1900,7 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
         raise CliError(
             "invalid_args",
             f"set-model only supports claude/codex specs; got '{explicit_spec.agent}'. "
-            "Use --phase-model on the phase command for hermes/shannon routing.",
+            "Use --phase-model on the phase command for omp/shannon routing.",
         )
     else:
         # Bare model strings normally keep the phase's current premium vendor.

@@ -25,7 +25,6 @@ from arnold_pipelines.megaplan.types import (
     parse_agent_spec,
     resolve_premium_placeholder_spec,
 )
-from arnold_pipelines.megaplan.runtime.key_pool import provider_credential_env_vars
 
 
 AGENTS_DEFAULT_WARNING = (
@@ -46,22 +45,25 @@ _ENV_HINTS_BY_AGENT: dict[str, tuple[str, ...]] = {
     "codex": ("OPENAI_API_KEY",),
 }
 
-# Keep cloud launch diagnostics in lock-step with the runtime key pool.  A
+# Keep cloud launch diagnostics in lock-step with the runtime omp worker.  A
 # missing hint here used to make ``cloud preflight`` report a clean bill of
-# health even though Hermes would later construct an agent with ``api_key=""``.
-_ENV_HINTS_BY_HERMES_PROVIDER: dict[str, tuple[str, ...]] = {
-    provider: provider_credential_env_vars(provider)
-    for provider in (
-        "zhipu",
-        "kimi",
-        "minimax",
-        "mimo",
-        "openrouter",
-        "google",
-        "deepseek",
-        "fireworks",
-        "xai",
-    )
+# health even though the omp worker would later construct a session with an
+# empty credential.  Mirrors ``workers.omp._OMP_CREDENTIAL_ENV``; the z.ai
+# route reads ZAI_API_KEY (with ZHIPU_API_KEY accepted as a legacy alias).
+_ENV_HINTS_BY_OMP_PROVIDER: dict[str, tuple[str, ...]] = {
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "zai": ("ZAI_API_KEY", "ZHIPU_API_KEY"),
+    "moonshot": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
+    "kimi-code": ("KIMI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
+    # omp-native credential routes: omp resolves credentials from its own
+    # store (OAuth in omp's agent.db, command-backed models.yml keys) — the
+    # Arnold env preflight must not gate them.
+    "openai-codex": (),
+    "grok": (),
 }
 
 
@@ -83,7 +85,6 @@ def _expanded_phase_models(
         depth=depth,
         deepseek_provider=deepseek_provider,
         agent=None,
-        hermes=None,
         _profile_applied=False,
     )
     apply_profile_expansion(args, project_dir)
@@ -145,18 +146,24 @@ def _concrete_fallback_routing(
 
 
 def _provider_requirements(agent: str, model: str | None) -> list[dict[str, Any]]:
-    if agent != "hermes":
+    if agent != "omp":
         return []
     provider: str | None = None
     model_name = model
-    if model and ":" in model:
-        provider, model_name = model.split(":", 1)
+    if model:
+        if agent == "omp":
+            # omp spec grammar: ``omp:<provider>/<modelId>``.
+            if model.startswith("omp:"):
+                model = model[len("omp:"):]
+            provider, _, model_name = model.partition("/")
+        elif ":" in model:
+            provider, model_name = model.split(":", 1)
     return [
         {
-            "agent": "hermes",
+            "agent": "omp",
             "provider": provider,
             "model": model_name,
-            "env_hints": list(_ENV_HINTS_BY_HERMES_PROVIDER.get(provider or "", ())),
+            "env_hints": list(_ENV_HINTS_BY_OMP_PROVIDER.get(provider or "", ())),
         }
     ]
 

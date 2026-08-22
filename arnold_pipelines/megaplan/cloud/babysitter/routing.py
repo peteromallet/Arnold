@@ -1,6 +1,6 @@
 """Explicit routing choices for the watchdog babysitter.
 
-The legacy Hermes/DeepSeek path remains the default.  A temporary, explicit
+The omp/DeepSeek path is the default.  A temporary, explicit
 environment toggle is the only way to select the Codex recovery path; an
 unknown value fails closed instead of silently choosing a provider.
 """
@@ -15,9 +15,9 @@ ROUTING_ENV = "ARNOLD_BABYSITTER_ROUTING"
 CODEX_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_MODEL"
 CODEX_INVESTIGATOR_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_INVESTIGATOR_MODEL"
 
-LEGACY_ROUTING = "legacy"
+OMP_ROUTING = "omp"
 CODEX_ROUTING = "codex"
-LEGACY_CONTROLLER_MODEL = "hermes:deepseek:deepseek-v4-flash"
+OMP_CONTROLLER_MODEL = "omp:deepseek/deepseek-v4-flash"
 CODEX_CONTROLLER_MODEL = "codex:gpt-5.6-luna"
 
 
@@ -55,18 +55,19 @@ def resolve_babysitter_routing(env: Mapping[str, str] | None = None) -> Babysitt
     """Resolve the babysitter route from an explicit, fail-closed toggle."""
 
     values = os.environ if env is None else env
-    selected = str(values.get(ROUTING_ENV, "")).strip().lower() or LEGACY_ROUTING
-    if selected in {LEGACY_ROUTING, "default"}:
+    selected = str(values.get(ROUTING_ENV, "")).strip().lower() or OMP_ROUTING
+    if selected in {OMP_ROUTING, "default", "legacy"}:
+        # ``legacy`` remains accepted as a back-compat alias for the omp route.
         return BabysitterRouting(
-            mode=LEGACY_ROUTING,
-            controller_backend="hermes",
-            controller_model=LEGACY_CONTROLLER_MODEL,
-            investigator_backend="hermes",
-            investigator_model=LEGACY_CONTROLLER_MODEL,
+            mode=OMP_ROUTING,
+            controller_backend="omp",
+            controller_model=OMP_CONTROLLER_MODEL,
+            investigator_backend="omp",
+            investigator_model=OMP_CONTROLLER_MODEL,
         )
     if selected != CODEX_ROUTING:
         raise ValueError(
-            f"{ROUTING_ENV} must be unset, 'legacy', or 'codex'; got {selected!r}"
+            f"{ROUTING_ENV} must be unset, 'omp', or 'codex'; got {selected!r}"
         )
     controller = _codex_model(
         str(values.get(CODEX_MODEL_ENV, CODEX_CONTROLLER_MODEL)),

@@ -48,7 +48,7 @@ class TestGenericProfileLoading:
             review = "codex"
 
             [profiles.user_only]
-            draft = "hermes:provider:model"
+            draft = "omp:provider/model"
             review = "codex"
             """,
         )
@@ -70,12 +70,12 @@ class TestGenericProfileLoading:
             user_path=user,
             project_path=project,
             declared_stage_keys=frozenset({"draft", "review"}),
-            known_agents=frozenset({"claude", "codex", "hermes"}),
+            known_agents=frozenset({"claude", "codex", "omp"}),
         )
 
         assert loaded["base"]["draft"] == "claude"
         assert loaded["shared"]["draft"] == "codex:gpt-5.4"
-        assert loaded["user_only"]["draft"] == "hermes:provider:model"
+        assert loaded["user_only"]["draft"] == "omp:provider/model"
         assert loaded["project_only"]["draft"] == "claude:high"
 
     def test_load_profile_sources_keeps_layer_order(self, tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ class TestGenericProfileLoading:
         for path, spec in (
             (built_in, "claude"),
             (user, "codex"),
-            (project, "hermes:provider:model"),
+            (project, "omp:provider/model"),
         ):
             _write_profiles(
                 path,
@@ -101,7 +101,7 @@ class TestGenericProfileLoading:
             user_path=user,
             project_path=project,
             declared_stage_keys=frozenset({"draft", "review"}),
-            known_agents=frozenset({"claude", "codex", "hermes"}),
+            known_agents=frozenset({"claude", "codex", "omp"}),
         )
 
         assert [(source, name) for source, name, _profile in sources] == [
@@ -138,7 +138,7 @@ class TestGenericProfileLoading:
             built_in_paths=(built_in,),
             project_path=project,
             declared_stage_keys=frozenset({"draft", "review"}),
-            known_agents=frozenset({"claude", "codex", "hermes"}),
+            known_agents=frozenset({"claude", "codex", "omp"}),
             metadata_keys=frozenset({"default", "extends"}),
         )
 
@@ -156,18 +156,18 @@ class TestGenericProfileLoading:
             synth = "claude"
             [profiles.panel.panel_review]
             optimist = "codex"
-            pessimist = "hermes:provider:model"
+            pessimist = "omp:provider/model"
             """,
         )
 
         loaded = load_profiles(
             built_in_paths=(built_in,),
             declared_stage_keys=frozenset({"synth", "panel_review"}),
-            known_agents=frozenset({"claude", "codex", "hermes"}),
+            known_agents=frozenset({"claude", "codex", "omp"}),
         )
 
         assert loaded["panel"]["panel_review.optimist"] == "codex"
-        assert loaded["panel"]["panel_review.pessimist"] == "hermes:provider:model"
+        assert loaded["panel"]["panel_review.pessimist"] == "omp:provider/model"
 
     def test_unknown_declared_stage_prefix_is_rejected(self, tmp_path: Path) -> None:
         built_in = tmp_path / "built-in.toml"
@@ -183,7 +183,7 @@ class TestGenericProfileLoading:
             load_profiles(
                 built_in_paths=(built_in,),
                 declared_stage_keys=frozenset({"synth", "panel_review"}),
-                known_agents=frozenset({"claude", "codex", "hermes"}),
+                known_agents=frozenset({"claude", "codex", "omp"}),
             )
 
     def test_unknown_agent_is_rejected_when_allowlist_is_supplied(self, tmp_path: Path) -> None:
@@ -201,7 +201,7 @@ class TestGenericProfileLoading:
             load_profiles(
                 built_in_paths=(built_in,),
                 declared_stage_keys=frozenset({"draft", "review"}),
-                known_agents=frozenset({"claude", "codex", "hermes"}),
+                known_agents=frozenset({"claude", "codex", "omp"}),
             )
 
     def test_structured_stage_values_require_explicit_validator(self) -> None:
@@ -274,9 +274,9 @@ class TestAgentSpecShape:
         assert parsed.effort == "high"
 
     def test_parse_non_premium_agent_preserves_model_colons(self) -> None:
-        parsed = parse_agent_spec_shape("hermes:provider:model")
-        assert parsed.agent == "hermes"
-        assert parsed.model == "provider:model"
+        parsed = parse_agent_spec_shape("omp:provider/model")
+        assert parsed.agent == "omp"
+        assert parsed.model == "provider/model"
 
 
 class TestResolveDefaultProfile:
@@ -341,7 +341,7 @@ class TestComposedPipelineProfiles:
     """Profile loading for composed (parent + child) pipelines."""
 
     STAGE_KEYS = frozenset({"synth", "panel_review", "revise"})
-    AGENTS = frozenset({"claude", "codex", "hermes"})
+    AGENTS = frozenset({"claude", "codex", "omp"})
 
     def test_nested_child_profile_map_via_toml_subtable(self, tmp_path: Path) -> None:
         """A TOML subtable like [profiles.panel.panel_review] flattens to dotted keys."""
@@ -355,7 +355,7 @@ revise = "claude"
 
 [profiles.panel.panel_review]
 optimist = "codex"
-pessimist = "hermes:provider:model"
+pessimist = "omp:provider/model"
 """,
         )
         loaded = load_profiles(
@@ -367,7 +367,7 @@ pessimist = "hermes:provider:model"
         assert panel["synth"] == "claude"
         assert panel["revise"] == "claude"
         assert panel["panel_review.optimist"] == "codex"
-        assert panel["panel_review.pessimist"] == "hermes:provider:model"
+        assert panel["panel_review.pessimist"] == "omp:provider/model"
 
     def test_nested_child_profile_keys_validated_against_declared_stages(self, tmp_path: Path) -> None:
         """Child-stage keys like panel_review.optimist validate against declared stage prefixes."""
@@ -399,13 +399,13 @@ slot = "codex"
 default = true
 synth = "claude"
 panel_review.optimist = "codex"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "claude"
 
 [profiles.light]
 synth = "claude:low"
 panel_review.optimist = "codex"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "claude:low"
 """,
         )
@@ -445,13 +445,13 @@ synth = "claude"
 [profiles.child-full]
 synth = "codex"
 panel_review.optimist = "claude"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "codex"
 
 [profiles.child-light]
 synth = "codex:low"
 panel_review.optimist = "claude:low"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "codex:low"
 """,
         )
@@ -501,7 +501,7 @@ revise = "claude"
 [profiles.panel]
 synth = "claude"
 panel_review.optimist = "codex"
-panel_review.pessimist = "hermes:provider:model"
+panel_review.pessimist = "omp:provider/model"
 revise = "claude"
 """,
         )
@@ -517,7 +517,7 @@ revise = "claude"
         assert panel["panel_review.optimist"] == "codex"
         assert panel["revise"] == "claude"
         # Project override for pessimist.
-        assert panel["panel_review.pessimist"] == "hermes:provider:model"
+        assert panel["panel_review.pessimist"] == "omp:provider/model"
 
 
 class TestBoundary:

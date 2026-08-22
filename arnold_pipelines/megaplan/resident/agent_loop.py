@@ -574,7 +574,7 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
         cwd: str | Path,
         state_root: str | Path,
         codex_bin: str = "codex",
-        hermes_launcher: str | Path | None = None,
+        omp_launcher: str | Path | None = None,
         claude_launcher: str | Path | None = None,
     ) -> None:
         self.config = config
@@ -582,8 +582,8 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
         self.state_root = Path(state_root).expanduser().resolve()
         launcher_root = Path(__file__).resolve().parents[1] / "skills" / "subagent-launcher"
         self.codex_bin = codex_bin
-        self.hermes_launcher = Path(
-            hermes_launcher or launcher_root / "launch_hermes_agent.py"
+        self.omp_launcher = Path(
+            omp_launcher or launcher_root / "launch_omp_agent.py"
         )
         self.claude_launcher = Path(
             claude_launcher or launcher_root / "launch_claude_agent.py"
@@ -842,11 +842,11 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             paths["result"].write_text(final_text.rstrip() + "\n", encoding="utf-8")
 
         resolved_session_id = evidence.session_id
-        if route.backend == "hermes" and resumable:
-            # The exact handle passed to Hermes is already proven resumable.
-            # Some Hermes versions return a different internal session id in
-            # metadata after compaction; persisting that value bricks the next
-            # turn even though this one completed successfully.
+        if route.backend == "omp" and resumable:
+            # The exact handle passed to the launcher is already proven
+            # resumable.  Some launchers return a different internal session id
+            # in metadata after compaction; persisting that value bricks the
+            # next turn even though this one completed successfully.
             resolved_session_id = session_id
         failure_category = evidence.failure_category
         failure_message = evidence.failure_message
@@ -911,9 +911,9 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             )
 
         missing_resume_session = (
-            route.backend == "hermes"
+            route.backend == "omp"
             and resumable
-            and _hermes_resume_session_missing(
+            and _omp_resume_session_missing(
                 log_path=paths["log"],
                 raw_path=paths["raw"],
                 metadata_path=paths["metadata"],
@@ -946,7 +946,7 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 status="failed",
                 returncode=returncode,
                 failure_category="resume_session_missing",
-                failure_message="Hermes could not resolve the persisted resume session",
+                failure_message="the omp launcher could not resolve the persisted resume session",
             )
             _atomic_json_file(paths["manifest"], manifest)
             # Retry inside the same resident turn.  The quarantined binding
@@ -1043,13 +1043,13 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                     "-",
                 ]
             return argv, paths["prompt"].read_text(encoding="utf-8"), env
-        if backend == "hermes":
-            if not self.hermes_launcher.exists():
-                raise AgentLoopError(f"Hermes launcher not found: {self.hermes_launcher}")
+        if backend == "omp":
+            if not self.omp_launcher.exists():
+                raise AgentLoopError(f"omp launcher not found: {self.omp_launcher}")
             argv = [
                 sys.executable,
                 "-P",
-                str(self.hermes_launcher),
+                str(self.omp_launcher),
                 "--model",
                 model,
                 "--toolsets",
@@ -1166,7 +1166,7 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             session_path.replace(quarantine_path)
         except FileNotFoundError as exc:
             raise AgentLoopError(
-                "persisted Hermes session binding disappeared during recovery"
+                "persisted provider session binding disappeared during recovery"
             ) from exc
         return quarantine_path
 
@@ -1224,7 +1224,7 @@ def _atomic_json_file(path: Path, payload: Mapping[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _hermes_resume_session_missing(
+def _omp_resume_session_missing(
     *,
     log_path: Path,
     raw_path: Path,
@@ -1232,8 +1232,8 @@ def _hermes_resume_session_missing(
     returncode: int,
 ) -> bool:
     # Exit 8 is emitted by the launcher before model construction when
-    # SessionDB cannot resolve the requested resume handle.  Never retry after
-    # ambiguous provider failures: doing so could repeat tool side effects.
+    # the resume handle cannot be resolved.  Never retry after ambiguous
+    # provider failures: doing so could repeat tool side effects.
     if returncode != 8:
         return False
     try:
@@ -1246,7 +1246,7 @@ def _hermes_resume_session_missing(
     except OSError:
         return False
     return any(
-        line.startswith("error: Hermes session ") and line.endswith(" does not exist")
+        line.startswith("error: omp session ") and line.endswith(" does not exist")
         for line in diagnostics.splitlines()
     )
 

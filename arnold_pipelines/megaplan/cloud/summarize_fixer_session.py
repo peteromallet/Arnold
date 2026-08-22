@@ -7,8 +7,11 @@ from __future__ import annotations
 import argparse, json, os, re, subprocess, sys
 from pathlib import Path
 
-LAUNCHER = "/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
-MODEL = "deepseek:deepseek-v4-flash"
+LAUNCHER = (
+    Path(__file__).resolve().parent.parent
+    / "skills" / "subagent-launcher" / "launch_omp_agent.py"
+)
+MODEL = "omp:deepseek/deepseek-v4-flash"
 
 def _final_message(run_dir: Path) -> str:
     for f in ("result.md", "recovery-evidence.json"):
@@ -63,7 +66,7 @@ Final message excerpt: {final[:800]}"""
             s = ln.strip()
             if not s:
                 continue
-            if s.startswith(("[launch_hermes_agent]", "[tool]", "[done]", "──", "⚡", "📖", "🔎", "💻", "✿", "¬", "processing")):
+            if s.startswith(("[launch_omp_agent]", "[tool]", "[done]", "──", "⚡", "📖", "🔎", "💻", "✿", "¬", "processing")):
                 continue
             lines.append(s)
         summary = " ".join(lines)[-800:]

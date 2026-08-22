@@ -264,7 +264,7 @@ def _build_state_config(
         "mode": mode,
         "strict_notes": strict_notes,
         "max_tasks_per_batch": max_tasks_per_batch,
-        "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
+        "agent": str(getattr(args, "agent", None) or ""),
         "completion_contract_mode": completion_contract_mode,
         "full_suite_backstop_mode": full_suite_backstop_mode,
         "test_command": test_command,
@@ -303,20 +303,6 @@ def _build_state_config(
     if from_doc_rel is not None:
         config["from_doc"] = from_doc_rel
     phase_models = list(getattr(args, "phase_model", None) or [])
-    hermes_model = getattr(args, "hermes", None)
-    if isinstance(hermes_model, str) and hermes_model.strip():
-        pinned_phases = {
-            entry.split("=", 1)[0]
-            for entry in phase_models
-            if isinstance(entry, str) and "=" in entry
-        }
-        hermes_model = hermes_model.strip()
-        hermes_spec = hermes_model if hermes_model.startswith("hermes:") else f"hermes:{hermes_model}"
-        phase_models.extend(
-            f"{phase}={hermes_spec}"
-            for phase in DEFAULT_AGENT_ROUTING
-            if phase not in pinned_phases
-        )
     if phase_models:
         config["phase_model"] = phase_models
 

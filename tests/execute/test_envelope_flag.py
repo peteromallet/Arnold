@@ -60,11 +60,11 @@ class TestEnvelopeFlagParity:
     # Use hermes with distinct model names so resolution produces different
     # (agent, mode, model) tuples per tier (parity is tested, not correctness).
     TIER_MAP: dict[int, str] = {
-        1: "hermes:openai/gpt-4.1-mini",
-        2: "hermes:openai/gpt-4.1-mini",
-        3: "hermes:openai/gpt-4.1",
-        4: "hermes:openai/gpt-4.1",
-        5: "hermes:openai/gpt-4.5-preview",
+        1: "omp:openai/gpt-4.1-mini",
+        2: "omp:openai/gpt-4.1-mini",
+        3: "omp:openai/gpt-4.1",
+        4: "omp:openai/gpt-4.1",
+        5: "omp:openai/gpt-4.5-preview",
     }
 
     @pytest.fixture
@@ -260,7 +260,7 @@ class TestEnvelopeFlagParity:
     def test_ordinal_missing_from_map(self, args):
         """When the ordinal has no mapping, both paths return None/default."""
         # Use a tier_map that has no entry for complexity 5
-        sparse_map: dict[int, str] = {1: "hermes:openai/gpt-4.1-mini"}
+        sparse_map: dict[int, str] = {1: "omp:openai/gpt-4.1-mini"}
         payload = _build_finalize_payload(
             [
                 {

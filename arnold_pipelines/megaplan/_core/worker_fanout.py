@@ -6,8 +6,8 @@ process-isolated fan-out with token/cost aggregation, deterministic output
 paths, caller-supplied parse/reduce hooks, and error propagation.
 
 This is *worker fan-out* — each unit dispatches through ``run_step_with_worker``,
-the CLI-backed worker function that drives Claude (via Shannon interactive
-tmux), Codex, and Hermes.  Each unit receives a caller-owned output path,
+the CLI-backed worker function that drives the Claude (Shannon interactive
+tmux), Codex, and omp backends.  Each unit receives a caller-owned output path,
 per-unit prompt, and resolved agent mode.  For process fan-out without the
 worker dispatch layer, see :mod:`megaplan.agent_runtime.process_fanout`.  For
 thread-based injected-dispatcher fan-out, see
@@ -722,7 +722,7 @@ def scatter_worker_units(
     Each unit is dispatched through :func:`run_step_with_worker` with its
     *resolved* mode, *prompt* override, *output_path*, and *read_only* flag.
     This is *worker fan-out* — it drives CLI backends (Claude via Shannon
-    interactive tmux, Codex, Hermes) through the worker dispatch layer.
+    interactive tmux, Codex, omp) through the worker dispatch layer.
     Token usage and cost are aggregated across all units.
 
     This generalizes the proven one-shot shape from the prep-vendor-agnostic

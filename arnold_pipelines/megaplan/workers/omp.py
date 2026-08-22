@@ -367,69 +367,6 @@ def format_omp_spec(provider: str, model_id: str) -> str:
     return f"{OMP_AGENT}:{provider}/{model_id}"
 
 
-# Legacy hermes-era route → canonical omp route (B4 migration table, every
-# target verified as an omp catalog row).  ``None`` when no translation
-# applies (premium specs, bare agents, already-canonical omp specs).
-_LEGACY_ROUTE_TRANSLATIONS: dict[str, str] = {
-    "hermes:deepseek:deepseek-v4-pro": "omp:deepseek/deepseek-v4-pro",
-    "hermes:deepseek:deepseek-v4-flash": "omp:deepseek/deepseek-v4-flash",
-    "hermes:zhipu:glm-5.2": "omp:zai/glm-5.2",
-    "hermes:fireworks:accounts/fireworks/models/glm-5p2": "omp:fireworks/glm-5.2",
-    "hermes:fireworks:accounts/fireworks/models/kimi-k2p6": "omp:fireworks/kimi-k2.6",
-    "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro": "omp:fireworks/deepseek-v4-pro",
-    "hermes:fireworks:accounts/fireworks/models/deepseek-v4-flash": "omp:fireworks/deepseek-v4-flash",
-    "hermes:glm-5.1": "omp:zai/glm-5.1",
-    "hermes:openrouter:deepseek/deepseek-chat": "omp:openrouter/deepseek/deepseek-chat",
-    "hermes:openrouter:deepseek/deepseek-r1": "omp:openrouter/deepseek/deepseek-r1",
-    # omp-native routes (exact rows only — no broad provider aliases, so a
-    # generic hermes:xai:* stays on the direct-key omp:xai/* route).
-    "hermes:codex:gpt-5.6-sol": "omp:openai-codex/gpt-5.6-sol",
-    "hermes:codex:gpt-5.5": "omp:openai-codex/gpt-5.5",
-    "hermes:codex:gpt-5.4": "omp:openai-codex/gpt-5.4",
-    "hermes:xai:grok-4.6": "omp:grok/grok-4.6",
-    "hermes:xai:grok-4.5": "omp:grok/grok-4.5",
-}
-
-# Generic provider aliases for best-effort translation of legacy routes not
-# covered by the explicit table (hermes:<provider>:<model> → omp:<provider>/<model>).
-_LEGACY_PROVIDER_ALIASES: dict[str, str] = {
-    "zhipu": "zai",
-    "codex": "openai-codex",
-}
-
-
-def omp_route_from_legacy(spec: str) -> str:
-    """Translate a legacy hermes-era route to its canonical omp form.
-
-    ``hermes:deepseek:deepseek-v4-pro`` → ``omp:deepseek/deepseek-v4-pro``
-    ``hermes:zhipu:glm-5.2``            → ``omp:zai/glm-5.2``
-    ``hermes:glm-5.1``                  → ``omp:zai/glm-5.1``
-    ``omp:deepseek/deepseek-v4-pro``    → unchanged
-    ``claude:sonnet`` / ``codex:gpt-5.5`` → unchanged (premium routes)
-    """
-    text = spec.strip()
-    if not text:
-        return text
-    if text == "hermes":
-        return OMP_AGENT
-    if text.startswith("omp"):
-        return text
-    translated = _LEGACY_ROUTE_TRANSLATIONS.get(text)
-    if translated is not None:
-        return translated
-    if text.startswith("hermes:"):
-        rest = text[len("hermes:"):]
-        provider, sep, model = rest.partition(":")
-        if sep and provider.strip() and model.strip():
-            provider = _LEGACY_PROVIDER_ALIASES.get(provider.strip().lower(), provider.strip().lower())
-            return format_omp_spec(provider, model)
-        if "/" in rest:
-            provider, model = rest.split("/", 1)
-            provider = _LEGACY_PROVIDER_ALIASES.get(provider.lower(), provider.lower())
-            return format_omp_spec(provider, model)
-    return text
-
-
 def validate_omp_catalog_model(provider: str, model_id: str) -> str:
     """Validate a route against the frozen B1 catalog table.
 
@@ -1294,7 +1231,7 @@ def run_omp_step(
 
     # Credentials: the RPC child inherits the Arnold process env; validate the
     # frozen credential presence up front so a missing key fails closed before
-    # launch (mirrors _validate_hermes_provider_credentials).  At least one
+    # launch (mirrors the legacy provider-credential validation).  At least one
     # alias variable per route must be set (e.g. ANTHROPIC_OAUTH_TOKEN OR
     # ANTHROPIC_API_KEY; MOONSHOT_API_KEY OR KIMI_API_KEY).
     alias_names = _OMP_CREDENTIAL_ENV.get(provider, ())

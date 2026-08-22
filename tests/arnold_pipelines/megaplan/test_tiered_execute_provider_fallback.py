@@ -20,8 +20,8 @@ from arnold_pipelines.megaplan.workers._payload import (
 
 
 GLM_CHAIN = (
-    "hermes:zhipu:glm-5.2",
-    "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+    "omp:zai/glm-5.2",
+    "omp:fireworks/glm-5.2",
     "codex:gpt-5.4",
 )
 
@@ -146,7 +146,7 @@ def test_glm_retryable_failure_advances_to_fireworks(
     )
     worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
 
-    assert calls == ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2"]
+    assert calls == ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2"]
     assert agent == "hermes"
     assert worker.attempt_index == 1
     assert worker.failed_attempt_reasons == ("availability",)
@@ -173,8 +173,8 @@ def test_retryable_failures_advance_through_fireworks_to_codex(
     worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
 
     assert calls == [
-        "hermes:zhipu:glm-5.2",
-        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "omp:zai/glm-5.2",
+        "omp:fireworks/glm-5.2",
         "codex:gpt-5.4",
     ]
     assert agent == "codex"

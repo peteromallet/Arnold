@@ -2,36 +2,36 @@
 # Zhipu GLM routes fall back to Fireworks GLM.
 [profiles.partnered-4]
 adaptive_critique     = true
-plan                  = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-prep                  = "hermes:deepseek:deepseek-v4-pro"
-critique              = "hermes:deepseek:deepseek-v4-pro"
-critique_evaluator    = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-revise                = ["hermes:deepseek:deepseek-v4-pro", "hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-gate                  = "hermes:deepseek:deepseek-v4-pro"
-finalize              = ["hermes:deepseek:deepseek-v4-pro", "hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-execute               = "hermes:deepseek:deepseek-v4-pro"
-feedback              = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-loop_plan             = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-loop_execute          = "hermes:deepseek:deepseek-v4-pro"
-review                = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-tiebreaker_researcher = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
-tiebreaker_challenger = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.5"]
+plan                  = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+prep                  = "omp:deepseek/deepseek-v4-pro"
+critique              = "omp:deepseek/deepseek-v4-pro"
+critique_evaluator    = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+revise                = ["omp:deepseek/deepseek-v4-pro", "omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+gate                  = "omp:deepseek/deepseek-v4-pro"
+finalize              = ["omp:deepseek/deepseek-v4-pro", "omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+execute               = "omp:deepseek/deepseek-v4-pro"
+feedback              = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+loop_plan             = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+loop_execute          = "omp:deepseek/deepseek-v4-pro"
+review                = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+tiebreaker_researcher = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
+tiebreaker_challenger = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.5"]
 
 [profiles.partnered-4.tier_models.execute]
-1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-flash"
-3 = "hermes:deepseek:deepseek-v4-pro"
-4 = "hermes:deepseek:deepseek-v4-pro"
-5 = "hermes:deepseek:deepseek-v4-pro"
-6 = "hermes:deepseek:deepseek-v4-pro"
-7 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-8 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-9 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]
-10 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]
+1 = "omp:deepseek/deepseek-v4-flash"
+2 = "omp:deepseek/deepseek-v4-flash"
+3 = "omp:deepseek/deepseek-v4-pro"
+4 = "omp:deepseek/deepseek-v4-pro"
+5 = "omp:deepseek/deepseek-v4-pro"
+6 = "omp:deepseek/deepseek-v4-pro"
+7 = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.4"]
+8 = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.4"]
+9 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.5"]
+10 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.5"]
 
 [profiles.partnered-4.tier_models.critique]
-1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-pro"
-3 = "hermes:deepseek:deepseek-v4-pro"
-4 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-5 = ["hermes:deepseek:deepseek-v4-pro", "codex:gpt-5.5"]
+1 = "omp:deepseek/deepseek-v4-flash"
+2 = "omp:deepseek/deepseek-v4-pro"
+3 = "omp:deepseek/deepseek-v4-pro"
+4 = ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2", "codex:gpt-5.4"]
+5 = ["omp:deepseek/deepseek-v4-pro", "codex:gpt-5.5"]

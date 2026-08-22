@@ -170,9 +170,9 @@ class TestScalarProfileExpansion:
     def test_profile_to_phase_models_with_special_characters(self) -> None:
         from arnold_pipelines.megaplan.profiles.policy import profile_to_phase_models
 
-        profile = {"hermes_step": "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"}
+        profile = {"hermes_step": "omp:fireworks/kimi-k2.6"}
         result = profile_to_phase_models(profile)
-        assert result == ["hermes_step=hermes:fireworks:accounts/fireworks/models/kimi-k2p6"]
+        assert result == ["hermes_step=omp:fireworks/kimi-k2.6"]
 
 
 # ---------------------------------------------------------------------------
@@ -303,11 +303,11 @@ class TestPrepAndTierRouting:
         from arnold_pipelines.megaplan._core.dispatch import resolve_dispatch_spec
 
         tier_models = {
-            "execute": {1: "hermes:deepseek:deepseek-v4-pro", 2: "codex:gpt-5.4"},
+            "execute": {1: "omp:deepseek/deepseek-v4-pro", 2: "codex:gpt-5.4"},
             "critique": {1: "claude:sonnet"},
         }
         result = resolve_dispatch_spec(tier_models, "execute", 1)
-        assert result == "hermes:deepseek:deepseek-v4-pro"
+        assert result == "omp:deepseek/deepseek-v4-pro"
 
     def test_resolve_dispatch_spec_returns_default_for_missing(self) -> None:
         from arnold_pipelines.megaplan._core.dispatch import resolve_dispatch_spec
@@ -350,7 +350,7 @@ class TestPrepAndTierRouting:
     def test_tier_models_are_dict_of_phase_to_int_spec_map(self) -> None:
         """tier_models data shape: {phase: {tier_int: spec_str}}."""
         tier_models = {
-            "execute": {1: "codex", 2: "claude:sonnet", 3: "hermes:deepseek:deepseek-v4-pro"},
+            "execute": {1: "codex", 2: "claude:sonnet", 3: "omp:deepseek/deepseek-v4-pro"},
         }
         assert isinstance(tier_models, dict)
         for phase, tiers in tier_models.items():
@@ -444,7 +444,7 @@ class TestLocalPreflight:
 
         args = argparse.Namespace(
             profile="partnered-codex",
-            phase_model=["execute=hermes:deepseek:custom-model"],
+            phase_model=["execute=omp:deepseek/custom-model"],
             tier_models=None,
             vendor=None,
             critic=None,
@@ -454,7 +454,7 @@ class TestLocalPreflight:
             hermes=None,
         )
         apply_profile_expansion(args, tmp_path)
-        assert "execute=hermes:deepseek:custom-model" in args.phase_model
+        assert "execute=omp:deepseek/custom-model" in args.phase_model
 
 
 # ---------------------------------------------------------------------------
@@ -692,7 +692,7 @@ class TestFallbackChainAncillaryRouting:
         state = {
             "config": {
                 "prep_models": {
-                    "triage": ["hermes:deepseek:deepseek-v4-pro", "claude:claude-sonnet-4-6"],
+                    "triage": ["omp:deepseek/deepseek-v4-pro", "claude:claude-sonnet-4-6"],
                 }
             }
         }

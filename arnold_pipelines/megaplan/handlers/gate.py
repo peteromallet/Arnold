@@ -1075,7 +1075,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         # Prefer valid filled gate_output.json over worker.payload;
         # fall back to worker.payload when scratch is missing/unmodified;
         # fail hard on modified invalid scratch when file-fill was
-        # instructed (hermes agent).
+        # instructed.
         from arnold_pipelines.megaplan.handlers.structured_output import (
             build_promotion_evidence,
             promote_scratch,
@@ -1091,7 +1091,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             except (OSError, UnicodeDecodeError):
                 _seed_json = None
 
-        _file_fill_instructed = agent == "hermes"
+        _file_fill_instructed = False
 
         _scratch_status, _promoted = promote_scratch(
             plan_dir,

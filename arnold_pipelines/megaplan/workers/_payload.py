@@ -1,10 +1,9 @@
-"""Shared worker payload helpers (B11 vendored from the deleted hermes worker).
+"""Shared worker payload helpers (vendored from the legacy agent worker).
 
-The hermes worker module was deleted with the SDK; these payload-recovery,
-template, and normalization helpers are still consumed by the neutral workers
-(``workers/_impl.py``, ``workers/omp.py``, orchestration fan-out, and the
-tiered-execute fallback contract).  They are pure functions with no
-agent-runtime dependency.
+These payload-recovery, template, and normalization helpers are still
+consumed by the neutral workers (``workers/_impl.py``, ``workers/omp.py``,
+orchestration fan-out, and the tiered-execute fallback contract).  They are
+pure functions with no agent-runtime dependency.
 """
 
 from __future__ import annotations
@@ -419,7 +418,7 @@ def _raise_for_terminal_provider_failure(result: dict, *, step: str) -> None:
         return
     raise CliError(
         "streaming_timeout",
-        f"Hermes provider timeout exhausted for step '{step}': {reason.strip()}",
+        f"Provider timeout exhausted for step '{step}': {reason.strip()}",
         extra={"provider_failure_category": "timeout"},
     )
 
@@ -540,7 +539,7 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
         # field (handlers/review.py _REVIEW_SCRATCH_EXTENSION_FIELDS); the
         # capture path re-promotes it later.  Drop it before the strict
         # additionalProperties audit so omp local-strict workers do not fail
-        # the exact payload, matching the codex/hermes capture behavior.
+        # the exact payload, matching the codex/omp capture behavior.
         payload.pop("review_completion_status", None)
 
     # Strip guide-only fields from critique checks (guidance/prior_findings

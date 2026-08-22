@@ -151,12 +151,12 @@ def test_sequential_same_family_fallback_rejects_semantic_and_writing_failures()
 
 _CROSS_FAMILY_METADATA = {
     "configured_specs": (
-        "hermes:zhipu:glm-5.2",
-        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "omp:zai/glm-5.2",
+        "omp:fireworks/glm-5.2",
         "codex:gpt-5.5:high",
     ),
     "attempt_index": 0,
-    "attempted_specs": ("hermes:zhipu:glm-5.2",),
+    "attempted_specs": ("omp:zai/glm-5.2",),
     "failed_attempt_reasons": (),
     "fallback_trigger": None,
 }

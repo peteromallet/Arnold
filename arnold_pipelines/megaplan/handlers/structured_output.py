@@ -7,7 +7,8 @@ permissive schema changes.
 
 Decision records (SD1–SD3 from the plan):
   SD1: TemplateRegistration is separate from StepContract.
-  SD2: File-fill applies only to Hermes/file-tool workers.
+  SD2: File-fill applies only to legacy file-tool workers; the omp
+       worker uses local-strict inline capture.
   SD3: Non-file-fill workers never inspect or adopt scratch. For instructed
        file-fill workers, missing/unmodified scratch → worker.payload;
        modified+invalid scratch → hard fail *only* when the worker was

@@ -1844,8 +1844,6 @@ ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown
 # the 363s observed within-block gap only when the transcript is genuinely
 # static for that long, which the probe distinguishes from a hang. Override via
 # SHANNON_STREAM_READ_TIMEOUT.
-# (The hermes path, which streams real SSE chunks, uses its own inter-chunk
-# bound — HERMES_STREAM_READ_TIMEOUT — and is unaffected.)
 DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 
 # Guaranteed backstop for the liveness-probe rescue path (_impl.py run_command).
@@ -2810,8 +2808,8 @@ def run_command(
             # liveness signal while the process is alive so that watchdog sees a
             # heartbeat. The callback is rate-limited and routes to
             # ``touch_active_step`` (bumping state.json mtime, which the auto driver
-            # recognizes as activity); this is a no-op for the in-process hermes path
-            # and for any worker whose activity_callback is None.
+            # recognizes as activity); this is a no-op for any worker whose
+            # activity_callback is None.
             heartbeat_stop = threading.Event()
 
             def _heartbeat() -> None:
@@ -3623,7 +3621,7 @@ def _apply_worker_state_isolation(env: dict[str, str]) -> dict[str, str]:
 
     No-ops when the config list is empty, so the existing env is untouched.
     Existing keys are overwritten only for the listed vars; every other key
-    (API keys, codex/hermes/claude paths, MEGAPLAN_* ids) is preserved.
+    (API keys, codex/omp/claude paths, MEGAPLAN_* ids) is preserved.
     """
     names = _worker_isolated_env_vars()
     if not names:
@@ -5011,7 +5009,7 @@ def mock_worker_output(
         )
         preexisting_paths = {path for path in side_effect_paths if path.exists()}
         result.rendered_prompt = render_prompt_for_dispatch(
-            "hermes",
+            "omp",
             step,
             state,
             plan_dir,
@@ -6747,17 +6745,7 @@ def run_codex_prep_step(
 
 
 def _is_agent_available(agent: str) -> bool:
-    """Check if an agent is available (CLI binary or omp_rpc/omp for hermes)."""
-    if agent == "hermes":
-        # Post-migration: ``hermes`` agent specs route through the omp worker
-        # (omp replaced the vendored hermes dispatch surface). Report
-        # availability via the omp CLI / omp_rpc package, matching the omp
-        # branch's availability contract.
-        try:
-            import omp_rpc  # noqa: F401
-        except ImportError:
-            return bool(shutil.which("omp"))
-        return True
+    """Check if an agent is available (CLI binary or omp_rpc/omp)."""
     if agent in {"claude", "shannon"}:
         # shannon is a deprecated alias for claude: both run the native
         # `claude --print` worker (legacy tmux shannon machinery removed).
@@ -6776,8 +6764,6 @@ def _is_agent_available(agent: str) -> bool:
 
 
 def _agent_requested_explicitly(step: str, args: argparse.Namespace) -> bool:
-    if getattr(args, "hermes", None) is not None:
-        return True
     if getattr(args, "agent", None):
         return True
     for phase_model in getattr(args, "phase_model", None) or []:
@@ -6822,8 +6808,8 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     persistent session (break continuity) or --ephemeral for a truly one-off
     call with no session saved.
 
-    The model is extracted from compound agent specs (e.g. 'hermes:openai/gpt-5')
-    or from --phase-model / --hermes CLI flags.  For bare ``claude`` /
+    The model is extracted from compound agent specs (e.g. 'omp:openai/gpt-5')
+    or from --phase-model CLI flags.  For bare ``claude`` /
     ``codex`` specs (no explicit model), the pinned default model is resolved
     and stored in ``resolved_model``.
     """
@@ -6831,8 +6817,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     effort: str | None = None
 
     explicit_agent_spec = getattr(args, "agent", None)
-    explicit_hermes_flag = getattr(args, "hermes", None)
-    explicit_agent_override = bool(explicit_agent_spec) or explicit_hermes_flag is not None
+    explicit_agent_override = bool(explicit_agent_spec)
     live_phase_model_steps = getattr(args, "_live_phase_model_steps", None)
     live_phase_model_steps_known = live_phase_model_steps is not None
     if live_phase_model_steps is None:
@@ -6867,33 +6852,26 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             phase_model_matches = False
 
     if not phase_model_matches:
-        # Check --hermes flag
-        hermes_flag = explicit_hermes_flag
-        if hermes_flag is not None:
-            agent = "hermes"
-            if isinstance(hermes_flag, str) and hermes_flag:
-                model = hermes_flag
+        # Check explicit --agent flag
+        explicit = explicit_agent_spec
+        if explicit:
+            explicit_parsed = parse_agent_spec(explicit)
+            agent = explicit_parsed.agent
+            model = explicit_parsed.model
+            effort = explicit_parsed.effort
         else:
-            # Check explicit --agent flag
-            explicit = explicit_agent_spec
-            if explicit:
-                explicit_parsed = parse_agent_spec(explicit)
-                agent = explicit_parsed.agent
-                model = explicit_parsed.model
-                effort = explicit_parsed.effort
-            else:
-                # Fall back to config / defaults
-                config = load_config(home)
-                configured_spec = config.get("agents", {}).get(step)
-                spec = configured_spec or DEFAULT_AGENT_ROUTING[step]
-                spec = _vendor_adjusted_default_spec(step, spec, args)
-                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
-                    vendor = effective_premium_vendor(args, config)
-                    spec = format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
-                spec_parsed = parse_agent_spec(spec)
-                agent = spec_parsed.agent
-                model = spec_parsed.model
-                effort = spec_parsed.effort
+            # Fall back to config / defaults
+            config = load_config(home)
+            configured_spec = config.get("agents", {}).get(step)
+            spec = configured_spec or DEFAULT_AGENT_ROUTING[step]
+            spec = _vendor_adjusted_default_spec(step, spec, args)
+            if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                vendor = effective_premium_vendor(args, config)
+                spec = format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
+            spec_parsed = parse_agent_spec(spec)
+            agent = spec_parsed.agent
+            model = spec_parsed.model
+            effort = spec_parsed.effort
 
     if is_premium_placeholder_agent(agent):
         raise CliError(
@@ -6909,12 +6887,6 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     elif not _is_agent_available(agent):
         is_explicit = _agent_requested_explicitly(step, args)
         if is_explicit:
-            if agent == "hermes":
-                raise CliError(
-                    "agent_deps_missing",
-                    "hermes agent specs route through the omp adapter; "
-                    "install the omp CLI (or omp_rpc) to run hermes-spec models.",
-                )
             if agent == "shannon":
                 from arnold_pipelines.megaplan._core.io import shannon_missing_deps
                 missing = shannon_missing_deps()
@@ -6932,20 +6904,12 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                     "Install bun (https://bun.sh) and ensure the vendored fork at megaplan/vendor/shannon/index.ts is present.",
                 )
             raise CliError("agent_not_found", f"Agent '{agent}' not found on PATH")
-        # For hermes via agent=="hermes" config default when not explicitly requested,
-        # give a specific error
-        if agent == "hermes":
-            raise CliError(
-                "agent_deps_missing",
-                "hermes agent specs route through the omp adapter; "
-                "install the omp CLI (or omp_rpc) to run hermes-spec models.",
-            )
         # Try fallback
         available = detect_available_agents()
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude or codex, or install the omp CLI (omp_rpc) for omp/hermes-spec models.",
+                "No supported agents found. Install claude or codex, or install the omp CLI (omp_rpc) for omp-spec models.",
             )
         fallback = available[0]
         args._agent_fallback = {
@@ -7700,33 +7664,7 @@ def _run_step_with_worker_legacy(
         attempted_agents.add(agent)
         try:
             if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") != "1":
-                if agent == "hermes":
-                    # Post-migration: hermes agent specs are no longer a live
-                    # dispatch surface — they route through the omp worker,
-                    # which translates legacy hermes routes to canonical omp
-                    # specs (see workers.omp.omp_route_from_legacy).
-                    if os.getenv(MOCK_ENV_VAR) != "1":
-                        assert resolved_model is not None and resolved_model != "", (
-                            "run_step_with_worker about to invoke run_omp_step "
-                            "for a hermes-routed spec with empty resolved_model."
-                        )
-                    from arnold_pipelines.megaplan.workers.omp import run_omp_step
-
-                    worker = run_omp_step(
-                        step,
-                        state,
-                        plan_dir,
-                        root=root,
-                        fresh=effective_refreshed,
-                        model=resolved_model,
-                        effort=effort,
-                        prompt_override=prompt_override,
-                        prompt_kwargs=prompt_kwargs,
-                        read_only=read_only,
-                        output_path=output_path,
-                        worker_options=worker_options,
-                    )
-                elif agent in ("claude", "shannon"):
+                if agent in ("claude", "shannon"):
                     # shannon is a deprecated alias for claude: both run the
                     # native ``claude --print`` worker (legacy tmux shannon
                     # machinery removed). The outer auth/connection fallback
@@ -7857,9 +7795,7 @@ def _run_step_with_worker_legacy(
                     output_path=output_path,
                     effective_refreshed=effective_refreshed,
                 )
-                # Post-migration: hermes agent specs route through the omp
-                # adapter; the legacy deepseek adapter registration is dropped.
-                _dispatcher.register("hermes", _omp_closure)
+                # All omp-spec agents route through the omp adapter.
                 _dispatcher.register("omp", _omp_closure)
                 _dispatcher.register(
                     "codex",
@@ -7894,20 +7830,7 @@ def _run_step_with_worker_legacy(
                 # native claude --print worker.
                 _dispatcher.register("claude", _claude_closure)
                 _dispatcher.register("shannon", _claude_closure)
-                if agent == "hermes":
-                    _rendered = render_prompt_for_dispatch(
-                        "hermes",
-                        step,
-                        state,
-                        plan_dir,
-                        root=root,
-                        model=model,
-                        prompt_override=prompt_override,
-                        **(prompt_kwargs or {}),
-                    )
-                    _prompt = _rendered.prompt
-                else:
-                    _prompt = None
+                _prompt = None
                 _request = _AgentRequest(
                     agent=agent,
                     mode=mode,

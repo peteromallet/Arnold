@@ -92,7 +92,7 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     def fake_run(argv, **kwargs):
         # Cloud-status collection can issue an unrelated ``ps`` while this
         # process-wide subprocess monkeypatch is active. Capture only the
-        # Hermes launcher invocation owned by this test.
+        # omp launcher invocation owned by this test.
         if "--query-file" in argv:
             captured["argv"] = list(argv)
             captured["kwargs"] = kwargs
@@ -112,7 +112,7 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
             config,
             task="hello\nworld",
             project_dir=str(tmp_path),
-            backend="hermes",
+            backend="omp",
             background=False,
         )
     )
@@ -121,7 +121,7 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert result.final_text == "FINAL ANSWER"
     assert result.returncode == 0
     argv = captured["argv"]
-    assert argv[1].endswith("launch_hermes_agent.py")
+    assert argv[1].endswith("launch_omp_agent.py")
     assert "--model" in argv and "deepseek:deepseek-v4-pro" in argv
     assert "--toolsets" in argv and "file,web" in argv
     assert "--max-tokens" in argv and "12345" in argv
@@ -144,7 +144,7 @@ def test_nonzero_exit_is_failure(monkeypatch) -> None:
         lambda argv, **kw: _Completed(stdout="", stderr="boom", returncode=6),
     )
     result = asyncio.run(
-        launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
+        launch_subagent_task(ResidentConfig(), task="x", backend="omp", background=False)
     )
     assert result.ok is False
     assert result.returncode == 6
@@ -158,7 +158,7 @@ def test_empty_stdout_is_failure(monkeypatch) -> None:
         lambda argv, **kw: _Completed(stdout="   \n", stderr="", returncode=0),
     )
     result = asyncio.run(
-        launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
+        launch_subagent_task(ResidentConfig(), task="x", backend="omp", background=False)
     )
     assert result.ok is False
 
@@ -169,7 +169,7 @@ def test_timeout_is_failure(monkeypatch) -> None:
 
     monkeypatch.setattr(subagent_module.subprocess, "run", raise_timeout)
     result = asyncio.run(
-        launch_subagent_task(ResidentConfig(), task="x", backend="hermes", background=False)
+        launch_subagent_task(ResidentConfig(), task="x", backend="omp", background=False)
     )
     assert result.ok is False
     assert "timed out" in (result.error or "")
@@ -178,16 +178,16 @@ def test_timeout_is_failure(monkeypatch) -> None:
 def test_missing_launcher_raises(tmp_path) -> None:
     config = ResidentConfig()
     monkeypatch_path = tmp_path / "ghost.py"
-    # Point the module's LAUNCHER_PATH at a non-existent file.
-    original = subagent_module.LAUNCHER_PATH
-    subagent_module.LAUNCHER_PATH = monkeypatch_path
+    # Point the module's OMP_LAUNCHER_PATH at a non-existent file.
+    original = subagent_module.OMP_LAUNCHER_PATH
+    subagent_module.OMP_LAUNCHER_PATH = monkeypatch_path
     try:
         with pytest.raises(FileNotFoundError):
             asyncio.run(
-                launch_subagent_task(config, task="x", backend="hermes", background=False)
+                launch_subagent_task(config, task="x", backend="omp", background=False)
             )
     finally:
-        subagent_module.LAUNCHER_PATH = original
+        subagent_module.OMP_LAUNCHER_PATH = original
 
 
 def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) -> None:

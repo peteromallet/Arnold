@@ -205,7 +205,6 @@ def _args(plan: str, **overrides: Any) -> argparse.Namespace:
     values: dict[str, Any] = {
         "plan": plan,
         "agent": None,
-        "hermes": None,
         "phase_model": [],
         "profile": None,
         "fresh": False,

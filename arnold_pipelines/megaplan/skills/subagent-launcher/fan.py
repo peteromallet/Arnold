@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fan out N hermes subagent calls through omp (Oh My Pi).
+"""Fan out N omp subagent calls through omp (Oh My Pi).
 
-Companion to ``launch_hermes_agent.py`` (omp-backed): each task runs the
+Companion to ``launch_omp_agent.py``: each task runs the
 launcher as its own subprocess — which is itself a one-off ``omp -p`` run —
 so N independent agents run concurrently without the Arnold/megaplan runtime
 in the picture. No shared imports, no SessionDB, no in-process AIAgent.
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_LAUNCHER = _SCRIPT_DIR / "launch_hermes_agent.py"
+_LAUNCHER = _SCRIPT_DIR / "launch_omp_agent.py"
 
 # Stop-event plumbing (same contract as the old fan): SIGINT/SIGTERM set it,
 # workers stop submitting, in-flight tasks get a grace window, then children

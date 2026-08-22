@@ -807,7 +807,7 @@ def test_runtime_producer_binding_captures_available_hermes_attempt_identity(
         session_id="session-1",
         model_actual="glm-5.2",
         attempt_index=1,
-        attempted_specs=("hermes:deepseek:model-a", "hermes:zhipu:glm-5.2"),
+        attempted_specs=("omp:deepseek/model-a", "omp:zai/glm-5.2"),
     )
 
     binding = critique_runtime._critique_producer_binding(
@@ -821,7 +821,7 @@ def test_runtime_producer_binding_captures_available_hermes_attempt_identity(
     )
 
     assert binding["attempt_id"] == "inv-1:1"
-    assert binding["selected_spec"] == "hermes:zhipu:glm-5.2"
+    assert binding["selected_spec"] == "omp:zai/glm-5.2"
     assert binding["provider"] == "zhipu"
     assert binding["model_actual"] == "glm-5.2"
     assert binding["scratch_sha256"] == critique_custody.sha256_file(
@@ -851,7 +851,7 @@ def test_parallel_reducer_receipt_binds_phase_children_and_rejects_manifest_tamp
         state=state,
         step="critique",
         agent="hermes",
-        selected_spec="hermes:zhipu:glm-5.2",
+        selected_spec="omp:zai/glm-5.2",
         route_kind="subprocess",
         dispatch_key="critique:scope:initial",
     )

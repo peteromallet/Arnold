@@ -25,7 +25,7 @@ _STATIC_SCAN_EXCLUDED_PARTS: frozenset[str] = frozenset(
         "node_modules",
         ".venv",
         "venv",
-        ".hermes",
+        ".omp",
     }
 )
 _STATIC_SCAN_MAX_FILE_BYTES = 250_000
@@ -77,7 +77,7 @@ _DIFF_NOISE_PREFIXES: tuple[str, ...] = (
     "node_modules/",
     ".venv/",
     "venv/",
-    ".hermes/",         # hermes agent state
+    ".omp/",            # omp agent state
 )
 _DIFF_NOISE_SUBSTRINGS: tuple[str, ...] = (
     "/__pycache__/",

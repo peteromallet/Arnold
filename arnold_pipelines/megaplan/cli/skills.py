@@ -112,14 +112,6 @@ def _canonical_bakeoff_skill() -> str:
     )
 
 
-def _canonical_babysit_skill() -> str:
-    return (
-        resources.files("arnold_pipelines.megaplan")
-        .joinpath("data", "babysit_skill.md")
-        .read_text(encoding="utf-8")
-    )
-
-
 def _canonical_subagent_launcher_skill() -> str:
     return (
         resources.files("arnold_pipelines.megaplan")
@@ -174,8 +166,6 @@ def bundled_global_file(name: str) -> str:
         return _canonical_cloud_skill()
     if name == "bakeoff_skill.md":
         return _canonical_bakeoff_skill()
-    if name == "babysit_skill.md":
-        return _canonical_babysit_skill()
     if name in {"superfixer_debug_skill.md", "progress_auditor_debug_skill.md"}:
         return _canonical_data_skill(name)
     if name == "subagent_launcher_skill.md":
@@ -212,19 +202,14 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe", "data": "_codex_skills/megaplan-observe", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-cloud/SKILL.md", "data": "cloud_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud", "data": "_codex_skills/megaplan-cloud", "install": "symlink"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/babysit/SKILL.md", "data": "babysit_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/babysit", "data": "_codex_skills/babysit", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
-    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
 ]
 
@@ -241,7 +226,6 @@ _CODEX_SINGLE_FILE_SKILLS = {
     "megaplan-epic": "epic_skill.md",
     "megaplan-observe": "observe_skill.md",
     "megaplan-cloud": "cloud_skill.md",
-    "babysit": "babysit_skill.md",
 }
 
 

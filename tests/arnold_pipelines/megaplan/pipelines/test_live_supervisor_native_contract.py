@@ -37,7 +37,7 @@ from arnold_pipelines.megaplan.pipelines.live_supervisor.steps import (
 )
 from arnold_pipelines.megaplan.pipelines.live_supervisor.repair_agent import (
     FakeRepairAgent,
-    HermesRepairAgent,
+    OmpRepairAgent,
 )
 from arnold_pipelines.megaplan.pipelines.live_supervisor.rules import (
     classify_incident,
@@ -229,7 +229,7 @@ class TestRepairDecisionStep:
                 "diagnoses": [{"health_category": "plan_issue", "findings": [], "reasoning": "test"}],
             },
         )
-        result = RepairDecisionStep(agent=HermesRepairAgent(launcher=None)).run(ctx)
+        result = RepairDecisionStep(agent=OmpRepairAgent(launcher=None)).run(ctx)
         assert result.next == "recheck_emit"
         artifact = json.loads((tmp_path / "repair_decision" / "repair_decisions.json").read_text())
         assert artifact[0]["verdict"]["allowed"] is False
@@ -316,8 +316,8 @@ def test_fake_repair_agent_returns_recommendation() -> None:
     assert result.command == "doctor"
 
 
-def test_hermes_repair_agent_reports_unavailable() -> None:
-    agent = HermesRepairAgent(launcher=None)
+def test_omp_repair_agent_reports_unavailable() -> None:
+    agent = OmpRepairAgent(launcher=None)
     with pytest.raises(Exception):
         agent.diagnose_and_recommend(_incident_for_rules(), {})
 

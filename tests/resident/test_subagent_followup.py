@@ -396,7 +396,7 @@ def test_internal_contributor_followup_preserves_single_delivery_owner(
 @pytest.mark.parametrize(
     ("backend", "model", "session_id"),
     [
-        ("hermes", "zhipu:glm-5.2", "resident_0123456789abcdef0123456789abcdef"),
+        ("omp", "zai/glm-5.2", "resident_0123456789abcdef0123456789abcdef"),
         ("claude", "opus", "019f5d2e-d5da-75f3-a617-4712a1c57cc5"),
     ],
 )
@@ -460,8 +460,8 @@ def test_terminal_followup_rejects_unconfirmed_provider_persistence(
     ("backend", "model", "session_id", "resume_flag"),
     [
         (
-            "hermes",
-            "zhipu:glm-5.2",
+            "omp",
+            "zai/glm-5.2",
             "resident_0123456789abcdef0123456789abcdef",
             "--resume-session",
         ),
@@ -508,10 +508,13 @@ def test_non_codex_continuation_worker_resumes_exact_session(
             return 0
 
     def fake_provider(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
+        # Skip the post-session summarizer (launches with --query-file and
+        # no session-resume flags).
+        if "--session-id" in argv or "--resume" in argv:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
         output = kwargs["stdout"]
-        if backend == "hermes":
+        if backend == "omp":
             output.write(b"CONTINUED\n")
             Path(argv[argv.index("--metadata-file") + 1]).write_text(
                 json.dumps(
@@ -737,8 +740,11 @@ def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
             return 0
 
     def fake_codex(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
+        # The post-session summarizer launches the omp launcher too; capture
+        # only the codex continuation invocation under test.
+        if argv[:3] == ["codex", "exec", "resume"]:
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
         return _Codex()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_codex)

@@ -6,7 +6,7 @@ from typing import Any
 
 from arnold_pipelines.megaplan.handlers.shared import _finish_step, activate_phase_wbc
 from arnold_pipelines.megaplan.orchestration.phase_result import phase_result_guard
-from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt
 from arnold_pipelines.megaplan.schemas.planning import TiebreakerDecision
 from arnold_pipelines.megaplan.types import (
     CliError,
@@ -50,8 +50,6 @@ def _build_tiebreaker_reprompt(
 ) -> str:
     if agent_type == "claude":
         base_prompt = create_claude_prompt("gate", state, plan_dir, root=root)
-    elif agent_type == "hermes":
-        base_prompt = create_hermes_prompt("gate", state, plan_dir, root=root)
     else:
         base_prompt = create_codex_prompt("gate", state, plan_dir, root=root)
     addendum = (
@@ -226,7 +224,6 @@ def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
                     tb_args = argparse.Namespace(
                         plan=args.plan, question=question, question_file=None,
                         output=None, agent=getattr(args, "agent", None),
-                        hermes=getattr(args, "hermes", None),
                         phase_model=list(getattr(args, "phase_model", [])),
                         profile=getattr(args, "profile", None),
                         fresh=getattr(args, "fresh", False),

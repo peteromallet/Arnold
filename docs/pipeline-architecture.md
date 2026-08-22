@@ -117,7 +117,7 @@ register_prompt(
 
 # 2. (Optional) Override one slot for this variant.
 from megaplan._pipeline.profile import Profile, load_profile
-profile = load_profile("all-claude").with_slot("critique", "hermes:openai/gpt-5")
+profile = load_profile("all-claude").with_slot("critique", "omp:openai/gpt-5")
 
 # 3. Run a pipeline with mode="scientific-paper" in its StepContext.
 from megaplan._pipeline.demos.doc_critique import run_demo

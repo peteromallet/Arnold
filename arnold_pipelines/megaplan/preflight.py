@@ -29,21 +29,26 @@ _AGENT_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "codex": ("OPENAI_API_KEY",),
 }
 
+# omp provider → credential env hints (mirrors workers.omp._OMP_CREDENTIAL_ENV).
+# The z.ai route reads ZAI_API_KEY, with ZHIPU_API_KEY accepted as a legacy
+# alias.  omp-native credential routes (openai-codex, grok, kimi-code) resolve
+# credentials from omp's own store and must not be gated here.
 _PROVIDER_ENV_HINTS: dict[str, tuple[str, ...]] = {
-    provider: provider_credential_env_vars(provider)
-    for provider in (
-        "zhipu",
-        "kimi",
-        "minimax",
-        "mimo",
-        "openrouter",
-        "google",
-        "deepseek",
-        "fireworks",
-        "xai",
-    )
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "zai": ("ZAI_API_KEY", "ZHIPU_API_KEY"),
+    "zhipu": ("ZAI_API_KEY", "ZHIPU_API_KEY"),
+    "moonshot": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
+    "kimi": ("KIMI_API_KEY",),
+    "kimi-code": ("KIMI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "minimax": ("MINIMAX_API_KEY",),
+    "mimo": ("MINIMAX_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
 }
-# The non-Hermes names are kept here because premium/vendor profiles use them
+# The non-omp names are kept here because premium/vendor profiles use them
 # directly rather than through ``provider_credential_env_vars``.
 _PROVIDER_ENV_HINTS.update(
     {
@@ -196,16 +201,21 @@ def _credential_guidance(profile_name: str) -> list[str]:
 def _required_env_vars_for_slot(agent_spec: str, slot_name: str) -> list[tuple[str, str]]:
     """Return list of (env_var, display_name) required for a slot.
 
-    For hermes specs, extracts the provider from the model string
-    (e.g. ``hermes:fireworks:model`` → FIREWORKS_API_KEY).
+    For omp specs, extracts the provider from the model string
+    (e.g. ``omp:fireworks/glm-5.2`` → FIREWORKS_API_KEY).
     """
     agent, model = _parse_agent_spec(agent_spec)
     required: list[tuple[str, str]] = []
 
-    if agent == "hermes" and model:
-        # Extract provider: hermes:provider:actual-model
-        parts = model.split(":", 1)
-        provider = parts[0] if parts else None
+    if agent == "omp" and model:
+        # Extract provider: omp:provider/model (legacy omp:provider/model
+        # forms are accepted for back-compat).
+        provider: str | None = None
+        if model.startswith("omp:"):
+            model = model[len("omp:"):]
+        provider, _, model = model.partition("/")
+        if not provider and ":" in model:
+            provider, model = model.split(":", 1)
         if provider and provider in _PROVIDER_ENV_HINTS:
             # Aliases are alternatives, not independent requirements.  Keep
             # the canonical name in the legacy return shape while the caller
@@ -213,9 +223,6 @@ def _required_env_vars_for_slot(agent_spec: str, slot_name: str) -> list[tuple[s
             env_vars = _PROVIDER_ENV_HINTS[provider]
             if env_vars:
                 required.append((env_vars[0], f"{agent}/{provider}"))
-        else:
-            # Unknown provider — assume it needs whatever the agent normally needs
-            pass
     elif agent in _AGENT_ENV_HINTS:
         for env_var in _AGENT_ENV_HINTS[agent]:
             required.append((env_var, agent))
@@ -258,14 +265,20 @@ def preflight_check_profile(
         concrete_spec = _resolve_concrete_slot_spec(spec, vendor=vendor)
         required = _required_env_vars_for_slot(concrete_spec, slot)
         parsed_agent, parsed_model = _parse_agent_spec(concrete_spec)
-        hermes_provider: str | None = None
-        if parsed_agent == "hermes" and parsed_model and ":" in parsed_model:
-            hermes_provider = parsed_model.split(":", 1)[0]
-        if hermes_provider in _PROVIDER_ENV_HINTS:
+        omp_provider: str | None = None
+        if parsed_agent == "omp" and parsed_model:
+            candidate = parsed_model
+            if candidate.startswith("omp:"):
+                candidate = candidate[len("omp:"):]
+            provider, _, _ = candidate.partition("/")
+            if not provider and ":" in candidate:
+                provider, _ = candidate.split(":", 1)
+            omp_provider = provider or None
+        if omp_provider in _PROVIDER_ENV_HINTS:
             # A provider prefix is a direct routing contract.  Validate its
             # own aliases here so one configured GLM/ZAI key is sufficient and
-            # no empty-key AIAgent construction can be reached later.
-            if _provider_credential_configured(hermes_provider):
+            # no empty-key construction can be reached later.
+            if _provider_credential_configured(omp_provider):
                 continue
         for env_var, display_name in required:
             if not _check_credential(env_var):

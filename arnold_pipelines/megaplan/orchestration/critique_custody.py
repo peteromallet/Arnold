@@ -79,7 +79,7 @@ CL4_CARRIED_BLOCKERS: tuple[str, ...] = ()
 # custody receipt; any other producer is outside the authorized scope and its
 # reconciliation bindings must be rejected as authority-shaped evidence.
 _AUTHORIZED_CRITIQUE_PRODUCERS = frozenset(
-    {"codex", "hermes", "shannon", "claude", "parallel_critique_reducer"}
+    {"codex", "omp", "shannon", "claude", "parallel_critique_reducer"}
 )
 
 

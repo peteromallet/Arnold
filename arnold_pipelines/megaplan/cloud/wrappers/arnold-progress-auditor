@@ -192,7 +192,7 @@ if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
 fi
 arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
-LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
+LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 # MEGAPLAN_AUDIT_SESSION_ALLOWLIST / MEGAPLAN_AUDIT_PLAN_ALLOWLIST are
@@ -1419,11 +1419,11 @@ def _text_has_meta_launch_failure(text):
         "Codex meta-repair orchestrator returned no output",
         "Codex meta-repair prompt exceeded input limit",
         "all meta-repair launch paths failed",
-        "direct Hermes fallback produced no recordable verdict",
+        "direct omp fallback produced no recordable verdict",
         "Not inside a trusted directory",
         "--skip-git-repo-check was not specified",
         "codex CLI missing; no automated meta-repair",
-        "failed to launch DeepSeek/Hermes subagents",
+        "failed to launch DeepSeek/omp subagents",
         "Input exceeds the maximum length",
         "input_too_large",
     )
@@ -6313,7 +6313,7 @@ Evaluate these questions in order:
   mismatch or stale repair-data trigger is pipeline friction, even if the user
   chain is still progressing.
 - The periodic audit reviewer is read-only and must not claim it launched
-  DeepSeek/Hermes children, patched source, committed, pushed, or relaunched a
+  DeepSeek/omp children, patched source, committed, pushed, or relaunched a
   repairer. Return a typed repair request; the central repair authority owns
   any subsequent mutation or managed child launch.
 - Inspect `existing_agent_ownership` before recommending or launching anything.

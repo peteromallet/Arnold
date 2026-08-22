@@ -6,9 +6,9 @@ exec > >(tee -a "$$LOG") 2>&1
 
 echo "=== $$(date -Iseconds) entrypoint starting ==="
 
-mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex /root/.hermes /workspace/.creds
+mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex /workspace/.creds
 chmod 700 /root/.ssh
-chmod 700 /root/.codex /root/.hermes /workspace/.creds
+chmod 700 /root/.codex /workspace/.creds
 
 # Railway CLI auth lives on the persistent workspace volume. Railway updates
 # ~/.railway/config.json with an atomic rename, so the whole directory (not
@@ -64,10 +64,6 @@ if [[ "$$CODEX_AUTH_METHOD" == "chatgpt" ]]; then
     echo "Codex auth: seeded ChatGPT OAuth credentials from persistent volume"
   else
     echo "Codex auth: ChatGPT OAuth selected; no persisted /workspace/.creds/codex-auth.json seed found"
-  fi
-  if [[ -s /workspace/.creds/hermes-auth.json ]]; then
-    install -m 600 /workspace/.creds/hermes-auth.json /root/.hermes/auth.json
-    echo "Hermes auth: seeded OpenAI Codex OAuth credentials from persistent volume"
   fi
 fi
 

@@ -47,7 +47,7 @@ def strip_provider_prefix(model: str | None) -> str | None:
         "codex",
         "deepseek",
         "fireworks",
-        "hermes",
+        "omp",
         "local",
         "minimax",
         "nous",

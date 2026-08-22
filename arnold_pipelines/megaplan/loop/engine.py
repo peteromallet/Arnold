@@ -42,7 +42,7 @@ def _normalized_args(args: argparse.Namespace | None) -> argparse.Namespace:
     defaults = {
         "agent": None,
         "phase_model": [],
-        "hermes": None,
+        "omp": None,
         "ephemeral": False,
         "fresh": False,
         "persist": False,

@@ -267,9 +267,9 @@ class TestAdaptiveCritiqueRouting:
             argparse.Namespace(
                 tier_models={
                     "critique": {
-                        1: "hermes:deepseek:deepseek-v4-flash",
-                        2: "hermes:deepseek:deepseek-v4-flash",
-                        3: "hermes:deepseek:deepseek-v4-flash",
+                        1: "omp:deepseek/deepseek-v4-flash",
+                        2: "omp:deepseek/deepseek-v4-flash",
+                        3: "omp:deepseek/deepseek-v4-flash",
                         4: "codex:gpt-5.4",
                         5: "codex:gpt-5.5",
                     }
@@ -351,7 +351,7 @@ class TestAdaptiveCritiqueRouting:
             tier_models={
                 "critique": {
                     4: "codex:gpt-5.5",
-                    2: "hermes:deepseek:deepseek-v4-flash",
+                    2: "omp:deepseek/deepseek-v4-flash",
                     6: "codex:gpt-5.5",
                 }
             }
@@ -400,10 +400,10 @@ class TestAdaptiveCritiqueRouting:
         state = {
             "config": {
                 "profile": "partnered-5",
-                "phase_model": ["critique=hermes:deepseek:deepseek-v4-pro"],
+                "phase_model": ["critique=omp:deepseek/deepseek-v4-pro"],
                 "tier_models": {
                     "critique": {
-                        "3": "hermes:deepseek:deepseek-v4-pro",
+                        "3": "omp:deepseek/deepseek-v4-pro",
                         "4": "codex:gpt-5.4",
                         "5": "codex:gpt-5.5",
                         "6": "codex:gpt-5.5",
@@ -413,7 +413,7 @@ class TestAdaptiveCritiqueRouting:
         }
         args = argparse.Namespace(
             profile="partnered-5",
-            phase_model=["critique=hermes:deepseek:deepseek-v4-pro"],
+            phase_model=["critique=omp:deepseek/deepseek-v4-pro"],
             tier_models=None,
         )
         checks = [
@@ -427,7 +427,7 @@ class TestAdaptiveCritiqueRouting:
         correctness_mode = checks[1]["_resolved_agent_mode"]
         assert scope_mode.agent == "hermes"
         assert scope_mode.resolved_model == "deepseek:deepseek-v4-pro"
-        assert checks[0]["_routing_selected_spec"] == "hermes:deepseek:deepseek-v4-pro"
+        assert checks[0]["_routing_selected_spec"] == "omp:deepseek/deepseek-v4-pro"
         assert correctness_mode.agent == "codex"
         assert correctness_mode.resolved_model == "gpt-5.4"
         assert checks[1]["_routing_selected_spec"] == "codex:gpt-5.4"
@@ -2318,8 +2318,8 @@ class TestOverrideFallbackChains:
             "resolve_profile",
             lambda profile_name, profiles: {
                 "execute": [
-                    "hermes:deepseek:deepseek-v4-pro",
-                    "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+                    "omp:deepseek/deepseek-v4-pro",
+                    "omp:fireworks/kimi-k2.6",
                 ],
                 "plan": "codex:gpt-5.5",
             },
@@ -2339,7 +2339,7 @@ class TestOverrideFallbackChains:
 
         assert response["success"] is True
         assert state["config"]["phase_model"] == [
-            'execute=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","hermes:fireworks:accounts/fireworks/models/kimi-k2p6"]',
+            'execute=__fallback_json__:["omp:deepseek/deepseek-v4-pro","omp:fireworks/kimi-k2.6"]',
             "plan=claude:claude-opus-4-7",
         ]
 
@@ -2373,8 +2373,8 @@ class TestOverrideFallbackChains:
             profiles_module,
             "resolve_profile",
             lambda profile_name, profiles: {
-                "plan": "hermes:deepseek:deepseek-v4-pro",
-                "execute": "hermes:deepseek:deepseek-v4-pro",
+                "plan": "omp:deepseek/deepseek-v4-pro",
+                "execute": "omp:deepseek/deepseek-v4-pro",
             },
         )
         monkeypatch.setattr(
@@ -2397,8 +2397,8 @@ class TestOverrideFallbackChains:
 
         assert response["success"] is True
         assert state["config"]["phase_model"] == [
-            "plan=hermes:deepseek:deepseek-v4-pro",
-            "execute=hermes:deepseek:deepseek-v4-pro",
+            "plan=omp:deepseek/deepseek-v4-pro",
+            "execute=omp:deepseek/deepseek-v4-pro",
         ]
         assert "vendor" not in state["config"]
 
@@ -2413,8 +2413,8 @@ class TestOverrideFallbackChains:
             profiles_module,
             "resolve_profile",
             lambda profile_name, profiles: {
-                "plan": "hermes:deepseek:deepseek-v4-pro",
-                "execute": "hermes:deepseek:deepseek-v4-pro",
+                "plan": "omp:deepseek/deepseek-v4-pro",
+                "execute": "omp:deepseek/deepseek-v4-pro",
             },
         )
         monkeypatch.setattr(
@@ -2461,9 +2461,9 @@ class TestOverrideFallbackChains:
 
         assert response["success"] is True
         assert state["config"]["prep_models"] == {
-            "triage": "hermes:deepseek:deepseek-v4-pro",
-            "fanout": "hermes:deepseek:deepseek-v4-pro",
-            "distill": "hermes:deepseek:deepseek-v4-pro",
+            "triage": "omp:deepseek/deepseek-v4-pro",
+            "fanout": "omp:deepseek/deepseek-v4-pro",
+            "distill": "omp:deepseek/deepseek-v4-pro",
         }
         assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] is None
         assert state["config"]["prep_model_resolver_trace"]["explicit_prep_models"] == {}

@@ -1681,7 +1681,7 @@ class PlanningControlBinding:
                 raise CliError(
                     "invalid_args",
                     f"set-model only supports claude/codex specs; got '{explicit_spec.agent}'. "
-                    "Use --phase-model on the phase command for hermes/shannon routing.",
+                    "Use --phase-model on the phase command for omp/shannon routing.",
                 )
             else:
                 inferred_agent = None
