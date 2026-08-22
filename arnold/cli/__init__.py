@@ -12,6 +12,7 @@ verbs are the workflow runtime and the operator projection commands.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Sequence
 
 
@@ -42,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == _WORKFLOW_COMMAND:
         from arnold.cli.workflow import main as _workflow_main
 
-        return _workflow_main(rest)
+        return _workflow_main(rest, prog=f"{Path(sys.argv[0]).stem or 'arnold'} workflow")
 
     if command in _OPERATOR_COMMANDS:
         from arnold.cli.operators import main as _operators_main
@@ -52,7 +53,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command in _EXECUTION_COMMANDS:
         from arnold.cli.execution import main as _execution_main
 
-        return _execution_main([command, *rest], prog="arnold")
+        prog = Path(sys.argv[0]).stem or "arnold"
+        return _execution_main([command, *rest], prog=prog)
 
     print(f"arnold: unknown command {command!r}", file=sys.stderr)
     _print_usage(file=sys.stderr)
