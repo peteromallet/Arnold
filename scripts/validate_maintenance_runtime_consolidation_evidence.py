@@ -5,6 +5,12 @@ The JSON schema validates record shape; this module validates custody, cross-rec
 references, ordering, routing, and artifact digests.  Errors are deliberately
 ordered by code, then record location, so CI and downstream agents can consume
 stable output.
+
+Changelog: 2026-08-21/22 operator amendments: one-review cadence; all-models
+ox-alpha.  Routing accepts each role's historical route or ox-alpha; XHARD
+cards require exactly one deciding review (terminal-verdict gate covering the
+card) instead of the rigid pre_review/implementation/post_review lifecycle
+triple.
 """
 from __future__ import annotations
 
@@ -39,6 +45,12 @@ ROUTES = {
     "VALIDATION": "gpt-5.6-luna",
     "REPORT": "gpt-5.6-luna",
 }
+# 2026-08-22 operator directive: every role routes through openrouter/stealth/
+# ox-alpha; the historical per-role routes above stay valid for pre-directive
+# era receipts.
+UNIVERSAL_ROUTE = "ox-alpha"
+# Terminal gate verdicts that decide an XHARD card under the amended cadence.
+DECIDING_VERDICTS = frozenset({"PASS", "PASSED", "ACCEPTED", "APPROVED"})
 ALLOWANCE_CATEGORIES = (
     "production_files", "tests", "fixtures", "exports", "helpers", "generated_surfaces"
 )
@@ -105,6 +117,13 @@ def expected_model(record: dict[str, Any]) -> str | None:
     return ROUTES.get(difficulty)
 
 
+def acceptable_models(record: dict[str, Any]) -> tuple[str, ...]:
+    historical = expected_model(record)
+    if historical is None:
+        return ()
+    return (historical, UNIVERSAL_ROUTE)
+
+
 def _unique_ids(issues: list[ValidationIssue], values: list[Any], key: str, label: str) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for index, item in enumerate(values):
@@ -142,6 +161,10 @@ def _check_artifact(issues: list[ValidationIssue], root: Path, record: dict[str,
 
 def _process_identity(record: dict[str, Any]) -> Any:
     return record.get("process_identity", record.get("child_process_identity"))
+
+
+def _gate_task_ids(gate: dict[str, Any]) -> list[str]:
+    return gate.get("task_ids") or ([gate.get("task_id")] if gate.get("task_id") else [])
 
 
 def _invocation_model(record: dict[str, Any]) -> str:
@@ -262,11 +285,11 @@ def validate_manifest(manifest_path: str | Path) -> list[ValidationIssue]:
             _issue(issues, "MISSING_ALLOWANCE", f"tasks[{index}].complete_allowance_id", "task has no complete allowance registry record")
         implementer = task.get("implementer") if isinstance(task.get("implementer"), dict) else task
         model = _invocation_model(implementer)
-        expected = expected_model(task)
-        if expected is None:
+        acceptable = acceptable_models(task)
+        if not acceptable:
             _issue(issues, "UNCLASSIFIED_ROLE", f"tasks[{index}].role", "task role/difficulty is not classified")
-        elif model and expected not in model:
-            _issue(issues, "WRONG_MODEL_ROUTE", f"tasks[{index}].implementer.model", f"expected {expected}, observed {model}")
+        elif model and not any(route in model for route in acceptable):
+            _issue(issues, "WRONG_MODEL_ROUTE", f"tasks[{index}].implementer.model", f"expected {' or '.join(acceptable)}, observed {model}")
         inv_id = implementer.get("invocation_id")
         if inv_id and inv_id not in invocation_map:
             _issue(issues, "MISSING_REFERENCE", f"tasks[{index}].implementer.invocation_id", "implementer receipt is missing")
@@ -281,12 +304,12 @@ def validate_manifest(manifest_path: str | Path) -> list[ValidationIssue]:
             continue
         task_id = str(review.get("task_id") or "")
         review_by_task.setdefault(task_id, []).append(review)
-        expected = expected_model(review)
+        acceptable = acceptable_models(review)
         model = _invocation_model(review)
-        if expected is None:
+        if not acceptable:
             _issue(issues, "UNCLASSIFIED_ROLE", f"review_invocations[{index}].role", "review role is not classified")
-        elif model and expected not in model:
-            _issue(issues, "WRONG_MODEL_ROUTE", f"review_invocations[{index}].model", f"expected {expected}, observed {model}")
+        elif model and not any(route in model for route in acceptable):
+            _issue(issues, "WRONG_MODEL_ROUTE", f"review_invocations[{index}].model", f"expected {' or '.join(acceptable)}, observed {model}")
         if review.get("invocation_id") not in invocation_map:
             _issue(issues, "MISSING_REFERENCE", f"review_invocations[{index}].invocation_id", "review receipt is missing")
 
@@ -294,7 +317,7 @@ def validate_manifest(manifest_path: str | Path) -> list[ValidationIssue]:
         if not isinstance(gate, dict):
             continue
         reviewer = gate.get("reviewer") if isinstance(gate.get("reviewer"), dict) else gate
-        task_refs = gate.get("task_ids") or ([gate.get("task_id")] if gate.get("task_id") else [])
+        task_refs = _gate_task_ids(gate)
         for task_id in task_refs:
             task = task_map.get(task_id)
             if task is None:
@@ -307,19 +330,32 @@ def validate_manifest(manifest_path: str | Path) -> list[ValidationIssue]:
                 _issue(issues, "SELF_REVIEW", f"gates[{index}].reviewer.process_identity", "reviewer and implementer process identities are equal")
             if reviewer.get("invocation_id") and reviewer.get("invocation_id") == impl.get("invocation_id"):
                 _issue(issues, "SELF_REVIEW", f"gates[{index}].reviewer.invocation_id", "reviewer and implementer invocation IDs are equal")
-        expected = expected_model(reviewer)
+        acceptable = acceptable_models(reviewer)
         model = _invocation_model(reviewer)
-        if expected and model and expected not in model:
-            _issue(issues, "WRONG_MODEL_ROUTE", f"gates[{index}].reviewer.model", f"expected {expected}, observed {model}")
+        if acceptable and model and not any(route in model for route in acceptable):
+            _issue(issues, "WRONG_MODEL_ROUTE", f"gates[{index}].reviewer.model", f"expected {' or '.join(acceptable)}, observed {model}")
 
     for task_id, task in task_map.items():
         difficulty = _norm_role(task.get("difficulty") or task.get("role"))
-        if difficulty == "XHARD":
-            phases = [str(item.get("phase") or "") for item in review_by_task.get(task_id, [])]
-            if phases != ["pre_review", "implementation", "post_review"]:
-                _issue(issues, "WRONG_HARD_REVIEW_ORDER", f"tasks[{task_id}].review_invocations", "XHARD task requires ordered pre_review, implementation, post_review lifecycle")
-        elif any(str(item.get("phase") or "") in {"pre_review", "post_review"} for item in review_by_task.get(task_id, [])):
-            _issue(issues, "WRONG_HARD_REVIEW_ORDER", f"tasks[{task_id}].review_invocations", "ordinary task cannot claim XHARD lifecycle")
+        if difficulty != "XHARD":
+            if any(str(item.get("phase") or "") in {"pre_review", "post_review"} for item in review_by_task.get(task_id, [])):
+                _issue(issues, "WRONG_HARD_REVIEW_ORDER", f"tasks[{task_id}].review_invocations", "ordinary task cannot claim XHARD lifecycle")
+            continue
+        # Amended 2026-08-21 cadence: one comprehensive review per XHARD card.  The
+        # deciding review is the card's single terminal-verdict gate; when that
+        # review blocks, at most one revision followed by one fresh re-review is
+        # allowed, and hollow rejected dispatches carry no verdict -- neither shape
+        # adds a second deciding review.
+        implementer = task.get("implementer") if isinstance(task.get("implementer"), dict) else task
+        if not implementer.get("invocation_id"):
+            _issue(issues, "MISSING_REFERENCE", f"tasks[{task_id}].implementer.invocation_id", "XHARD card requires an implementation invocation receipt")
+        deciding = [
+            gate
+            for gate in gates
+            if isinstance(gate, dict) and task_id in _gate_task_ids(gate) and _norm_role(gate.get("verdict")) in DECIDING_VERDICTS
+        ]
+        if len(deciding) != 1:
+            _issue(issues, "WRONG_HARD_REVIEW_ORDER", f"tasks[{task_id}].review_coverage", f"amended one-review cadence requires exactly one deciding review; found {len(deciding)}")
 
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
@@ -335,15 +371,16 @@ def validate_manifest(manifest_path: str | Path) -> list[ValidationIssue]:
             _issue(issues, "INCOMPLETE_REVISION_CHAIN", f"findings[{index}]", "revision invocation and commit are required")
         if not rereview or not (rereview.get("verdict") or rereview.get("disposition")):
             _issue(issues, "INCOMPLETE_REVISION_CHAIN", f"findings[{index}]", "re-review invocation and verdict are required")
-        if revision and revision_id in invocation_map and expected_model({"role": revision.get("role")}) not in _invocation_model(revision):
+        revision_acceptable = acceptable_models({"role": revision.get("role")})
+        if revision and revision_id in invocation_map and revision_acceptable and not any(route in _invocation_model(revision) for route in revision_acceptable):
             _issue(issues, "WRONG_MODEL_ROUTE", f"findings[{index}].revision_invocation_id", "revision model route is wrong")
 
     for index, judgment in enumerate(judgments):
         if not isinstance(judgment, dict):
             continue
         model = _invocation_model(judgment)
-        if "grok-4.6" not in model:
-            _issue(issues, "WRONG_MODEL_ROUTE", f"material_judgments[{index}].model", "material judgment requires Grok 4.6")
+        if not any(route in model for route in (ROUTES["JUDGMENT"], UNIVERSAL_ROUTE)):
+            _issue(issues, "WRONG_MODEL_ROUTE", f"material_judgments[{index}].model", f"expected {ROUTES['JUDGMENT']} or {UNIVERSAL_ROUTE}, observed {model}")
         inv_id = judgment.get("invocation_id") or (judgment.get("grok_invocation") or {}).get("invocation_id")
         if not inv_id or inv_id not in invocation_map:
             _issue(issues, "MISSING_GROK_RECEIPT", f"material_judgments[{index}]", "material judgment must link a Grok invocation receipt")

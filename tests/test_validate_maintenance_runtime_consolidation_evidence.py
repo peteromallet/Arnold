@@ -224,3 +224,68 @@ def test_reviewer_implementer_identity_equality_fails(tmp_path: Path):
     manifest["gates"][0]["reviewer"]["process_identity"] = "pid-h1-impl"
     path.write_text(json.dumps(manifest), encoding="utf-8")
     assert "SELF_REVIEW" in codes(path)
+
+
+def test_ox_alpha_route_valid_for_every_role(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    ox = "openrouter/stealth/ox-alpha"
+    for task in manifest["tasks"]:
+        task["implementer"]["model"] = ox
+    for gate in manifest["gates"]:
+        gate["reviewer"]["model"] = ox
+    for review in manifest["review_invocations"]:
+        review["model"] = ox
+    for judgment in manifest["material_judgments"]:
+        judgment["model"] = ox
+    for receipt in manifest["invocation_receipts"]:
+        receipt["model"] = ox
+        receipt["resolved_model"] = ox
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert validate_manifest(path) == []
+
+
+def test_non_terminal_gate_verdict_does_not_decide_or_double_count(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    pending = copy.deepcopy(manifest["gates"][1])
+    pending["gate_id"] = "G2-pending"
+    pending["verdict"] = "PENDING"
+    manifest["gates"].append(pending)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert validate_manifest(path) == []
+
+
+def test_xhard_without_deciding_review_fails(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    manifest["gates"][1]["verdict"] = "PENDING"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert "WRONG_HARD_REVIEW_ORDER" in codes(path)
+
+
+def test_xhard_with_second_deciding_review_fails(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    manifest["invocation_receipts"].append(_receipt("X1-re-review", "grok-4.6", "pid-x1-rereview", role="XHARD-REVIEW"))
+    manifest["gates"].append({"gate_id": "G2b", "label": "duplicate xhard review", "task_ids": ["X1"], "reviewer": {"invocation_id": "X1-re-review", "role": "XHARD-REVIEW", "model": "grok-4.6", "process_identity": "pid-x1-rereview"}, "verdict": "PASS", "evidence": []})
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert "WRONG_HARD_REVIEW_ORDER" in codes(path)
+
+
+def test_xhard_hollow_rejected_dispatch_before_deciding_review_passes(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    hollow = {**_receipt("X1-hollow", "grok-4.6", "pid-x1-hollow", role="XHARD-REVIEW"), "bootstrap_exception": True, "status": "rejected_incomplete_dispatch"}
+    manifest["invocation_receipts"].append(hollow)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert validate_manifest(path) == []
+
+
+def test_xhard_without_implementation_receipt_fails(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    manifest["tasks"][1].pop("implementer")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert "MISSING_REFERENCE" in codes(path)
+
+
+def test_ordinary_task_cannot_claim_xhard_lifecycle_phases(tmp_path: Path):
+    path, manifest = _fixture(tmp_path)
+    manifest["review_invocations"].append({"task_id": "H1", "phase": "pre_review", "invocation_id": "H1-pre", "role": "HARD-REVIEW", "model": "openai-codex/gpt-5.6-luna", "process_identity": "pid-h1-pre", "disposition": "approved"})
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert "WRONG_HARD_REVIEW_ORDER" in codes(path)
