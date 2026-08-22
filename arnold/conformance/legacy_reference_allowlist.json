@@ -989,6 +989,30 @@
       "pattern": "python -m arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
       "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.1); pytest output quotes the deleted legacy package verbatim."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-t72-6c75652572/shard8.stdout",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.2 refreeze at 4243cc13a9); captured runtime pytest output quotes the deleted legacy package, not a product reference."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-t72-6c75652572/shard9.stdout",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.2 refreeze at 4243cc13a9); captured runtime pytest output quotes the deleted legacy package, not a product reference."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-t72-6c75652572/shard9.stdout",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.2 refreeze at 4243cc13a9); captured runtime pytest output quotes the deleted legacy package, not a product reference."
+    },
+    {
+      "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-t72-6c75652572/shard9.stdout",
+      "pattern": "python -m arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Frozen maintenance-runtime-consolidation shard-run evidence (T7.2 refreeze at 4243cc13a9); captured runtime pytest output quotes the deleted legacy package, not a product reference."
     }
   ]
 }
