@@ -3,6 +3,8 @@
   "schema_version": "mrc.test-shards.v1",
   "frozen_at": "2026-08-22T01:43:42Z",
   "frozen_by_task": "T7.1",
+  "refreshed_at": "2026-08-22T04:13:42Z",
+  "refreshed_note": "EVDIGEST-2 post-T7.1b delta: BF-001 (six-hour auditor MutationCapability fixture drift, 3 tests) was repaired by T7.1b commit 6c75652572, so its three shard9 inventory entries were removed and shard9's count corrected 4 -> 1 (expected exit unchanged at 1). The same card also repaired BF-002/BF-003 items inventoried under shard1 (repair_contract x5, zero_recovery x7, elapsed_wall_clock_v2 fixture); shard1's frozen counts are left untouched here pending owner refreeze — DEEP-CHECKIN-1 observed shard1 reconciling to 7 failed at T7.2 (3 progress_auditor + 4 env-dependent zero_recovery). Shard commands and expected exits are byte-unchanged; integration_head remains the freeze head a8058c22fd.",
   "integration_head": "a8058c22fdc285db30b2e85d5aa8ab9268df6571",
   "integration_head_short": "a8058c22fd",
   "fce_baseline_head": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
@@ -90,7 +92,7 @@
     "expected_collected": "verified per shard via --collect-only -q at HEAD (see union_proof)",
     "expected_exit": {
       "shard1": "1 \u2014 OBSERVED: full shard executed at freeze (see shard1_observed_run); all 20 failures inventoried in known_failures",
-      "shard9": "1 \u2014 the four known failures (watchdog wrapper + six-hour auditor trio) are seeded into this shard",
+      "shard9": "1 \u2014 the one remaining known failure (watchdog wrapper snapshot assertion) is seeded into this shard; the six-hour auditor trio was repaired by T7.1b commit 6c75652572",
       "shards_2_to_8": "0 \u2014 expectation, NOT observed: no file in these shards is in the known_failures inventory, and their Batch-focused members all pass, but the shards were not executed (broad-suite execution is T7.5 singleton); latent failures outside the inventory would surface as unexpected nonzero exits in T7.2/T7.5 and must be triaged against known_failures then appended by a refreeze"
     },
     "shard1_observed_run": {
@@ -445,30 +447,6 @@
       "fce_baseline_evidence": "fails at fce48030a8 per epic record; reproduced at HEAD during T7.1"
     },
     {
-      "node_id": "tests/cloud/test_six_hour_auditor.py::test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspace",
-      "kind": "batch_interaction_regression",
-      "observed_at_head": true,
-      "detail": "ValueError: six-hour audit repair request not enqueued: mutation requires a root MutationCapability; T4.1 commit 48f639a4d1 added require_mutation_capability to enqueue_audit_repair_request without updating this T3.3-era test file (see T7.1-BF-001)",
-      "accounted_in_shard": "shard9",
-      "fce_baseline_evidence": "file passes 71/71 at fce48030a8 (T7.1 spot-run)"
-    },
-    {
-      "node_id": "tests/cloud/test_six_hour_auditor.py::test_auditor_enqueue_uses_canonical_occurrence_identity",
-      "kind": "batch_interaction_regression",
-      "observed_at_head": true,
-      "detail": "same MutationCapability denial; T4.1 commit 48f639a4d1 added require_mutation_capability to enqueue_audit_repair_request without updating this T3.3-era test file (see T7.1-BF-001)",
-      "accounted_in_shard": "shard9",
-      "fce_baseline_evidence": "file passes 71/71 at fce48030a8 (T7.1 spot-run)"
-    },
-    {
-      "node_id": "tests/cloud/test_six_hour_auditor.py::test_auditor_enqueue_emits_runtime_transitions_before_request_creation",
-      "kind": "batch_interaction_regression",
-      "observed_at_head": true,
-      "detail": "same MutationCapability denial; T4.1 commit 48f639a4d1 added require_mutation_capability to enqueue_audit_repair_request without updating this T3.3-era test file (see T7.1-BF-001)",
-      "accounted_in_shard": "shard9",
-      "fce_baseline_evidence": "file passes 71/71 at fce48030a8 (T7.1 spot-run)"
-    },
-    {
       "node_id": "tests/cloud/test_repair_contract.py::test_non_success_outcomes_include_liveness_and_exhaustion",
       "kind": "batch_interaction_regression",
       "observed_at_head": true,
@@ -630,14 +608,14 @@
     }
   ],
   "known_failures_summary": {
-    "total": 24,
+    "total": 21,
     "by_kind": {
       "pre_existing_fce_baseline_failure": 8,
-      "batch_interaction_regression": 16
+      "batch_interaction_regression": 13
     },
     "by_shard": {
       "shard1": 20,
-      "shard9": 4
+      "shard9": 1
     }
   },
   "broken_findings": [
