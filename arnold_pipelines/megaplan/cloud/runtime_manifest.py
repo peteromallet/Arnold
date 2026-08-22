@@ -57,6 +57,8 @@ from arnold_pipelines.megaplan.cloud.install_sync import (
     GenerationError,
     compute_venv_digest,
     frozen_spec_sha256,
+    generation_dir,
+    generation_interpreter,
 )
 from arnold_pipelines.megaplan.types import CliError
 
@@ -878,6 +880,7 @@ def advance_generation(
     *,
     reason: str,
     dependency_generation: Mapping[str, Any] | None = None,
+    generations_root: Path | str | None = None,
 ) -> RuntimeManifest:
     """Return a NEW manifest at ``generation + 1`` pinned to *new_commit*.
 
@@ -915,6 +918,7 @@ def advance_generation(
     _verify_dependency_generation_binding(
         proof,
         runtime_root=str(manifest.epic.get("runtime_root") or ""),
+        generations_root=generations_root,
     )
     # Git-object head guard: the new commit must be a 40-hex SHA that
     # RESOLVES to that exact commit in the runtime root.  This rejects the
@@ -945,10 +949,29 @@ def advance_generation(
     )
 
 
+def _configured_generations_root() -> str:
+    """The canonical content-addressed dependency-generation store root.
+
+    Explicit configuration wins (``ARNOLD_REFERENCE_RUNTIME_VENVS_DIR``);
+    the built-in default matches the arnold-runtime-create store. The
+    trusted root comes from CONFIGURATION, never from the candidate proof
+    itself.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_references import (
+        DEFAULT_GENERATION_ROOT,
+    )
+
+    return (
+        os.environ.get("ARNOLD_REFERENCE_RUNTIME_VENVS_DIR")
+        or DEFAULT_GENERATION_ROOT
+    )
+
+
 def _verify_dependency_generation_binding(
     proof: Mapping[str, Any],
     *,
     runtime_root: str,
+    generations_root: Path | str | None = None,
 ) -> None:
     """Fail-closed proof→commit binding (Codex fix 2026-08-17).
 
@@ -979,21 +1002,32 @@ def _verify_dependency_generation_binding(
             f"new commit's frozen spec digest is {candidate!r}; rebuild or "
             "select the matching content-addressed generation before advancing"
         )
-    # Do NOT .resolve() the interpreter here: a POSIX venv's ``bin/python``
-    # is a symlink to the base interpreter, so resolving it relocates
-    # ``parent.parent`` out of the content-addressed generation dir and
-    # refuses every legitimately built generation.  Residency only needs
-    # the RECORDED path's grandparent directory NAME; normalize without
-    # following symlinks.
+    # Q4b trusted-root containment: residency is judged against the
+    # CONFIGURED content-addressed generation store, not merely a directory
+    # whose NAME equals the digest. A byte-identical venv in an attacker-
+    # chosen digest-named dir outside the trusted root, a prefix lookalike,
+    # or a ``..`` escape must refuse even when the recorded grandparent name
+    # matches. Derive the expected interpreter from the trusted root and
+    # compare abspath-normalized paths. Do NOT .resolve() either side: a
+    # POSIX venv's ``bin/python`` is a symlink to the base interpreter, so
+    # resolving it relocates ``parent.parent`` out of the content-addressed
+    # generation dir and refuses every legitimately built generation.
+    if not generations_root:
+        generations_root = _configured_generations_root()
+    expected_dir = generation_dir(generations_root, candidate)
+    expected_interpreter = os.path.abspath(
+        os.path.expanduser(str(generation_interpreter(expected_dir)))
+    )
     interpreter = Path(
         os.path.abspath(os.path.expanduser(str(proof.get("interpreter_path") or "")))
     )
-    generation_dir = interpreter.parent.parent
-    if generation_dir.name != candidate:
+    if str(interpreter) != expected_interpreter:
         raise ManifestError(
             "advance_generation refused: dependency-generation "
-            f"interpreter_path {interpreter} does not live inside the "
-            f"content-addressed generation dir named {candidate!r}"
+            f"interpreter_path {interpreter} is not the trusted store "
+            f"interpreter {expected_interpreter} for frozen-spec digest "
+            f"{candidate!r} under generations root "
+            f"{Path(str(generations_root)).expanduser()}"
         )
     if not interpreter.is_file():
         raise ManifestError(

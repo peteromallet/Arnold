@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -151,6 +152,19 @@ def _make_deviation(**overrides: object) -> dict[str, object]:
     }
     record.update(overrides)
     return record
+
+
+@pytest.fixture(autouse=True)
+def _trusted_generations_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Pin the CONFIGURED content-addressed generation store to this test's
+    tmp tree so proof residency is judged against the store the fixtures
+    actually build (``<tmp>/generations/<digest>``, matching
+    ``_bind_manifest_to_repo``)."""
+    generations = tmp_path / "generations"
+    monkeypatch.setenv("ARNOLD_REFERENCE_RUNTIME_VENVS_DIR", str(generations))
+    return generations
 
 
 def _real_git_repo(tmp_path: Path) -> tuple[Path, str]:
@@ -416,6 +430,108 @@ def test_advance_generation_accepts_explicit_override_proof(tmp_path: Path) -> N
         dependency_generation=override,
     )
     assert advanced.epic["dependency_generation"] == override
+
+
+def test_dependency_generation_interpreter_may_be_venv_symlink(
+    tmp_path: Path,
+) -> None:
+    """The recorded generation interpreter may BE the venv symlink:
+    residency compares abspath-normalized recorded paths and never resolves
+    the final ``bin/python`` symlink out of the trusted generation dir."""
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
+    proof = dict(manifest.epic["dependency_generation"])
+    gen_python = Path(str(proof["interpreter_path"]))
+    shim = tmp_path / "base-interpreters" / "python-real"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(gen_python, shim)
+    gen_python.unlink()
+    gen_python.symlink_to(shim)
+
+    advanced = advance_generation(
+        manifest, head, reason="symlinked venv interpreter stays resident"
+    )
+    assert advanced.generation == manifest.generation + 1
+
+
+def test_dependency_generation_refuses_identical_digest_dir_outside_store(
+    tmp_path: Path,
+) -> None:
+    """A byte-identical venv in a digest-named dir OUTSIDE the configured
+    store is not residency: only the trusted root's own
+    ``<digest>/bin/python`` satisfies the CAS."""
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
+    proof = dict(manifest.epic["dependency_generation"])
+    digest = str(proof["frozen_spec_sha256"])
+    outside = tmp_path / "outside-store" / digest / "bin"
+    outside.mkdir(parents=True)
+    shutil.copy(proof["interpreter_path"], outside / "python")  # type: ignore[arg-type]
+    tampered = dict(proof, interpreter_path=str(outside / "python"))
+    with pytest.raises(ManifestError, match="not the trusted store interpreter"):
+        advance_generation(
+            manifest,
+            head,
+            reason="outside-store lookalike must refuse",
+            dependency_generation=tampered,
+        )
+
+
+def test_dependency_generation_refuses_prefix_lookalike_store(
+    tmp_path: Path,
+) -> None:
+    """A sibling directory whose name merely extends the trusted root's name
+    (``generations-lookalike``) is outside the trusted root."""
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
+    proof = dict(manifest.epic["dependency_generation"])
+    digest = str(proof["frozen_spec_sha256"])
+    lookalike = tmp_path / "generations-lookalike" / digest / "bin"
+    lookalike.mkdir(parents=True)
+    shutil.copy(proof["interpreter_path"], lookalike / "python")  # type: ignore[arg-type]
+    tampered = dict(proof, interpreter_path=str(lookalike / "python"))
+    with pytest.raises(ManifestError, match="not the trusted store interpreter"):
+        advance_generation(
+            manifest,
+            head,
+            reason="prefix lookalike must refuse",
+            dependency_generation=tampered,
+        )
+
+
+def test_dependency_generation_refuses_dot_dot_escape(tmp_path: Path) -> None:
+    """A ``..``-escaping recorded path normalizes OUTSIDE the trusted root
+    and refuses even though its digest-named tail would fool a bare
+    grandparent-name check."""
+    root, head = _real_git_repo(tmp_path)
+    manifest = _make_manifest_obj(epic={"runtime_root": str(root)})
+    _bind_manifest_to_repo(manifest, root)
+    proof = dict(manifest.epic["dependency_generation"])
+    digest = str(proof["frozen_spec_sha256"])
+    escaped = (
+        tmp_path
+        / "generations"
+        / digest
+        / ".."
+        / ".."
+        / "escape"
+        / digest
+        / "bin"
+        / "python"
+    )
+    escaped.parent.mkdir(parents=True)
+    shutil.copy(proof["interpreter_path"], escaped)  # type: ignore[arg-type]
+    tampered = dict(proof, interpreter_path=str(escaped))
+    with pytest.raises(ManifestError, match="not the trusted store interpreter"):
+        advance_generation(
+            manifest,
+            head,
+            reason="dot-dot escape must refuse",
+            dependency_generation=tampered,
+        )
 
 
 def test_advance_generation_rejects_non_object_head_and_accepts_real_commit(
