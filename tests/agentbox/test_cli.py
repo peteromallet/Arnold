@@ -315,8 +315,9 @@ def test_cli_new_resident_creates_exactly_five_files(tmp_path, monkeypatch, caps
     profile = (repo / ".agentbox/resident_profile.py").read_text(encoding="utf-8")
     assert "class MyOpResidentProfile(AgentBoxOperatorProfile):" in profile
     env = (repo / ".agentbox/resident.env.example").read_text(encoding="utf-8")
-    assert "MEGAPLAN_RESIDENT_PROFILE=.agentbox/resident_profile.py:MyOpResidentProfile" in env
-    assert "MEGAPLAN_RESIDENT_STORE_ROOT=" + str(repo.resolve()) in env
+    assert "DISCORD_BOT_TOKEN=" in env
+    assert "MEGAPLAN_RESIDENT_PROFILE" not in env
+    assert "MEGAPLAN_RESIDENT_STORE_ROOT" not in env
     assert (repo / ".agentbox/run-resident").stat().st_mode & 0o111 == 0o111
 
 
