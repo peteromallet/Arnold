@@ -149,6 +149,19 @@ def runtime_provenance(
     expected_root: Path | None = None,
     expected_revision: str = "",
 ) -> dict[str, Any]:
+    """Collect fail-closed provenance evidence for the executing runtime.
+
+    Import resolution is authoritative: when every entry in ``imports``
+    resolves under ``expected_root``, a foreign pip editable install whose
+    metadata/``.pth`` paths point elsewhere has been shadowed by import
+    precedence (PYTHONPATH precedes site-packages/``.pth``) — a foreign
+    editable install whose paths are shadowed by import precedence is inert
+    evidence, not a mismatch. ``editable_metadata_mismatch``,
+    ``editable_pth_missing``, ``editable_pth_mismatch``, and
+    ``editable_pth_unreadable`` are suppressed in that case (an unreadable
+    shadowed ``.pth`` cannot influence import resolution either); they bind
+    only when imports do NOT resolve under the expected root.
+    """
     import arnold
     import arnold_pipelines
 
@@ -169,16 +182,7 @@ def runtime_provenance(
     errors: list[str] = []
     if expected is not None and import_root != expected:
         errors.append("import_root_mismatch")
-    # T-0301 generation: no pip editable install exists (worktree-first
-    # PYTHONPATH). `editable_root` is only meaningful when a direct-url
-    # editable distribution is actually present; otherwise the import-root
-    # check above is the authoritative provenance gate.
-    if (
-        expected is not None
-        and editable_root is not None
-        and editable_root != expected
-    ):
-        errors.append("editable_metadata_mismatch")
+    imports_match = False
     if expected is not None:
         mismatched_imports = [
             name
@@ -187,20 +191,31 @@ def runtime_provenance(
         ]
         if mismatched_imports:
             errors.append("module_import_root_mismatch")
+        imports_match = not mismatched_imports
+    # Shadowed-editable rule: a foreign pip editable install whose metadata /
+    # .pth paths point elsewhere is INERT once import precedence shadows it —
+    # every entry in `imports` already resolves under the expected root, so
+    # PYTHONPATH/site-precedence demonstrably wins over site-packages/.pth.
+    # Its checks bind only when imports do NOT prove provenance (legacy
+    # pre-T-0301 editable runtimes). An unreadable shadowed .pth is equally
+    # inert and suppressed with them.
+    if (
+        expected is not None
+        and not imports_match
+        and editable_root is not None
+        and editable_root != expected
+    ):
+        errors.append("editable_metadata_mismatch")
+    if expected is not None and not imports_match:
         pth_entries = [
             entry
             for record in pth
             for entry in record.get("entries", [])
             if isinstance(entry, str)
         ]
-        # T-0301 generation: the executing runtime is a worktree-first
-        # PYTHONPATH root, not a pip editable install. When imports already
-        # resolve to the expected root, the legacy .pth requirement does not
-        # apply. A .pth that DOES exist must still point at the expected root.
-        imports_match = not mismatched_imports
-        if not imports_match and (not pth or not pth_entries):
+        if not pth or not pth_entries:
             errors.append("editable_pth_missing")
-        elif pth_entries and any(
+        elif any(
             Path(entry).resolve(strict=False) != expected for entry in pth_entries
         ):
             errors.append("editable_pth_mismatch")

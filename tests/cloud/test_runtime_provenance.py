@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 import pytest
@@ -99,7 +100,7 @@ def test_editable_subprocess_uses_pinned_source_despite_cwd_shadow(tmp_path: Pat
 
 
 def test_runtime_provenance_rejects_stale_editable_pth(
-    monkeypatch,
+    tmp_path: Path, monkeypatch
 ) -> None:
     source = Path(__file__).parents[2].resolve()
     revision = subprocess.check_output(
@@ -123,12 +124,105 @@ def test_runtime_provenance_rejects_stale_editable_pth(
     )
 
     payload = runtime_provenance(
-        expected_root=source,
+        expected_root=tmp_path,
         expected_revision=revision,
     )
 
     assert payload["ok"] is False
     assert "editable_pth_mismatch" in payload["errors"]
+    assert "editable_metadata_mismatch" in payload["errors"]
+
+
+def test_shadowed_foreign_editable_is_inert_when_imports_match(monkeypatch) -> None:
+    """A foreign pip editable install whose metadata/.pth point at another
+    checkout is inert evidence when every import resolves under the expected
+    root (PYTHONPATH/site-precedence shadows it)."""
+    source = _resolve_runtime_root()
+    revision = _resolve_runtime_revision(source)
+    foreign = Path("/workspace/foreign-checkout")
+    monkeypatch.setattr(
+        provenance_module,
+        "_direct_url_identity",
+        lambda: (foreign, {"dir_info": {"editable": True}, "url": foreign.as_uri()}),
+    )
+    monkeypatch.setattr(
+        provenance_module,
+        "_pth_identity",
+        lambda: [
+            {
+                "path": "/venv/site-packages/_foreign_arnold.pth",
+                "entries": [str(foreign)],
+                "readable": True,
+            }
+        ],
+    )
+
+    payload = runtime_provenance(expected_root=source, expected_revision=revision)
+
+    assert payload["ok"] is True
+    assert payload["errors"] == []
+
+
+def test_foreign_editable_flagged_when_imports_miss_expected_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Without import-precedence proof the legacy editable errors still bind
+    (behavior identical to the pre-shadowed-editable rule)."""
+    foreign = tmp_path / "foreign-checkout"
+    fake_arnold = types.ModuleType("arnold")
+    fake_arnold.__file__ = str(foreign / "arnold" / "__init__.py")
+    fake_ap = types.ModuleType("arnold_pipelines")
+    fake_ap.__file__ = str(foreign / "arnold_pipelines" / "__init__.py")
+    monkeypatch.setitem(sys.modules, "arnold", fake_arnold)
+    monkeypatch.setitem(sys.modules, "arnold_pipelines", fake_ap)
+    monkeypatch.setattr(
+        provenance_module,
+        "_direct_url_identity",
+        lambda: (foreign, {"dir_info": {"editable": True}, "url": foreign.as_uri()}),
+    )
+    monkeypatch.setattr(
+        provenance_module,
+        "_pth_identity",
+        lambda: [
+            {
+                "path": "/venv/site-packages/_foreign_arnold.pth",
+                "entries": [str(foreign)],
+                "readable": False,
+            }
+        ],
+    )
+    expected = tmp_path / "admitted-root"
+
+    payload = runtime_provenance(expected_root=expected)
+
+    assert payload["ok"] is False
+    assert "editable_metadata_mismatch" in payload["errors"]
+    assert "editable_pth_mismatch" in payload["errors"]
+    assert "editable_pth_unreadable" in payload["errors"]
+
+
+def test_unreadable_shadowed_pth_suppressed_when_imports_match(monkeypatch) -> None:
+    """An unreadable .pth owned by a SHADOWED editable cannot influence
+    import resolution — inert, suppressed under imports_match."""
+    source = _resolve_runtime_root()
+    revision = _resolve_runtime_revision(source)
+    monkeypatch.setattr(provenance_module, "_direct_url_identity", lambda: (None, {}))
+    monkeypatch.setattr(
+        provenance_module,
+        "_pth_identity",
+        lambda: [
+            {
+                "path": "/venv/site-packages/_unreadable_arnold.pth",
+                "entries": [],
+                "readable": False,
+            }
+        ],
+    )
+
+    payload = runtime_provenance(expected_root=source, expected_revision=revision)
+
+    assert payload["ok"] is True
+    assert payload["errors"] == []
 
 
 # ── M11 bound runtime identity (Step 3) ──────────────────────────────────
