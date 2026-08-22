@@ -1,0 +1,17 @@
+**PASS** — final commit/push to `origin/oracle-run` is authorized (`git push origin HEAD:oracle-run`; never `main`).
+
+Findings per verification item:
+
+1. **Evidence matrix complete.** All done criteria map to receipts that exist on disk (`.oracle/evidence/`: agent-list, agent-run-arnold, new-resident-demo2, package-smoke, wheel-build, sdist-contents, standalone-attestation-tests, targeted-resident-tests). R1 byte-parity test named explicitly; R2 installer overrides; R3 five-file scaffold + import + launcher covered.
+
+2. **North Star held.**
+   - Compat surfaces intact: `ARNOLD_RESIDENT_DELEGATION_CONTEXT`, `arnold.megaplan.*`, `arnold-resident-*-v1` schemas unchanged; diff adds only *new* domain-separated namespaces (`arnold.megaplan.standalone_runtime_dispatch_pointer.v1`, standalone authority constants) — additions, not renames.
+   - No flag soup: installer gains exactly `--name`/`--description` (B2 commits enforce atomic no-replace).
+   - Outside-literal-scope files: only `pyproject.toml` (in-scope per goal) and `arnold_pipelines/megaplan/cloud/runtime_attestation.py` (+698) — sanctioned by frozen tasklist T8/T10 custody contract ("standalone evidence satisfies runtime launch validation"), not silent scope widening. No omp source touched.
+
+3. **Known-environment failures documented.** `.oracle/evidence/targeted-resident-tests.txt` records six expected seed-env failures; skills-load errors trace to the main-tree purge (bg_7 timeout, logged in `status.md`) — environment noise, not a run defect. Stronger: my fresh run of the exact validation command at HEAD returned **110 passed, 0 failed** (165s) — the six now pass after B6+B7 rework.
+
+4. **Sync posture clean.** Branch `oracle-run`, no upstream set; revert pair c9c99ab3bc/1930208b20 properly dispositioned (advisory REJECTED, rationale in `status.md`).
+
+Proceed: commit this review artifact, push `HEAD:oracle-run`, then `open` per sync policy.
+0

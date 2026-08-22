@@ -1,0 +1,13 @@
+**PASS**
+
+No blocking or advisory findings.
+
+Evidence:
+- Dry-run exits before token lookup, attestation, runner/service construction, and network paths.
+- `_resident_profile()` constructs AgentBox and external profiles with the unchanged four dependencies, then assigns `CloudCliBackend()` post-construction.
+- `CloudCliBackend()` has no constructor side effects; verified directly.
+- Explicit missing backend now raises the required `RuntimeError`.
+- Per-instance `tool_registry` and catalog registration remain unchanged.
+- No `--validate-profile` path remains.
+- Reported validation: 79 passed; 6 failures are pre-existing attestation-environment failures.
+0

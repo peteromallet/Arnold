@@ -1,0 +1,6 @@
+ISSUES
+
+1. **Blocking — resident startup does not bind the current project to the admitted seed.** `require_configured_runtime_launch()` validates `seed["project_root"]` and stores process status there, but `_resident_discord()` passes the current `root` only to profile/store construction; `_require_discord_runtime_launch()` discards the returned seed. A valid seed for project B supplied through `MEGAPLAN_RUNTIME_LAUNCH_SEED` can therefore authorize a resident launched from project A. The generated launcher masks this by overwriting the variable, but direct/systemd/manual invocation remains vulnerable. **Fix:** pass the current project root into standalone launch validation and reject `seed["project_root"] != root` before profile/service startup; add a cross-project environment test.
+
+2. **Advisory — pointer publication repairs unsafe existing permissions.** `write_standalone_runtime_publication()` rejects symlinks but `_atomic_write()` replaces an existing permissive pointer instead of rejecting it. Seed, receipt, and status custody otherwise fail closed on unsafe modes. **Fix:** preflight the existing pointer as a regular `0600` file, or reject any existing unsafe pointer before replacement.
+0

@@ -1,0 +1,6 @@
+ISSUES
+
+1. `standalone_dispatch_paths()` still permits mutation before publication rejection. It calls `_require_standalone_operational_dir(..., create=True)` sequentially for `seeds`, `receipts`, then `status`. If `seeds`/`receipts` are missing but `status` exists with unsafe `0755` permissions, it creates the first two directories before rejecting on `status`. Independent probe reproduced: rejection left both directories present. This is a remaining mutation-before-rejection path; preflight all three directories non-mutating before creating any missing entries.
+
+Worker-refresh authority gating, typed authority rejection, exact-root/live-HEAD validation, standalone load/process validate-only behavior, cloud-chain routing, and successful `0700`/`0600` publication paths otherwise pass review.
+0

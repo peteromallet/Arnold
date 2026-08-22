@@ -1,0 +1,8 @@
+ISSUES
+
+1. **Blocking — standalone load path does not require `status/` custody.**  
+   Evidence: `load_standalone_runtime_dispatch_pointer()` validates only `seeds/` at `runtime_attestation.py:1344–1347`; it validates `receipts/` only indirectly through the referenced receipt at `:1371–1376`. A direct pointer load succeeds with missing or unsafe `status/`, violating the requirement that `seeds/`, `receipts/`, and `status/` be `0700` on every load path.  
+   **Fix:** Call `_require_standalone_operational_dir(state, name, create=False)` for all three directories before reading the pointer.
+
+Worker-refresh authority ordering, standalone root/live-HEAD checks, digest/vector/custody validation, non-string authority handling, publication/process checks, and cloud provisioning otherwise match the stated acceptance.
+0

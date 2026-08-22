@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/04-generator-packaging.md",
+  "elapsed_s": 203.136,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:13:28Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/04-generator-packaging.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 53696,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2751,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/04-generator-packaging.txt",
+  "started_at": "2026-08-21T20:10:05Z",
+  "status": "ok",
+  "stem": "04-generator-packaging",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

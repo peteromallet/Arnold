@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/05-omp-discovery.md",
+  "elapsed_s": 222.26,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:14:21Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/05-omp-discovery.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 54448,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2907,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/05-omp-discovery.txt",
+  "started_at": "2026-08-21T20:10:39Z",
+  "status": "ok",
+  "stem": "05-omp-discovery",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

@@ -1,0 +1,212 @@
+{
+  "briefs_dir": ".oracle/briefs",
+  "default_model": "codex:gpt-5.6-luna",
+  "failed_count": 0,
+  "isolation": "threads",
+  "max_tokens": 65536,
+  "max_workers": 3,
+  "model_map": [],
+  "output_dir": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings",
+  "project_dir": "/Users/peteromalley/Documents/arnold-oracle",
+  "stopped_by_signal": false,
+  "succeeded_count": 9,
+  "sum_agent_seconds": 1935.09,
+  "task_timeout_s": 1200,
+  "tasks": [
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/01-resident-selection.md",
+      "elapsed_s": 228.691,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:10:39Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/01-resident-selection.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 51021,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2443,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/01-resident-selection.txt",
+      "started_at": "2026-08-21T20:06:50Z",
+      "status": "ok",
+      "stem": "01-resident-selection",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/02-profile-contract.md",
+      "elapsed_s": 194.375,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:10:05Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/02-profile-contract.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 51019,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2304,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/02-profile-contract.txt",
+      "started_at": "2026-08-21T20:06:50Z",
+      "status": "ok",
+      "stem": "02-profile-contract",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/03-launcher-systemd.md",
+      "elapsed_s": 300.687,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:11:51Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/03-launcher-systemd.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 51020,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2668,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/03-launcher-systemd.txt",
+      "started_at": "2026-08-21T20:06:50Z",
+      "status": "ok",
+      "stem": "03-launcher-systemd",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/04-generator-packaging.md",
+      "elapsed_s": 203.136,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:13:28Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/04-generator-packaging.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 53696,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2751,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/04-generator-packaging.txt",
+      "started_at": "2026-08-21T20:10:05Z",
+      "status": "ok",
+      "stem": "04-generator-packaging",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/05-omp-discovery.md",
+      "elapsed_s": 222.26,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:14:21Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/05-omp-discovery.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 54448,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2907,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/05-omp-discovery.txt",
+      "started_at": "2026-08-21T20:10:39Z",
+      "status": "ok",
+      "stem": "05-omp-discovery",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/06-docs-boundaries.md",
+      "elapsed_s": 162.678,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:14:34Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/06-docs-boundaries.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 55506,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1921,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/06-docs-boundaries.txt",
+      "started_at": "2026-08-21T20:11:51Z",
+      "status": "ok",
+      "stem": "06-docs-boundaries",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/07-launch-seed.md",
+      "elapsed_s": 230.321,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:17:18Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/07-launch-seed.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 56337,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2849,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/07-launch-seed.txt",
+      "started_at": "2026-08-21T20:13:28Z",
+      "status": "ok",
+      "stem": "07-launch-seed",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/08-import-mechanics.md",
+      "elapsed_s": 155.453,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:16:57Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/08-import-mechanics.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 56649,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 2228,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/08-import-mechanics.txt",
+      "started_at": "2026-08-21T20:14:21Z",
+      "status": "ok",
+      "stem": "08-import-mechanics",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    },
+    {
+      "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/09-parity-delimiters.md",
+      "elapsed_s": 237.489,
+      "error": null,
+      "error_class": null,
+      "finish_reason": null,
+      "finished_at": "2026-08-21T20:18:31Z",
+      "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/09-parity-delimiters.meta.json",
+      "model": "codex:gpt-5.6-luna",
+      "pid": 56727,
+      "raw_result_keys": [
+        "stdout"
+      ],
+      "response_chars": 1925,
+      "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/09-parity-delimiters.txt",
+      "started_at": "2026-08-21T20:14:34Z",
+      "status": "ok",
+      "stem": "09-parity-delimiters",
+      "task_timeout_s": 1200,
+      "tool_calls": 0
+    }
+  ],
+  "toolsets": [
+    "('file'",
+    "'web')"
+  ],
+  "total_count": 9,
+  "wall_clock_s": 700.86
+}

@@ -1,0 +1,8 @@
+ISSUES
+
+1. **F1 is incomplete.** `arnold_pipelines/megaplan/cli/__init__.py:3561` calls `maybe_auto_sync_repo_editor_support(Path.cwd())` before the resident branch. In a Git repository, this can create or modify `.gitattributes`; resident dispatch therefore still creates non-resident state. The new test only checks absence of `.megaplan/{plans,initiatives,schemas}` and misses this mutation. Skip editor auto-sync for resident dispatch or expand the invariant/test.
+
+2. **B7 documentation is stale and operationally contradictory.** `docs/custom-resident-agents.md:67-75` says `resident.env.example` contains profile and store settings, but `resident.env.example.tmpl` intentionally removes them under F3. Also, `service.tmpl:8-13` suggests injecting the token through a systemd drop-in, while `run-resident` refuses startup unless `.agentbox/<name>.env` exists and contains a token. Drop-in-only deployment cannot work.
+
+3. **The evidence matrix omits B7.** `.oracle/evidence-matrix.md` maps R1–R3 and Batch 1–6, but has no Batch 7 packaging/documentation checkpoint or sdist evidence path. Independent sdist inspection confirmed templates are shipped, but that proof is not recorded in the required matrix.
+0

@@ -1,0 +1,18 @@
+### Ranked findings
+
+1. **Minimal resident surface.** A subclass must provide/inherit:
+   - `system_prompt(self) -> str` (`agentbox/resident_profile.py:131-142`)
+   - `async load_hot_context(self, conversation_id: str) -> dict[str, Any]` (`:144-193`)
+   - `tools(self) -> Any`, returning a registry supporting `list()`, `get()`, and `as_compact_catalog()` (`:195-196`; `resident/agent_loop.py:206,272`; `runtime.py:222,261,797,841,1029,1094`).
+   `system_prompt_for(request_text)` is optional; runtime uses it only when callable, otherwise falls back to `system_prompt()` (`runtime.py:750-755,1011-1014`).
+
+2. **Registration is inherited and per-instance.** Base dataclass `__post_init__` calls `_register_default_tools()` unless that instance’s `_registered_default_tools` is true (`agentbox/resident_profile.py:124-129`). `tool_registry` uses `default_factory`, so instances do not share registries (`:123`). A custom/shared registry can collide on duplicate names.
+
+3. **Constructor contract.** Fields, in order: `store=None`, `authorizer=None`, `config=ResidentConfig()`, `confirmation_manager=None`, `agentbox_config_factory=load_agentbox_config`, `tool_registry=ToolRegistry()`, plus `_registered_default_tools=False` (`:118-124`). The current factory injects the first four only; the latter two use defaults (`resident/cli.py:1115-1131`).
+
+4. **Prompt parity is explicit.** Goal/North Star require the omp markdown body to be byte-identical to `system_prompt()` (`.oracle/agent_goal.md:11-14`; `.oracle/northstar.md:21-22`). Current files are only whitespace-normalized equivalent: markdown has wrapped lines/trailing newline (`agentbox/agents/arnold.md:6-14`), while Python returns one line (`resident_profile.py:131-142`).
+
+5. **Naive-subclass failures.** Overriding `__post_init__` without `super()` disables registration. A `cloud_resume` escalation additionally assumes `profile.cloud_backend.run(...)` (`runtime.py:1481-1493`), absent from the AgentBox base. Adding dataclass fields requires preserving base initialization.
+
+6. **Unknown/risk.** External profile loading is not yet present; `ResidentConfig.profile` currently permits only two literals (`resident/config.py:12-13`). Loader constructor validation and whether generated profiles must supply `cloud_backend` remain unresolved.
+0

@@ -1,0 +1,14 @@
+**Ranked findings**
+
+1. **Selection is hard-coded.** CLI choices are exactly `["megaplan", "agentbox_operator"]` (`resident/cli.py:56-58`). The same literals are enforced/defaulted by `ResidentProfileName` (`config.py:12-13`), the field default (`config.py:26-27`), and env default (`config.py:103-110`). `_resident_config` overlays `--profile` over env config (`cli.py:684-693`). Construction branches on `agentbox_operator`; every other value selects Megaplan (`cli.py:1115-1138`). Existing coverage is only built-in selection (`tests/agentbox/test_resident_profile.py:222-263`).
+
+2. **Project root is CWD-derived, not config-derived.** Top-level CLI passes `_find_megaplan_root(Path.cwd())` (`cli/__init__.py:3580-3588`); the finder prefers Git root containing `.megaplan`, then ancestor fallback (`cli/roots.py:86-113`). `--store-root` / `MEGAPLAN_RESIDENT_STORE_ROOT` selects FileStore location only (`resident/cli.py:696-705`). `_resident_profile` has no root parameter (`cli.py:1115-1121`). Runtime receives root indirectly because `_resident_runner` sets `cwd=root`, and `ResidentRuntime` falls back to `runner.cwd` (`cli.py:1102-1111`; `runtime.py:118-129`).
+
+3. **Construction contract.** `_resident_discord` creates `ResidentAuthorizer(config)` and `StoreBackedConfirmationManager(config, store)` (`cli.py:1019`, `1050`), then passes `store`, `authorizer`, `config`, and `confirmation_manager` to either profile (`1051-1061`). Megaplan additionally receives `CloudCliBackend`.
+
+4. **Import timing.** `MegaplanResidentProfile` is imported eagerly at module load (`cli.py:22`); AgentBox import is lazy (`1123-1124`). Actual profile construction occurs after token lookup/validation and launch attestation (`997-1018`), before `service.run()` (`1082`). Dry-run returns without importing/constructing the selected profile (`998-1012`).
+
+5. **Minimal fit.** Change profile config to unrestricted `str`, remove argparse `choices`, preserve built-in dispatch, add optional `root` to `_resident_profile`, resolve `path.py:Class` beneath root, load via `importlib`, and instantiate with the same kwargs.
+
+6. **Risks/unknowns.** Import failures currently escape as tracebacks, not `CliError` JSON diagnostics; invalid env profiles already do so (`run_resident_cli` config occurs before its `try`, `cli.py:237-240`). Validate path containment, class contract, constructor compatibility, and whether dry-run should validate external profiles.
+0

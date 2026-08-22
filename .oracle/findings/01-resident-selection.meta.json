@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/01-resident-selection.md",
+  "elapsed_s": 228.691,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:10:39Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/01-resident-selection.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 51021,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2443,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/01-resident-selection.txt",
+  "started_at": "2026-08-21T20:06:50Z",
+  "status": "ok",
+  "stem": "01-resident-selection",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

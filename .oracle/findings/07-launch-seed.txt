@@ -1,0 +1,14 @@
+Saved to `.oracle/findings/07-launch-seed.txt` — 299 words.
+
+## Ranked findings
+
+1. **The seed is an attested JSON file, not a secret.** Live Discord startup calls `require_configured_runtime_launch("resident", create=True)` (`arnold_pipelines/megaplan/resident/cli.py:1086-1100`). `MEGAPLAN_RUNTIME_LAUNCH_SEED` is only the file-path selector; missing env fails closed with `canonical runtime launch seed is required but missing` (`cloud/runtime_attestation.py:1931-1966`). The file must be `ready`, schema-valid, and content-hash-valid, then its runtime provenance, loaded-module roots, `.pth` targets, wrappers, interpreter, supervisor receipt, hot-env, marker, and chain binding are rechecked (`cloud/runtime_attestation.py:1513-1775`). Wrong, stale, unreadable, or counterfeit content raises `runtime_launch_attestation_mismatch`.
+
+2. **Canonical production is chain-start, not resident startup.** `run_chain` calls `ensure_runtime_launch_seed(...)` and exports the returned path (`chain/__init__.py:7591-7664`). The ensure path requires a runtime manifest whose `epic.runtime_root` and `expected_head` match live Git/provenance, plus marker/chain identity and supervisor/hot-env evidence (`cloud/runtime_attestation.py:1097-1239`). It writes an immutable content-addressed seed per runtime-id/generation and atomically updates `dispatch-current.json` (`:1195-1277`); it rebuilds on missing/invalid/root-revision drift. The seed is per-epic accepted generation, not per process; process attestation binds PID/start identity and is created at startup (`:1777-1833`). The module also exposes lower-level `runtime_attestation build` (`:1990-2028`), documented with exact marker/spec, supervisor receipt, hot-env, root/revision, and output (`docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md:299-313`).
+
+3. **Standalone R3 has no seed provisioning path.** Non-cloud `chain start` can bind only when a session marker is already present (`chain/__init__.py:7462-7539`); a generated repo has neither the manifest nor cloud custody artifacts by default. `MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED=0` cannot waive the seed requirement (`cloud/runtime_attestation.py:1924-1936`).
+
+**Recommendation:** add a small `resident seed`/`resident attest` command as an explicit standalone adapter, reusing canonical vector collection, digest validation, immutable root-custodied storage, and process attestation. Do not document an env-only JSON or counterfeit cloud marker. Require repo root + exact Git HEAD and emit a receipt; keep cloud/chain mode unchanged.
+
+**Risk/unknown:** the standalone adapter needs a deliberately defined replacement for cloud marker/manifest/supervisor evidence. Seed files persist on disk; the pointer records path+SHA (`:1052-1065`) and process receipts record seed SHA (`:1826-1833`); no raw-seed logging was found.
+0

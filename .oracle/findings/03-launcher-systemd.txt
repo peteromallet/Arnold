@@ -1,0 +1,14 @@
+## Ranked findings
+
+1. **Canonical launch + environment.** AgentBox’s unit runs `{{PYTHON}} -m arnold_pipelines.megaplan resident discord` directly (`agentbox/systemd/agentbox-discord-resident.service:25`). Cloud hardening adds `-P`, `PYTHONPATH`, `cd`, and explicit `--store-root` (`cloud/templates/entrypoint.sh.tmpl:243-246`). Production requires a nonempty `DISCORD_BOT_TOKEN`, `MEGAPLAN_RESIDENT_MODE=production`, and `MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production`; profile, provider/model, allowlists, and voice settings come from `ResidentConfig.from_env()` (`resident/cli.py:997-1018`; `resident/config.py:104-150`). `MEGAPLAN_RESIDENT_PROFILE` defaults to `megaplan` (`config.py:26-35,108-117`).
+
+2. **Per-repo store.** Set `MEGAPLAN_RESIDENT_STORE_ROOT=<repo>/.megaplan/resident`. Explicit roots select `FileStore`; its constructor creates the directory (`resident/cli.py:696-705`; `store/file.py:228-243`). No pre-created resident directory is needed. Generic runtime setup creates only `.megaplan/{plans,initiatives,schemas}` (`_core/io.py:1486-1498`). Without an explicit root, production selects `DBStore`.
+
+3. **Systemd shape.** Use `Type=simple`, repo `WorkingDirectory`, inline `Environment=`, direct `ExecStart`, `Restart=on-failure`, `RestartSec=10`, and `KillMode=process` (`agentbox/systemd/agentbox-discord-resident.service:5-32`). No `EnvironmentFile=` precedent exists. Cloud durability is tmux plus a five-minute oneshot ensure timer (`cloud/systemd/ensure-megaplan-resident:78-92`; `megaplan-resident-ensure.timer:4-9`). Restart delegates to the guarded service path (`resident/restart_resident.py:8-27`).
+
+4. **Launcher mode.** Shell launchers use `#!/usr/bin/env bash` and commonly `set -euo pipefail` (`cloud/systemd/arnold-resident-schedule-run-once-r7:1,32`; `cloud/wrappers/arnold-human-review-diagnostic:1-4`). Existing tracked modes are mixed: schedule runner `0755`; ensure script `0644`. `.agentbox/run-resident` must be executable.
+
+5. **Token safety.** The unit leaves `DISCORD_BOT_TOKEN=` blank and expects a systemd drop-in (`agentbox/systemd/agentbox-discord-resident.service:19-24`). Cloud sources `/workspace/.secrets/megaplan-resident-discord.env` (`entrypoint.sh.tmpl:243-246`). `.env` files are gitignored (`.gitignore:43-46`); recovery rejects symlinks, malformed names/values, and missing tokens (`resident_recovery.py:349-418`).
+
+6. **Risks.** No scaffold templates or launcher currently exist. Live startup also requires runtime attestation (`resident/cli.py:1086-1099`); dry-run alone is insufficient. All mandated Megaplan `config show` launcher candidates failed because this checkout has no `config` subcommand.
+0

@@ -1,0 +1,8 @@
+ISSUES
+
+1. **Blocking — race can clobber an existing target.** `target.exists()` precedes `os.replace(tmp, target)`. If another process creates the target between those calls, `os.replace` silently overwrites it. This violates atomic non-overwriting writes. **Fix:** publish with an atomic no-replace primitive (`os.link` + unlink, or equivalent `O_EXCL` strategy), catch `EEXIST`, and clean the temporary file.
+
+2. **Advisory — multiline YAML descriptions are unsupported.** `_rewrite_agent_frontmatter` correctly preserves the current body and safely JSON-quotes ordinary descriptions, including embedded quotes/newlines. However, a block scalar (`description: >` followed by continuation lines) gets its first line replaced while stale continuation lines remain. **Fix:** either explicitly constrain packaged frontmatter to single-line scalars or replace the complete YAML field structurally; avoid a full parser unless templates require it.
+
+`_valid_agent_name` is correct and reused for template/output names. Invalid names, unknown templates, and ordinary existing-target collisions return `_diagnostic`/exit 1 without creating or modifying targets. Exactly the intended customization flags are added; no omp or identity-surface drift.
+0

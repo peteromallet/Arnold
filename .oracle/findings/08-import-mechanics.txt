@@ -1,0 +1,14 @@
+## Ranked findings
+
+1. **R3 loader is not present yet.** `ResidentConfig.profile` remains `Literal["megaplan", "agentbox_operator"]` (`arnold_pipelines/megaplan/resident/config.py:12–14`); CLI hard-branches to those two classes (`resident/cli.py:1115–1136`).
+
+2. **Best production precedent:** `runtime/discovery.py:168–219` uses `spec_from_file_location`, `module_from_spec`, inserts into `sys.modules`, and removes only on import failure. Its out-of-tree identity is sanitized **stem-only** (`:203–208`), so it collides across repositories. `agentbox/adapters.py:22–24` uses ordinary `import_module` + `getattr`, relying on normal import caching. No `SourceFileLoader` exists in these areas; custody uses `SourcelessFileLoader` (`custody/_pyc_loader.py:19–23`).
+
+3. **Test precedent is explicit cleanup.** `tests/agentbox/test_adapters.py:62–77` snapshots, removes, then restores `sys.modules`. A characterization helper uses `abs(hash(path))` (`tests/characterization/test_m4_plugin_registry_characterization.py:135–162`), but Python hash randomization makes that unsuitable for deterministic identities.
+
+4. **Strongest containment guard:** `_safe_child_path` rejects empty, absolute, and `..` components, resolves, then checks containment with `relative_to` (`resident/profile.py:4144–4161`). `agentbox/repos.py:190–199` additionally uses `resolve(strict=True)` and parent containment. Canary code rejects symlink artifact parents (`cloud/m11_live_canary.py:120–130`).
+
+5. **Recommendation:** canonicalize project root and candidate with `resolve(strict=True)`; reject absolute paths and any `..` component before joining; require `candidate.relative_to(root)`. Name modules using SHA-256 of `root + NUL + relative path` plus a safe stem—not stem or `hash()`. Always evict that name before loading and on failure; avoid production caching, and guard `sys.modules` mutation/`exec_module` with an `RLock` if concurrent loads are possible.
+
+6. **Side effects:** no generic side-effect prohibition exists. Imports execute top-level code (`megaplan/__init__.py:72–73`). Registry trust-gating warns/refuses quarantined modules (`registry.py:236–272`); external profiles should be treated as trusted project code, not sandboxed.
+0

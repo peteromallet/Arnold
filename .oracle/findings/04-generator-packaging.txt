@@ -1,0 +1,14 @@
+## Ranked findings
+
+1. **CLI conventions.** Add a top-level parser entry beside `install-omp-agent` (`agentbox/cli.py:226-235`) and dispatch it in `main()` (`:240-295`). Parse failures return their integer exit code; known operational errors become diagnostics (`:242-245`, `:293-295`). Success uses `_emit()`; output is stable, sorted, indented JSON in both modes (`:747-752`). JSON errors are `{"error": message}`; human errors are `agentbox: …` on stderr, exit code `1` (`:754-759`).
+
+2. **Preflight and atomic writes.** `_install_omp_agent()` validates source existence, reads UTF-8, and requires frontmatter `name` to equal the requested name before creating the target directory (`:561-578`). It writes a UUID-suffixed sibling temporary file and commits with `os.replace()` (`:579-581`), then emits `agent/source/target/installed` (`:582-590`). No fsync or temporary-file cleanup on write failure. Generator name validation must prevent path traversal; current installer has none.
+
+3. **Wheel packaging/resources.** Hatch packages `agentbox` and explicitly copies file artifacts (`pyproject.toml:129-146`). Add `agentbox/templates/resident/*` to `artifacts` (direct children; use `**/*` if nested files). Current wheel inspection confirms `agentbox/agents/*.md` and `agentbox/systemd/*.service` land under those paths. Therefore `Path(__file__).resolve().parent / "templates"` works in a normally installed wheel, matching `_packaged_omp_agent_path()` (`agentbox/cli.py:545-546`). `importlib.resources.files("agentbox")` is the more loader-robust existing pattern (`agentbox/bootstrap.py:138-163`). No `agentbox/templates` currently exists.
+
+4. **Reusable slug grammar.** `tickets.slugify()` delegates to `artifact_slugify(..., max_length=80)` (`arnold_pipelines/megaplan/tickets/files.py:180-182`). It lowercases, removes disallowed characters, converts whitespace/underscores to hyphens, collapses hyphens, trims hyphens, and truncates (`artifacts.py:23-30`). Strict validation exists for epic refs: `^[a-z][a-z0-9._-]*$`, minimum two characters, plus slugify round-trip (`strategy/validation.py:40-42`, `:189-210`). It is likely a better generator basis than lossy slugification alone.
+
+5. **Package smoke coverage.** Tests build a wheel with `pip wheel`, inspect its ZIP entries, install it into a fresh venv, then probe distribution entry points and imports (`tests/agentbox/test_package_smoke.py:44-111`). Artifact inclusion is not currently asserted explicitly.
+
+6. **Risks.** `test_cli.py` passes 6 tests. Package smoke currently has 4 passes and one unrelated baseline failure: `services.py:26` imports `arnold_pipelines.megaplan.cloud.runtime_manifest`, violating the smoke guard (`test_package_smoke.py:114-118`, failure at `:153`).
+0

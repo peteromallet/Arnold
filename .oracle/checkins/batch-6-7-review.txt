@@ -1,0 +1,14 @@
+ISSUES
+
+1. **Blocking — resident startup creates an undocumented Megaplan tree.**  
+   Evidence: `arnold_pipelines/megaplan/cli/__init__.py:3583-3585` unconditionally calls `ensure_runtime_layout`; `_core/io.py:1486-1498` creates `.megaplan/plans`, `.megaplan/initiatives`, and `.megaplan/schemas` with schema files. A generated-resident dry-run produced these paths, beyond the five-file scaffold and documented `.megaplan/resident` state.  
+   **Fix:** bypass generic layout initialization for resident commands and create only resident-owned state.
+
+2. **Blocking — B6 startup acceptance is not actually covered.**  
+   Evidence: `tests/agentbox/test_cli.py::test_run_resident_*` uses a shell stub that only records `attest` and `discord`; `test_resident_profile.py::test_external_profile_dry_run_constructs_profile_without_starting_discord` explicitly patches out attestation and service startup. No test combines exact-HEAD attestation, external-profile construction, process-attestation creation, and mocked service startup.  
+   **Fix:** add one no-network integration test asserting all four transitions.
+
+3. **Advisory — generated profile is not relocatable.**  
+   Evidence: `resident_profile.py.tmpl:6` embeds the absolute generation path; moving the generated repo caused `resident_profile_constructor_error` while reading the old `.omp/agents/...` path. The generated profile/store env fields are also overridden by launcher flags.  
+   **Fix:** derive the project root from `__file__`; remove redundant environment fields or stop overriding them.
+0

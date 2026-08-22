@@ -1,0 +1,10 @@
+PASS
+
+No findings.
+
+- `os.link(tmp, target, follow_symlinks=False)` publishes a sibling temp file, guaranteeing same-filesystem operation and no destination overwrite. `FileExistsError` returns the existing-target diagnostic; the `finally` block removes the temp path on staging/publication exits.
+- Block-scalar markers `>` and `|`, including modifiers, are rejected before target creation. Nonblank indented continuation lines are also rejected.
+- JSON-quoted descriptions, embedded quotes, and escaped `\n` remain supported. Body bytes remain unchanged.
+- Installer overrides, unsafe/unknown/existing-target rejections, exact parity, and override body parity are covered.
+- Both named regression tests are present. Host verification reports 17 passed.
+0

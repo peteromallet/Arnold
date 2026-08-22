@@ -1,0 +1,3 @@
+# [XHARD] Rework batch 5 (attempt 2) — stealth/ox-alpha via OpenRouter
+
+Worktree: `/Users/peteromalley/Documents/arnold-oracle`. Execute `.oracle/rework/batch-5-attempt-2.md` verbatim: in `load_standalone_runtime_dispatch_pointer()`, call `_require_standalone_operational_dir(state, name, create=False)` for `seeds`, `receipts`, AND `status` before reading the pointer; reject missing/symlinked/non-directory/non-0700 without repair or mutation. Extend the named tests + add `test_standalone_load_rejects_missing_status_directory`. Run the three named validations. Only `runtime_attestation.py` + its standalone test file may change. Do not commit. Report: hunks, test results, acceptance confirmations. Under 150 words.

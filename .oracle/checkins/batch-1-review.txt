@@ -1,0 +1,13 @@
+PASS
+
+Findings: none.
+
+Evidence:
+- `arnold.md` reflow preserves prompt words and semantics while removing soft line breaks, matching `AgentBoxOperatorProfile.system_prompt()`.
+- Parity test mirrors omp’s relevant behavior: CRLF/CR normalization, first `\n---` after offset 3, body slicing, and trimming. It enforces exact raw body plus one terminal LF.
+- Focused parity test passed: `1 passed, 28 deselected`.
+- `~/.bun/bin/agent list` exposes `arnold`; `agent run arnold ...` succeeded through the existing omp path.
+- Installed `~/.omp/agent/agents/arnold.md` is byte-identical to `agentbox/agents/arnold.md`.
+- Delta contains no omp source changes, alternate runtime, compatibility renames, or resident semantic edits.
+- The six attestation failures remain the documented pre-existing environment gap, not a Batch 1 defect.
+0

@@ -1,0 +1,9 @@
+ISSUES
+
+1. **Immutable object mode bypass can advance an invalid pointer.**  
+   In `write_standalone_runtime_publication()`, `FileExistsError` for an existing seed or receipt is treated as idempotent when JSON content matches, but file mode is not checked. A tampered `0644` seed/receipt is accepted, the dispatch pointer is atomically replaced, and only post-publication `load_standalone_runtime_dispatch_pointer()` rejects the unsafe object. Failure therefore leaves the pointer advanced to an invalid publication, violating the `0600` custody invariant and “failure never advances the pointer.”
+
+   Reject existing seed/receipt objects unless they are regular, non-symlink, and exactly `0600`; perform that check before any pointer update.
+
+The reviewed authority gate, typed mismatch handling, non-mutating load paths, directory preflight ordering, root/HEAD checks, and cloud-path preservation otherwise pass.
+0

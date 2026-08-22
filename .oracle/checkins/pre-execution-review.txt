@@ -1,0 +1,14 @@
+CONTRACT ISSUES
+
+1. **Blocking — final oracle review is not operationally covered.** `.oracle/agent_goal.md §Done criteria 6`; `.oracle/tasklist.md Batch 7`. The tasklist mentions a generic North Star/anti-pattern review, but no explicit final Sol oracle review or model receipt. **Suggested fix:** add a post-verification `[XHARD]` Sol oracle task that gates commit and push.
+
+2. **Blocking — authorization and sync steps are absent.** `.oracle/agent_goal.md §§Authorization boundaries, Sync/promotion policy`; `.oracle/tasklist.md`. No task/checkpoint requires per-batch commits, committing allowed `.oracle/` artifacts, final `HEAD:oracle-run` push, opening the worktree, or explicitly never mutating `main`. **Suggested fix:** add an operational final batch plus per-batch commit checkpoints encoding these exact constraints.
+
+3. **Blocking — seam dependency is not guaranteed.** `.oracle/tasklist.md Batch 3`. T4 (configuration seam) and T5 (external loader) share a batch; batching does not establish that T4 completes before T5. **Suggested fix:** split T4 into a completed checkpoint before T5, or declare and enforce an intra-batch dependency.
+
+4. **Blocking — custody discriminator remains unresolved before implementation.** `.oracle/plan.md §Residual open questions`; `.oracle/tasklist.md Batch 5`. The exact standalone/cloud authority discriminator is explicitly still open, yet T8 proceeds directly to implementation. **Suggested fix:** insert a Sol/oracle gate to freeze the discriminator and state-directory convention; halt and escalate if existing primitives cannot support it fail-closed.
+
+5. **Advisory — checkpoints are assertions, not verifiable one-liners.** `.oracle/tasklist.md Batches 1–7`; `.oracle/agent_goal.md §Validation commands`. Several checkpoints omit exact commands, notably `python -c "import agentbox.cli"`, clean `new-resident` generation/import, and evidence-matrix receipt validation. **Suggested fix:** attach concrete one-line commands or named scripts to every checkpoint.
+
+The remaining classifications are sensible. Non-goals and North Star direction are otherwise respected: one omp runtime, markdown identity, contained profile seam, readable five-file scaffold, no omp edits, compatibility renames, tool-catalog changes, purge work, or attestation bypass.
+0

@@ -1,0 +1,19 @@
+Links: [agent goal](.oracle/agent_goal.md) · [North Star](.oracle/northstar.md)
+
+**1. Parser — highest priority.** `parseAgent` delegates splitting to `parseFrontmatter` (`agents.ts:113-123`); `parseAgentFields` only validates `name`/`description` (`helpers.ts:254-260`). Exact code (`utils/src/frontmatter.ts:143-155`):
+
+```ts
+const newlineNormalized = normalize ? content.replace(/\r\n?/g, "\n") : content;
+const endIndex = normalized.indexOf("\n---", 3);
+const metadata = normalized.slice(4, endIndex);
+const body = normalized.slice(endIndex + 4).trim();
+```
+
+Default behavior: content must start with `---`; first later `\n---` closes frontmatter; CRLF/CR become LF; `.trim()` removes all leading/trailing whitespace, including terminal newlines. Closing delimiter is not strictly line-validated.
+
+**2. Launcher.** `frontmatter_strip` uses `awk` (`scripts/agent:37-40`), then passes a **file path**, not inline text: `--system-prompt "${PROMPT_CACHE_DIR}/${name}.md"` (`:117-124`). `awk print` preserves body line breaks but always emits LF per record, adding one when absent. It does not trim. Current blank line after closing `---` becomes a leading LF.
+
+**3. Current parity.** `arnold.md:6-14` is nine wrapped lines, begins after a blank separator, and ends with one LF. Python’s `system_prompt()` (`resident_profile.py:131-142`) evaluates to one line with spaces and no LF. Parsed omp body is 669 bytes but differs: markdown newlines replace Python spaces. Canonical file body: one physical line equal to the concatenated Python return value, no blank separator, exactly one terminal LF. Parser `.trim()` then equals Python bytes.
+
+**4. Conventions/risk.** omp enforces LF via `.gitattributes:3-4,47-49`; Arnold has no newline rule (`.gitattributes:1`), no `.editorconfig`, and no EOF CI check found. If parity means launcher-fed bytes, current `awk` necessarily adds LF; change the script or compare parsed bodies.
+0

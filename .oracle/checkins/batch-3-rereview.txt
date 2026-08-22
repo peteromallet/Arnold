@@ -1,0 +1,7 @@
+PASS
+
+1. **No blocking findings.** `_resident_config` now preserves explicit CLI `""`/whitespace overrides and maps them, plus equivalent environment values, to `invalid_args` without tracebacks or silent defaults.
+2. **No advisory findings.** Root/candidate `RuntimeError` and `ValueError` resolution failures map to `resident_profile_missing_file`; containment escapes retain `resident_profile_containment_escape`.
+3. **Verified implementation details.** External module identities are SHA-256-derived and deterministic; failed imports/constructors evict modules; the import lock serializes loading; built-in profiles retain their dispatch and dry-run behavior.
+4. **Evidence.** Targeted acceptance subset: **17 passed**. Full focused suites: **75 passed**, with the reported **6 pre-existing attestation-environment failures**. Both built-in dry-run smoke tests returned successful JSON.
+0

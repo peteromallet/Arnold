@@ -1,0 +1,12 @@
+ISSUES
+
+1. **Blocking — CLI `--profile` bypasses validation and diverges from env behavior.**  
+   Evidence: `resident/cli.py:703-710` uses `if profile:` and `model_copy(update=updates)`. `--profile ""` is silently ignored and defaults to `"megaplan"`; `--profile "   "` bypasses Pydantic validation. The equivalent environment values correctly produce `invalid_args` (`test_resident_profile.py:647-662`).  
+   **Fix:** Apply overrides when `profile is not None`, then rebuild with `ResidentConfig.model_validate({...config.model_dump(), **updates})`.
+
+2. **Blocking — some malformed filesystem targets escape the `CliError` boundary.**  
+   Evidence: `resident/cli.py:1228-1248` catches `FileNotFoundError`/`OSError`, but `Path.resolve(strict=True)` can raise `RuntimeError` for symlink loops and `ValueError` for embedded NULs. Those become tracebacks instead of specific JSON `CliError`s, violating rejection diagnostics.  
+   **Fix:** Catch `RuntimeError` and `ValueError` around both root/candidate resolution and map them to the existing precise resolution/containment error codes.
+
+Containment, deterministic hashed identities, pre-load eviction, failure eviction, lock coverage, built-in dispatch, and trusted-import disclosure otherwise align with the Batch 3 acceptance and North Star.
+0

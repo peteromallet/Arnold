@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/08-import-mechanics.md",
+  "elapsed_s": 155.453,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:16:57Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/08-import-mechanics.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 56649,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2228,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/08-import-mechanics.txt",
+  "started_at": "2026-08-21T20:14:21Z",
+  "status": "ok",
+  "stem": "08-import-mechanics",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

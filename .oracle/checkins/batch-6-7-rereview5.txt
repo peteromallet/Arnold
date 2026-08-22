@@ -1,0 +1,13 @@
+**Verdict: PASS**
+
+Both attempt-5 items verified fixed in `c522810273..HEAD`; full B6+B7 acceptance holds.
+
+1. **F1 (was blocking) — closed.** `_resident_discord` now passes `root=root` into `_require_discord_runtime_launch` (`resident/cli.py:1190`), which calls `ensure_standalone_launch_seed_binds_root(root)` *before* `require_configured_runtime_launch("resident", create=True)` — typed `runtime_launch_attestation_mismatch`, pre-profile/service/pre-status-write. Test `..._rejects_cross_project_seed_before_profile_or_service_start` proves B-seed/A-launch rejection with counters at zero and single A-seed start.
+
+2. **F2 (advisory) — closed.** Standalone lstat preflight in `write_standalone_runtime_publication` requires regular non-symlink exact-0600 existing pointers; missing stays creatable; shared `_atomic_write` untouched (mkstemp ⇒ 0600). Test covers permissive/symlink/directory/missing without repair or replacement.
+
+Two-root custody confirmed end-to-end: seed carries separate project/runtime root+revision triples; `_standalone_admission` Git-binds both; state/pointer/receipt/status derive from `project_root`; provenance/vectors and the process-attestation module scan bind to `runtime_root`. Launcher resolves both roots with one interpreter and passes all four flags. Prior items intact: non-mutating loads (`create=False`), preflight-then-create, `_verify_reused_immutable_object` idempotent reuse, authority guards everywhere (cloud fields and legacy names rejected, no fallback). Cloud tests only strengthened. Docs document the editable/PYTHONPATH two-root contract; service→launcher→attest chain coherent; 143-green accepted as reported.
+
+Advisory:
+3. `ensure_standalone_launch_seed_binds_root(None)` silently skips binding. Unreachable today (sole caller passes root), but a future caller omitting `root` reopens F1. Fix: require non-None for standalone seeds.
+0

@@ -1,0 +1,3 @@
+# [normal] Rework batch 2 (attempt 1) — GPT-5.6 Luna
+
+Worktree: `/Users/peteromalley/Documents/arnold-oracle`. Execute `.oracle/rework/batch-2-attempt-1.md` verbatim (R2.1 + R2.2). That file is the authoritative spec: for each item do exactly the required outcome, follow the cited repository precedents (`arnold_pipelines/megaplan/_core/io.py:394-433` for atomic publish; existing installer conventions for diagnostics), add exactly the named tests, and run the named validations. Only `agentbox/cli.py` + `tests/agentbox/test_cli.py` may change. Do not commit. Report: changed hunks, test names + results, acceptance confirmations. Under 250 words.

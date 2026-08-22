@@ -1,0 +1,16 @@
+ISSUES
+
+1. **Blocking — standalone seed bypasses domain separation in worker refresh.**  
+   Evidence: `refresh_runtime_launch_seed_for_worker_dispatch()` returns `current_path` at lines 1824–1827 before checking `authority`; a standalone seed is therefore accepted whenever `ARNOLD_RUNTIME_MANIFEST` is unset, violating the frozen requirement that refresh requires cloud-chain authority.  
+   **Fix:** Load and enforce `RUNTIME_LAUNCH_CLOUD_AUTHORITY` before the early return.
+
+2. **Blocking — reused state directories are not permission-validated.**  
+   Evidence: `standalone_runtime_launch_dir()` chmods only the root `runtime-launch` directory; `load_standalone_runtime_dispatch_pointer()` checks pointer/seed/receipt files but not `seeds/`, `receipts/`, or `status/`. A preexisting `status/` at `0755` can therefore be reused and written through `_atomic_write`.  
+   **Fix:** Require `0700` for all three operational subdirectories on every load/write path; reject unsafe modes.
+
+3. **Advisory — malformed authority types escape as `TypeError`.**  
+   Evidence: `_verify_seed_digest()` performs `seed.get("authority") not in RUNTIME_LAUNCH_AUTHORITIES`; a JSON list/dict authority is unhashable, producing an unexpected exception rather than the typed mismatch.  
+   **Fix:** Require `isinstance(authority, str)` before set membership.
+
+Cloud validation checks remain present; no unnecessary cloud-path fallback or counterfeit evidence synthesis found.
+0

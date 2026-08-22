@@ -1,0 +1,7 @@
+ISSUES
+
+1. **Blocking — T7 backend injection is incomplete.** `AgentBoxOperatorProfile.cloud_backend` defaults to `None` (`agentbox/resident_profile.py:118-124`), and `_resident_profile()` injects `CloudCliBackend()` only for `MegaplanResidentProfile` (`cli.py:1362-1369`). Built-in `agentbox_operator` and external/generated subclasses therefore reach `cloud_resume` with no backend and raise the new `RuntimeError`. The test proves only a manually injected fake backend (`test_resident_profile.py:155-160`), not CLI-selected profile wiring.  
+   **Fix:** assign a default `CloudCliBackend()` to AgentBox/external profile instances in `_resident_profile()` without adding a constructor kwarg that would break existing four-argument external constructors; preserve explicit `None` as the clear-failure case.
+
+No other findings: dry-run bypasses token/attestation/runner/service construction, the runtime diff is localized, no `--validate-profile` flag was added, and the tool catalog remains unchanged.
+0

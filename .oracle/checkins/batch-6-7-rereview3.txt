@@ -1,0 +1,8 @@
+ISSUES
+
+1. **Blocking — cross-repo deployment is not operational.**  
+   `resident attest --repo-root <generated-repo>` binds standalone provenance to that repo (`runtime_attestation.py:1187-1212`), while `runtime_provenance()` requires Arnold’s imported `import_root` to equal `expected_root` (`runtime_provenance.py:170-189`). The docs instead instruct installing/exposing Arnold from `/path/to/arnold` (`docs/custom-resident-agents.md:119-126`). A fresh generated repo therefore fails with exit 2: `runtime_launch_attestation_mismatch: standalone runtime provenance changed`. The integration test avoids this by cloning the Arnold source into the target repo (`test_resident_profile.py:942-947`), so it does not prove true R3 cross-repo startup.  
+   **Fix:** Separate admitted project root from Arnold runtime root in the standalone seed/launcher, or explicitly require the target repo to contain the exact Arnold runtime and update generation, docs, and integration coverage accordingly.
+
+The requested B6/B7 rework items otherwise have matching implementations/tests, including the three attempt-3 fixes; host-reported 106 tests do not cover this deployment mismatch.
+0

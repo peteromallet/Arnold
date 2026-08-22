@@ -1,0 +1,12 @@
+## Ranked findings
+
+1. **Boundary terminology.** `AgentBox Resident Boundary` defines the resident as a reusable protocol-driven loop; `ResidentConfig` is the environment/timeout seam, while transport-specific startup reads it and command semantics stay outside (`docs/agentbox-resident-boundary.md:8-21`). `MegaplanResidentProfile` owns prompt/context/tools/control; AgentBox profiles choose Operator shells/helpers (`:23-49`). **Transport** means startup/adaptation, not policy.
+
+2. **Existing coverage.** `AgentBox Bootstrap and Day-2 Operations` covers Hetzner, systemd, credentials, and restarts (`docs/agentbox/bootstrap-and-day2.md:1-67`). `Agent Runtime Integration` covers dispatch/fanout/vendorable contracts (`docs/agent-runtime-integration.md:1-11,150-209`). `Megaplan Cloud` covers providers, deployment, and watchdogs (`docs/cloud.md:1-49,272-285`). `Configuration & Environment Map` covers precedence, routing, and secrets (`docs/configuration.md:1-12,80-119`). OMP migration docs cover provider migration and resident-platform contracts, but are execution plans (`docs/omp-replaces-hermes-plan.md:1-10`; `docs/omp-replaces-hermes-todo.md:362-389`).
+
+3. **Conventions.** H1/H2 headings, short prose, fenced `bash`; README uses bold labels and command-first one-liners (`README.md:103-114`). README links cloud/config only (`README.md:107,113`); `docs/README.md` omits boundary/runtime/AgentBox docs (`docs/README.md:7-22`).
+
+4. **R3 gap.** Target is absent. It must explain installer/new-resident commands, five generated files, extensible profile loading, env/systemd setup, and dry-run validation, linking existing docs rather than duplicating them (`.oracle/agent_goal.md:21-27,34-50`).
+
+5. **Risks.** OMP docs still say Hermes; README advertises `config` commands while configuration says no config subcommand exists (`.oracle/northstar.md:8-22`; `README.md:113`; `docs/configuration.md:9-10,30-31`).
+0

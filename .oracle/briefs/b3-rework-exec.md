@@ -1,0 +1,3 @@
+# [normal] Rework batch 3 (attempt 1) — GPT-5.6 Luna
+
+Worktree: `/Users/peteromalley/Documents/arnold-oracle`. Execute `.oracle/rework/batch-3-attempt-1.md` verbatim (items 1 and 2). That file is the authoritative spec: exact outcomes, scopes, acceptance, and validation commands. Only `arnold_pipelines/megaplan/resident/cli.py` + `tests/agentbox/test_resident_profile.py` may change. Do not commit. Run the named validations plus the full `tests/agentbox/test_resident_profile.py` and `tests/agentbox/test_cli.py` suites to confirm no new failures beyond the 6 pre-existing attestation-env ones. Report: hunks, test names + results, acceptance confirmations. Under 250 words.

@@ -1,0 +1,3 @@
+# [normal] Rework batch 5 item 3 — GPT-5.6 Luna
+
+Worktree: `/Users/peteromalley/Documents/arnold-oracle`. Execute item 3 of `.oracle/rework/batch-5-attempt-1.md` verbatim: guard `isinstance(authority, str)` before membership checks at `runtime_attestation.py` ~1867 and ~2383 so list/dict authority values raise the typed mismatch (`runtime_launch_attestation_mismatch`), never raw `TypeError`; valid string authorities unchanged. Add the focused parameterized test; run `python -m pytest tests/cloud/test_runtime_attestation.py tests/cloud/test_standalone_runtime_attestation.py -q`. Only `runtime_attestation.py` + its test file may change. Do not commit. Report: hunks, test results, acceptance confirmation. Under 150 words.

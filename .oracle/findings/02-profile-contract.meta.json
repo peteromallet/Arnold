@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/02-profile-contract.md",
+  "elapsed_s": 194.375,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:10:05Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/02-profile-contract.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 51019,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2304,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/02-profile-contract.txt",
+  "started_at": "2026-08-21T20:06:50Z",
+  "status": "ok",
+  "stem": "02-profile-contract",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

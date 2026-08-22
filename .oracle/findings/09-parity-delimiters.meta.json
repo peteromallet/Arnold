@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/09-parity-delimiters.md",
+  "elapsed_s": 237.489,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:18:31Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/09-parity-delimiters.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 56727,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 1925,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/09-parity-delimiters.txt",
+  "started_at": "2026-08-21T20:14:34Z",
+  "status": "ok",
+  "stem": "09-parity-delimiters",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

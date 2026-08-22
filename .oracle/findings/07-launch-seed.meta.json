@@ -1,0 +1,21 @@
+{
+  "brief": "/Users/peteromalley/Documents/arnold-oracle/.oracle/briefs/07-launch-seed.md",
+  "elapsed_s": 230.321,
+  "error": null,
+  "error_class": null,
+  "finish_reason": null,
+  "finished_at": "2026-08-21T20:17:18Z",
+  "meta_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/07-launch-seed.meta.json",
+  "model": "codex:gpt-5.6-luna",
+  "pid": 56337,
+  "raw_result_keys": [
+    "stdout"
+  ],
+  "response_chars": 2849,
+  "response_file": "/Users/peteromalley/Documents/arnold-oracle/.oracle/findings/07-launch-seed.txt",
+  "started_at": "2026-08-21T20:13:28Z",
+  "status": "ok",
+  "stem": "07-launch-seed",
+  "task_timeout_s": 1200,
+  "tool_calls": 0
+}

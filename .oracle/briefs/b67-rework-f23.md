@@ -1,0 +1,6 @@
+# [normal] Combined rework F2+F3 — GPT-5.6 Luna
+
+Worktree: `/Users/peteromalley/Documents/arnold-oracle`. Execute Findings 2 and 3 of `.oracle/rework/batch-6-7-attempt-1.md` verbatim. FILE CONSTRAINT: put all new tests in `tests/agentbox/test_resident_profile.py` (another agent owns test_cli.py right now — do not touch it); you may edit `agentbox/templates/resident/resident_profile.py.tmpl` and `resident.env.example.tmpl`.
+- F2: one no-network generated-resident integration test (committed tmp repo) chaining: exact-HEAD standalone issuance (`resident attest`) → external-profile construction → process-attestation creation/validation → exactly one mocked Discord service start. Mock only process identity + the network service boundary.
+- F3: make the generated profile relocatable — derive the project root from `__file__` (not the generation-time `{{REPO}}` absolute path); remove duplicated env fields or stop the launcher/flags from overriding them (minimal — follow the spec's "remove redundant environment fields or stop overriding them").
+Run the spec's validation commands (adjust test paths to test_resident_profile.py) + full `tests/agentbox/test_resident_profile.py -q`. Do not commit. Report: hunks, test results, acceptance confirmations. Under 250 words.

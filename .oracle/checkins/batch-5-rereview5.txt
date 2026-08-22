@@ -1,0 +1,15 @@
+PASS
+
+No findings.
+
+- Authority is digest-covered, type-checked, and domain-separated across cloud worker refresh, validator selection, and process receipts.
+- Standalone evidence is fail-closed on strict repository root, full expected HEAD, live HEAD, provenance, module/PTH/wrapper/interpreter vectors, and exact standalone authority.
+- Publication/load/process paths enforce `0700` directories and `0600` objects without repairing rejected state; load paths use non-mutating resolution.
+- Publication preflights all operational directories before creating any.
+- Existing seed/receipt reuse requires regular non-symlink files, exact `0600`, matching canonical digest/content, and completes before pointer publication.
+- Pointer bytes remain unchanged on the tampered-mode and unsafe-directory rejection paths.
+- Chain/cloud provisioning changes are limited to the intended authority field and compatibility checks; no provisioning path was reworked.
+- Typed non-string authority mismatches raise `CliError`, not `TypeError`.
+
+The reported 42 standalone tests passing is consistent with the inspected implementation and regression coverage.
+0

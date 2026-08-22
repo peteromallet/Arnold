@@ -1,0 +1,6 @@
+**ISSUES**
+
+1. **Direct load/publication rejection can mutate state.** `standalone_runtime_launch_dir()` runs before `_require_standalone_operational_dir(..., create=False)` and always creates missing `.megaplan/resident/runtime-launch` parents, then chmods the state directory to `0700`. Thus a load with missing `seeds/`, `receipts/`, or `status/` can mutate the filesystem before rejecting; an unsafe child directory can also trigger state-mode repair before rejection. Use a non-mutating resolver/validation path for reused state.
+
+Worker refresh authority gating, typed authority rejection, exact-root/live-HEAD validation, and the three child-directory checks are present. Cloud-chain seed construction remains otherwise unchanged.
+0
