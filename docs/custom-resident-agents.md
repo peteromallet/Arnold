@@ -16,6 +16,20 @@ arnold                                   # interactive AgentBox Operator session
 arnold --agent scout "…                  # talk to a different installed agent
 ```
 
+### Continue a conversation
+
+One-shot runs save their session by default, so follow-ups just work:
+
+```bash
+arnold -c "Follow-up question"            # continue the most recent conversation
+arnold --resume <id-prefix> "…"           # resume a specific session
+arnold                                    # interactive TUI (has a session picker)
+```
+
+Sessions are global to omp (not per-agent), so `-c` continues whatever ran
+last regardless of which agent it belonged to. Use `--resume` when you need
+a specific thread.
+
 The workflow/operator tooling lives on the `megaplan` command. If you drive
 omp's launcher manually instead, note that bare `agent` may resolve to another
 vendor's binary — prefer `~/.bun/bin/agent` or set `OMP_BIN`. In-session

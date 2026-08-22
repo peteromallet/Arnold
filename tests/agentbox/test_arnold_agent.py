@@ -62,6 +62,7 @@ def test_main_execs_run_with_default_agent(monkeypatch) -> None:
         "/Users/fake/.bun/bin/agent",
         "run",
         "arnold",
+        "--print",
         "What is running?",
     ]
 
@@ -87,3 +88,31 @@ def test_main_rejects_dangling_agent_flag(monkeypatch, capsys) -> None:
     assert arnold_agent.main(["--agent"]) == 1
 
     assert "--agent requires a value" in capsys.readouterr().err
+
+
+def test_leading_flags_pass_through_and_message_implies_print(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_execvp(_file: str, argv: list[str]) -> None:
+        captured["argv"] = argv
+
+    monkeypatch.setattr(arnold_agent.os, "execvp", fake_execvp)
+    monkeypatch.setattr(arnold_agent, "_find_launcher", lambda: Path("/l/agent"))
+
+    arnold_agent.main(["-c", "follow-up question"])
+
+    assert captured["argv"] == ["/l/agent", "run", "arnold", "-c", "--print", "follow-up question"]
+
+
+def test_value_flag_consumes_its_argument(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_execvp(_file: str, argv: list[str]) -> None:
+        captured["argv"] = argv
+
+    monkeypatch.setattr(arnold_agent.os, "execvp", fake_execvp)
+    monkeypatch.setattr(arnold_agent, "_find_launcher", lambda: Path("/l/agent"))
+
+    arnold_agent.main(["--resume", "abc123"])
+
+    assert captured["argv"] == ["/l/agent", "run", "arnold", "--resume", "abc123"]

@@ -42,6 +42,24 @@ def _find_launcher() -> Path | None:
     return None
 
 
+# omp flags that consume a following value token.
+_VALUE_FLAGS = frozenset({"-r", "--resume", "--session-dir", "--profile"})
+
+
+def _split_flags(rest: list[str]) -> tuple[list[str], list[str]]:
+    """Partition leading omp flags from the remaining message words."""
+    flags: list[str] = []
+    index = 0
+    while index < len(rest) and rest[index].startswith("-"):
+        token = rest[index]
+        flags.append(token)
+        index += 1
+        if token in _VALUE_FLAGS and index < len(rest):
+            flags.append(rest[index])
+            index += 1
+    return flags, rest[index:]
+
+
 def main(argv: list[str] | None = None) -> int:
     rest = list(sys.argv[1:] if argv is None else argv)
     agent = DEFAULT_AGENT
@@ -62,8 +80,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # Hand the terminal over wholesale so the interactive TUI owns the tty.
-    os.execvp(str(launcher), [str(launcher), "run", agent, *rest])
+    # Leading omp flags (continue/resume/session-dir/profile) pass through.
+    # A trailing message implies one-shot mode (--print); flags alone keep the
+    # interactive TUI/picker. Hand the terminal over wholesale either way.
+    flags, message = _split_flags(rest)
+    if message:
+        # One-shot: answer printed to stdout, then exit.
+        os.execvp(
+            str(launcher),
+            [str(launcher), "run", agent, *flags, "--print", *message],
+        )
+    else:
+        # Flags alone: interactive TUI / session picker owns the terminal.
+        os.execvp(str(launcher), [str(launcher), "run", agent, *flags])
 
 
 if __name__ == "__main__":  # pragma: no cover
