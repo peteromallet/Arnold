@@ -2543,6 +2543,41 @@ def configured_process_attestation_path(
     )
 
 
+def ensure_standalone_launch_seed_binds_root(project_root: Path | None) -> None:
+    """Bind the launching project root to the configured standalone seed.
+
+    Generated launchers, systemd units, and manual invocations reach resident
+    startup through :func:`require_configured_runtime_launch`, whose
+    standalone branch derives custody solely from ``seed["project_root"]``.
+    Without an explicit binding, a valid seed admitted for one project can
+    authorize resident startup in another.  This preflight rejects such a
+    mismatch, typed and fail-closed, before any process-status mutation or
+    downstream profile/runner/service construction.  Cloud-authority seeds
+    and absent or unreadable configurations stay under
+    :func:`require_configured_runtime_launch`'s canonical handling.
+    """
+    if project_root is None:
+        return
+    seed_path = configured_seed_path()
+    if seed_path is None:
+        # The canonical loader owns the missing-seed error.
+        return
+    try:
+        seed = _json_file(seed_path, label="runtime launch seed")
+    except CliError:
+        # Deep validation and its typed errors remain canonical.
+        return
+    if seed.get("authority") != RUNTIME_LAUNCH_STANDALONE_AUTHORITY:
+        return
+    seeded_root = Path(str(seed.get("project_root") or "")).resolve(strict=False)
+    expected_root = Path(project_root).expanduser().resolve(strict=False)
+    if seeded_root != expected_root:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "configured resident launch seed was admitted for a different project root",
+        )
+
+
 def require_configured_runtime_launch(
     component: str,
     *,

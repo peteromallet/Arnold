@@ -933,9 +933,9 @@ def test_external_profile_dry_run_does_not_write_bytecode(
     assert not list(tmp_path.rglob("*.pyc"))
 
 
-def _init_genuine_project(tmp_path: Path) -> tuple[Path, str]:
+def _init_genuine_project(tmp_path: Path, *, name: str = "genuine-project") -> tuple[Path, str]:
     """Create a genuine NON-Arnold Git project with a scaffolded resident."""
-    repo = tmp_path / "genuine-project"
+    repo = tmp_path / name
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
@@ -1258,6 +1258,220 @@ def test_generated_resident_two_root_attest_rejects_stale_or_swapped_roots(
     assert swapped.returncode == 2, swapped.stderr
     assert _attest_exit_payload(swapped)["error"] == "runtime_launch_attestation_mismatch"
     assert not (repo / ".megaplan" / "resident" / "runtime-launch").exists()
+
+
+def test_generated_resident_startup_rejects_cross_project_seed_before_profile_or_service_start(
+    tmp_path: Path,
+) -> None:
+    """A valid project-B seed must not authorize project-A resident startup:
+    the resolved launch root is bound against the seed's admitted project
+    root before any profile/runner/service construction or process-status
+    write, and the matching A seed still starts exactly once."""
+    source_root = Path(__file__).parents[2].resolve()
+    repo_a, head_a = _init_genuine_project(tmp_path, name="launch-project-a")
+    repo_b, head_b = _init_genuine_project(tmp_path, name="seed-project-b")
+    runtime_head = _runtime_head_of(source_root)
+    venv, env_b = _two_root_runtime(
+        tmp_path, repo=repo_b, head=head_b, runtime=source_root
+    )
+    env_a = dict(env_b)
+    env_a["TEST_RESIDENT_REPO"] = str(repo_a)
+    env_a["TEST_RESIDENT_HEAD"] = head_a
+
+    attest_child = (
+        "from arnold_pipelines.megaplan.cli import main; "
+        "raise SystemExit(main(['resident', 'attest', '--repo-root', "
+        "r'{repo}', '--expected-head', r'{head}', "
+        "'--runtime-root', r'" + str(source_root) + "', "
+        "'--expected-runtime-head', r'" + runtime_head + "']))"
+    )
+
+    def attest(repo: Path, head: str, env: dict[str, str]) -> Path:
+        result = subprocess.run(
+            [str(venv / "bin" / "python"), "-c", attest_child.format(repo=str(repo), head=head)],
+            cwd=repo,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        seed_path = Path(result.stdout.strip())
+        assert seed_path.is_file()
+        return seed_path
+
+    seed_b_path = attest(repo_b, head_b, env_b)
+    seed_a_path = attest(repo_a, head_a, env_a)
+    assert json.loads(seed_b_path.read_text(encoding="utf-8"))["project_root"] == str(repo_b)
+    assert json.loads(seed_a_path.read_text(encoding="utf-8"))["project_root"] == str(repo_a)
+
+    reject_child = textwrap.dedent(
+        """
+        import json
+        import os
+        from pathlib import Path
+
+        from arnold_pipelines.megaplan.cli import main
+        from arnold_pipelines.megaplan.resident import cli as resident_cli
+        from arnold_pipelines.megaplan.store import FileStore
+
+        repo = Path(os.environ["TEST_RESIDENT_REPO"]).resolve()
+        spec = ".agentbox/resident_profile.py:DemoResidentProfile"
+        FileStore(repo / ".megaplan" / "resident")
+
+        constructions = {"profile": 0, "runner": 0, "service": 0}
+
+        def forbidden_profile(**_kwargs):
+            constructions["profile"] += 1
+            raise AssertionError("profile constructed despite cross-project rejection")
+
+        def forbidden_runner(*_args, **_kwargs):
+            constructions["runner"] += 1
+            raise AssertionError("runner constructed despite cross-project rejection")
+
+        class ForbiddenService:
+            def __init__(self, *_args, **_kwargs):
+                constructions["service"] += 1
+                raise AssertionError("service constructed despite cross-project rejection")
+
+        resident_cli._resident_profile = forbidden_profile
+        resident_cli._resident_runner = forbidden_runner
+        resident_cli.ResidentDiscordService = ForbiddenService
+
+        os.environ["DISCORD_BOT_TOKEN"] = "test-token"
+        os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = os.environ["TEST_FOREIGN_SEED"]
+        exit_code = main(
+            [
+                "resident",
+                "discord",
+                "--store-root",
+                str(repo / ".megaplan" / "resident"),
+                "--profile",
+                spec,
+            ]
+        )
+        print(json.dumps({"exit_code": exit_code, **constructions}))
+        """
+    )
+    reject_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", reject_child],
+        cwd=repo_a,
+        env={**env_a, "TEST_FOREIGN_SEED": str(seed_b_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert reject_result.returncode == 0, reject_result.stderr
+    assert '"error": "runtime_launch_attestation_mismatch"' in reject_result.stdout
+    assert json.loads(reject_result.stdout.splitlines()[-1]) == {
+        "exit_code": 1,
+        "profile": 0,
+        "runner": 0,
+        "service": 0,
+    }
+    # No process receipt written for either root by the rejected launch.
+    b_receipt = (
+        repo_b
+        / ".megaplan"
+        / "resident"
+        / "runtime-launch"
+        / "status"
+        / "resident.runtime-process-attestation.json"
+    )
+    a_receipt = (
+        repo_a
+        / ".megaplan"
+        / "resident"
+        / "runtime-launch"
+        / "status"
+        / "resident.runtime-process-attestation.json"
+    )
+    assert not b_receipt.exists()
+    assert not a_receipt.exists()
+
+    accept_child = textwrap.dedent(
+        """
+        import json
+        import os
+        from pathlib import Path
+
+        from arnold_pipelines.megaplan.cloud import runtime_attestation
+        from arnold_pipelines.megaplan.cli import main
+        from arnold_pipelines.megaplan.resident import cli as resident_cli
+        from arnold_pipelines.megaplan.store import FileStore
+
+        repo = Path(os.environ["TEST_RESIDENT_REPO"]).resolve()
+        spec = ".agentbox/resident_profile.py:DemoResidentProfile"
+        FileStore(repo / ".megaplan" / "resident")
+        seed_path = Path(os.environ["TEST_MATCHING_SEED"]).resolve()
+        seed = json.loads(seed_path.read_text(encoding="utf-8"))
+
+        runtime_attestation._proc_identity = lambda pid: {
+            "pid": pid,
+            "start_ticks": "mock-start",
+            "executable": "/mock/python",
+            "executable_sha256": "mock-sha256",
+            "selectors": {},
+        }
+        service_starts = []
+
+        class MockResidentDiscordService:
+            def __init__(self, *args, **kwargs):
+                self.runtime = kwargs["runtime"]
+
+            def run(self):
+                service_starts.append(self)
+
+        resident_cli.ResidentDiscordService = MockResidentDiscordService
+        os.environ["DISCORD_BOT_TOKEN"] = "test-token"
+        os.environ["MEGAPLAN_RUNTIME_LAUNCH_SEED"] = str(seed_path)
+        assert (
+            main(
+                [
+                    "resident",
+                    "discord",
+                    "--store-root",
+                    str(repo / ".megaplan" / "resident"),
+                    "--profile",
+                    spec,
+                ]
+            )
+            == 0
+        )
+        assert len(service_starts) == 1
+        process_attestation = json.loads(
+            runtime_attestation.configured_process_attestation_path(
+                "resident", seed=seed
+            ).read_text(encoding="utf-8")
+        )
+        validation = runtime_attestation.validate_runtime_process_attestation(
+            seed,
+            process_attestation,
+            component="resident",
+            target_pid=os.getpid(),
+        )
+        assert validation["status"] == "ready"
+        print(json.dumps({"service_starts": len(service_starts), "validated": True}))
+        """
+    )
+    accept_result = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", accept_child],
+        cwd=repo_a,
+        env={**env_a, "TEST_MATCHING_SEED": str(seed_a_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert accept_result.returncode == 0, accept_result.stderr
+    assert json.loads(accept_result.stdout.splitlines()[-1]) == {
+        "service_starts": 1,
+        "validated": True,
+    }
+    assert (
+        repo_a
+        / ".megaplan"
+        / "resident"
+        / "runtime-launch"
+        / "status"
+        / "resident.runtime-process-attestation.json"
+    ).is_file()
 
 
 def test_generated_resident_validation_rejects_runtime_vector_drift(tmp_path: Path) -> None:

@@ -804,3 +804,59 @@ def test_standalone_load_rejection_does_not_mutate_filesystem(tmp_path: Path) ->
     (state / "receipts").chmod(0o755)
     expect_rejection("unsafe receipts directory mode")
     assert stat.S_IMODE((state / "receipts").stat().st_mode) == 0o755  # never repaired
+
+
+def test_standalone_preflight_rejects_foreign_project_root_before_status_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The launch-root binding rejects a foreign standalone seed typed and
+    fail-closed before any status mutation; cloud authority, absent, and
+    unreadable configurations stay under the canonical loader's handling."""
+    seed, _root, _revision = _healthy_runtime_fixture(monkeypatch)
+    foreign = tmp_path / "other-project"
+    foreign.mkdir()
+
+    def forbidden_state(_root: Path, create: bool = True) -> Path:
+        raise AssertionError("status state touched during root-binding preflight")
+
+    monkeypatch.setattr(attestation, "standalone_runtime_launch_dir", forbidden_state)
+
+    # No configuration at all: inert.
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
+    attestation.ensure_standalone_launch_seed_binds_root(foreign)
+
+    # Unreadable configuration: canonical loader owns the error, preflight is inert.
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(tmp_path / "missing-seed.json"))
+    attestation.ensure_standalone_launch_seed_binds_root(foreign)
+
+    # Cloud authority: not bound here (cloud/chain behavior unchanged).
+    cloud_seed = tmp_path / "cloud-seed.json"
+    cloud_seed.write_text(
+        json.dumps({"authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(cloud_seed))
+    attestation.ensure_standalone_launch_seed_binds_root(foreign)
+
+    # Foreign standalone seed: typed reject without touching status state.
+    foreign_seed = tmp_path / "foreign-seed.json"
+    foreign_seed.write_text(
+        json.dumps(
+            {
+                "authority": attestation.RUNTIME_LAUNCH_STANDALONE_AUTHORITY,
+                "project_root": str(seed["project_root"]),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(foreign_seed))
+    with pytest.raises(CliError) as excinfo:
+        attestation.ensure_standalone_launch_seed_binds_root(foreign)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+
+    # Matching launch root passes the preflight.
+    attestation.ensure_standalone_launch_seed_binds_root(Path(str(seed["project_root"])))
+
+    # Explicit None keeps non-threaded callers on unchanged behavior.
+    attestation.ensure_standalone_launch_seed_binds_root(None)

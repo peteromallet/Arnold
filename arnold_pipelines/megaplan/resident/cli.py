@@ -1190,6 +1190,7 @@ def _resident_discord(
     _require_discord_runtime_launch(
         listener_only=listener_only,
         recovery_seed=recovery_seed,
+        root=root,
     )
     authorizer = ResidentAuthorizer(config)
     resident_state_root = Path(
@@ -1264,17 +1265,20 @@ def _require_discord_runtime_launch(
     *,
     listener_only: bool,
     recovery_seed: str | None = None,
+    root: Path | None = None,
 ) -> None:
     """Select recovery-specific or ordinary resident launch attestation."""
     if listener_only:
         require_listener_recovery_seed(recovery_seed)
         return
+    from arnold_pipelines.megaplan.cloud import runtime_attestation
+
+    runtime_attestation.ensure_standalone_launch_seed_binds_root(root)
     from arnold_pipelines.megaplan.cloud.runtime_attestation import (
         require_configured_runtime_launch,
     )
 
     require_configured_runtime_launch("resident", create=True)
-
 
 def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None = None):
     if config.model_provider in {"codex", "hermes", "claude"}:
