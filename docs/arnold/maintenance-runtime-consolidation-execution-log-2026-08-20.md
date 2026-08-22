@@ -393,3 +393,10 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 
 - Operator directive: every 3 hours, deploy an ox-alpha subagent (wrapper role REPORT) producing a DEEP in-progress report: integrated-code quality, north-star alignment, progress efficiency (throughput, revision overhead), discipline/risk scan (worktrees, disk, validator), recommendations.
 - Timer implemented as a background 3h job waking the orchestrator; check-ins land at natural seams without blocking in-flight dispatches.
+
+## T7.1 frozen (8775c69833) + BF repair decision
+
+- Nine shards frozen at HEAD 8775c69833: shard1/shard9 expected exit 1 with inventoried known failures; shards 2-8 expected 0; union == full collection (21447 collected); stdout-tee per operator item 9.
+- Audit found 16 batch-interaction regressions introduced by OUR batches: BF-001 six-hour auditor MutationCapability fixture drift (T4.1), BF-002 repair_contract stale liveness assertions pass at fce / fail at HEAD (5), BF-003 zero-recovery init canary x7 + elapsed_wall_clock_v2 schema-vs-fake-fixture (T5.1 window). Plus LM-001 import-order landmine mitigated by shard7 ordering; omp-rpc env gap fixed.
+- DECISION: these are our regressions, not legacy debt — fix before T7.2 via one focused test-side card; refreeze counts only if collection changes. G7 cannot recommend promotion with self-inflicted reds.
+- PROCESS DEVIATION: T7.1 implementer committed 8775c69833 DIRECTLY on the integration branch instead of a task worktree. Content verified == allowance (test-shards.json + audit script only); accepted to avoid churn; future cards reiterate the prohibition in the first line.
