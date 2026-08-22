@@ -1570,8 +1570,21 @@ def write_standalone_runtime_publication(
         "seed_sha256": str(seed["content_sha256"]),
         "receipt_sha256": str(receipt["content_sha256"]),
     }
-    if paths["pointer"].is_symlink():
-        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is a symlink")
+    # Standalone-specific pointer custody preflight (F2): an existing pointer
+    # must be a regular non-symlink ``0600`` file before replacement; shared
+    # ``_atomic_write`` semantics stay unchanged.
+    try:
+        pointer_stat = paths["pointer"].lstat()
+    except FileNotFoundError:
+        pointer_stat = None  # Missing pointers remain creatable below.
+    except OSError as exc:
+        raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is unreadable") from exc
+    if pointer_stat is not None:
+        # ``lstat`` never follows the final component, so this rejects symlinks too.
+        if not stat.S_ISREG(pointer_stat.st_mode):
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer is not a regular file")
+        if stat.S_IMODE(pointer_stat.st_mode) != 0o600:
+            raise CliError(RUNTIME_ATTESTATION_ERROR, "standalone dispatch pointer permissions are unsafe")
     _atomic_write(paths["pointer"], pointer)
     # Re-read and validate every published object before handing it to a caller.
     published = load_standalone_runtime_dispatch_pointer(root)

@@ -667,6 +667,63 @@ def test_standalone_publication_rejects_unsafe_mode_reuse_without_advancing_poin
     assert stat.S_IMODE(paths["seed"].stat().st_mode) == 0o600
     assert paths["pointer"].read_bytes() == pointer_before
 
+def test_standalone_publication_rejects_unsafe_existing_pointer_without_replacing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An existing dispatch pointer must be a regular 0600 file before replacement."""
+    seed, root, revision = _healthy_runtime_fixture(monkeypatch)
+    state, paths = _publish_healthy_state(tmp_path, monkeypatch, seed, root, revision)
+    pointer_before = paths["pointer"].read_bytes()
+    # Valid 0600 idempotent replacement stays byte-identical.
+    attestation.write_standalone_runtime_publication(
+        seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+    )
+    assert paths["pointer"].read_bytes() == pointer_before
+    # Permissive regular pointer: rejected without repair or replacement.
+    paths["pointer"].chmod(0o644)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert "permissions are unsafe" in excinfo.value.message
+    assert stat.S_IMODE(paths["pointer"].stat().st_mode) == 0o644  # never repaired
+    assert paths["pointer"].read_bytes() == pointer_before
+    # Symlinked pointer: fail-closed via path custody; never followed,
+    # replaced, or copied through.
+    paths["pointer"].chmod(0o600)
+    outside = tmp_path / "outside-pointer.json"
+    outside.write_bytes(pointer_before)
+    outside.chmod(0o600)
+    paths["pointer"].unlink()
+    paths["pointer"].symlink_to(outside)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert "resident launch path contains a symlink" in excinfo.value.message
+    assert paths["pointer"].is_symlink()  # symlink itself untouched
+    assert outside.read_bytes() == pointer_before
+    # Non-regular pointer (directory): rejected by the preflight itself.
+    paths["pointer"].unlink()
+    paths["pointer"].mkdir(mode=0o700)
+    with pytest.raises(CliError) as excinfo:
+        attestation.write_standalone_runtime_publication(
+            seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+        )
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert "not a regular file" in excinfo.value.message
+    assert paths["pointer"].is_dir()  # directory untouched, never replaced
+    assert list(paths["pointer"].iterdir()) == []
+    # Missing pointer remains creatable and lands as 0600 again.
+    paths["pointer"].rmdir()
+    attestation.write_standalone_runtime_publication(
+        seed=seed, seed_path=paths["seed"], root=root, generated_at=seed["generated_at"]
+    )
+    assert paths["pointer"].read_bytes() == pointer_before
+    assert stat.S_IMODE(paths["pointer"].stat().st_mode) == 0o600
 
 
 def test_standalone_publication_rejection_does_not_create_missing_siblings(
