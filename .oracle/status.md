@@ -9,3 +9,4 @@
 - Blockers: none in-run. Main-tree purge (bg_7) timed out mid-edit — post-run resolution owed to user.
 - STANDING ORDER (user): every 3 hours, deploy a subagent for a DEEP check-in — code quality, North Star alignment, progress efficiency, reported in depth to the user. Timer armed 2026-08-21 ~22:40Z; re-arm after each firing.
 - Mechanism: bash sleep clamps at 1h → hourly wake jobs. Deep subagent audit fires when now − last_deep_checkin ≥ 3h. LAST_DEEP_CHECKIN: 2026-08-21T22:45Z (standing order accepted). Next due ≈ 2026-08-22T01:45Z.
+- 2026-08-22: user directive "stealth all the way" — ALL remaining roles (oracle verdicts, triage, reviews, execution incl. former-Luna items) dispatch to openrouter:stealth/ox-alpha.
