@@ -18,6 +18,7 @@ import yaml
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
+    _default_generated_chain_yaml,
     _atomic_marker_write_command,
     _bootstrap_launch_command,
     _chain_anchor_uploads,
@@ -2092,6 +2093,23 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
 
+    # The default generated chain pins vendor=codex without a profile, which
+    # hits the known bare --vendor codex ergonomics gap (all-codex retired).
+    # Pin the sanctioned partnered-codex profile the way a canonical epic
+    # brief does, so the end-to-end upload/watchdog contract is exercised.
+    def _pinned_generated_chain_yaml(*, slug, base_branch, brief_names):
+        payload = _default_generated_chain_yaml(
+            slug=slug, base_branch=base_branch, brief_names=brief_names
+        )
+        for milestone in payload["milestones"]:
+            milestone["profile"] = "partnered-codex"
+        return payload
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._default_generated_chain_yaml",
+        _pinned_generated_chain_yaml,
+    )
+
     provider = _LaunchEpicProvider()
     rc = _run_launch_epic_wrapper(
         tmp_path,
@@ -2320,12 +2338,17 @@ def test_normalized_chain_upload_spec_materializes_preflight_phase_map(tmp_path:
 
 
 def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
+    # The vendor-synthesized "all-codex" profile was retired (its absence is
+    # pinned by test_gpt56_execution_policy); the sanctioned codex-vendor-locked
+    # successor is partnered-codex.  Vendor+depth expansion must match init
+    # semantics through that profile.
     chain_spec = chain_module.ChainSpec.from_dict(
         {
             "milestones": [
                 {
                     "label": "m1",
                     "idea": "idea.md",
+                    "profile": "partnered-codex",
                     "vendor": "codex",
                     "depth": "high",
                 }
@@ -2341,8 +2364,8 @@ def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
 
     phase_map = summary["milestones"][0]["resolved_phase_map"]
     assert phase_map["plan"] == "codex:gpt-5.6-sol:high"
-    assert phase_map["revise"] == "codex:gpt-5.6-sol:high"
-    assert phase_map["execute"] == "codex:gpt-5.6-sol:high"
+    assert phase_map["revise"] == "codex:gpt-5.6-luna:high"
+    assert phase_map["execute"] == "codex:gpt-5.6-sol:medium"
 
 
 def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> None:

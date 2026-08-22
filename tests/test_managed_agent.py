@@ -589,13 +589,12 @@ def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidenc
 
 
 @pytest.mark.parametrize("split_options", [False, True])
-def test_nested_hermes_launch_reenters_shared_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split_options: bool
+def test_nested_hermes_launch_notes_managed_env_and_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, split_options: bool
 ) -> None:
-    parent = spec(tmp_path, identity="nested-parent")
-    assert run_managed_command(parent) == 0
-    parent_manifest = manifest_path(tmp_path, parent)
-    parent_payload = json.loads(parent_manifest.read_text(encoding="utf-8"))
+    # The omp-backed launcher does not self-reexec under a parent managed run;
+    # it must note the managed env and dispatch through omp anyway.  Both fire
+    # option styles (split and `--opt=value`) must parse identically.
     prompt = tmp_path / "nested-prompt.md"
     prompt.write_text("research this", encoding="utf-8")
     launcher_path = (
@@ -606,11 +605,11 @@ def test_nested_hermes_launch_reenters_shared_manager(
     assert module_spec and module_spec.loader
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
-    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_RUN_ID", parent_payload["run_id"])
-    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_MANIFEST", str(parent_manifest))
+    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_RUN_ID", "run-nested-parent")
+    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_MANIFEST", str(tmp_path / "manifest.json"))
     monkeypatch.setenv(
         "ARNOLD_MANAGED_AGENT_ORIGIN",
-        json.dumps(parent_payload["launch_provenance"]),
+        json.dumps({"kind": "managed_agent", "identity": "nested-parent"}),
     )
     launcher_args = (
         [
@@ -631,19 +630,25 @@ def test_nested_hermes_launch_reenters_shared_manager(
         ]
     )
     monkeypatch.setattr(sys, "argv", launcher_args)
-    launched: list[str] = []
+    launched: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        launched.extend(command)
+        launched.append(list(command))
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/local/bin/omp")
 
-    assert module._automatic_managed_reexec() == 0
-    assert "automatic_research_subagent" in launched
-    assert str(parent_payload["run_id"]) in launched
-    assert "@managed-stdin@" in "\n".join(launched)
-    assert str(tmp_path.resolve()) in launched
+    module.main()
+
+    captured = capsys.readouterr()
+    assert "does not self-reexec" in captured.err
+    assert len(launched) == 1
+    command = launched[0]
+    assert "automatic_research_subagent" not in command
+    assert "--no-session" in command
+    assert "deepseek/deepseek-v4-pro" in command
+    assert command[-1] == "research this"
 
 
 def test_root_authority_ceiling_is_durable_and_inherited_by_child(

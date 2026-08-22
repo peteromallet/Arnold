@@ -24,10 +24,11 @@ def _load_launcher():
 
 
 def test_import_runtime_falls_through_incomplete_megaplan_namespace(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     # A project-local `megaplan/` directory without `megaplan.agent` must not
-    # mask the supported current Arnold runtime layout.
+    # break the omp-backed launcher: dispatch never imports a megaplan agent
+    # runtime, so the incomplete namespace is simply ignored.
     (tmp_path / "megaplan").mkdir()
     monkeypatch.syspath_prepend(str(tmp_path))
     for name in list(sys.modules):
@@ -35,8 +36,8 @@ def test_import_runtime_falls_through_incomplete_megaplan_namespace(
             monkeypatch.delitem(sys.modules, name, raising=False)
 
     launcher = _load_launcher()
-    agent, session_db, resolve_model = launcher._import_runtime()
+    exit_code = launcher.run(query="demo", omp_bin=str(tmp_path / "no-such-omp"))
 
-    assert agent.__name__ == "AIAgent"
-    assert session_db.__name__ == "SessionDB"
-    assert callable(resolve_model)
+    assert exit_code == 3
+    assert "omp CLI not found" in capsys.readouterr().err
+    assert not any(name == "megaplan.agent" for name in sys.modules)

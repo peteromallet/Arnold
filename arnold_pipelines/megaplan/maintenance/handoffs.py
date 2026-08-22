@@ -585,7 +585,9 @@ FROZEN_SCHEMA_DIGESTS: dict[str, str] = {
     "sources": "e2ece168591190c470d4eef10c824874724c83685e525074883d20f90889160b",
     "boundaries": "85e84195b5e6662f87effde7749ab70b791a12378d16b0bd6b0a626f5f8fac04",
     "observation": "62039424ae301dcb8dd0d6529523c5d16d577b556a560d79c4c98e884531f5b6",
-    "projections": "93ad5c99dd509ec5e323614f83f3332dc29130a025f25cac0ccb63f5823aa0b1",
+    #: Re-frozen after the G6.1 ApplyDisposition export restore (dfa13c786c)
+    #: touched projections.py; refresh driven by the reported drift.
+    "projections": "0f8831e9da338ae1c7f04e4c8e5ddc6a29789f8f80f7a13005de96283d15786b",
     "ledger": "f15027f711d4a2da5cc52ebd1347447cf49c6e30ceaf1eb6d53b6e530b317ce3",
     #: T10 compatibility facade module (replaces the old coherence algorithm).
     "authority.coherence": "d8a51d34e9607a849ebfb792f6db3ed6e2d92d459219789b85d8c2e2cac6b77e",

@@ -244,7 +244,8 @@ def test_supervisor_never_restarts_when_canonical_liveness_is_unknown(
 
     assert report["acted"] is False
     assert report["next_action"] == "blocked"
-    assert "UNKNOWN" in report["refused_reason"]
+    # Stale-bookkeeping refusal names the canonical liveness verdict it needs.
+    assert "canonical current-target liveness is not known" in report["refused_reason"]
     assert provider.commands == []
 
 

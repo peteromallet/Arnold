@@ -1,1 +1,1 @@
-/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/cloud_skill.md
+../../data/cloud_skill.md

@@ -2097,9 +2097,10 @@ def cutover_runtime_identity(
     """Thin wrapper: rebind runtime AND move engine_root atomically.
 
     Cutover CAS is import_root + generation interpreter. SHA-256 flags are
-    refused the same way :func:`rebind_runtime_identity` refuses them. Skip
-    when no chain runtime binding exists — the coordinator still owns
-    selector/marker publication.
+    refused the same way :func:`rebind_runtime_identity` refuses them. An
+    unbound chain (no persisted runtime identity — the T-0101b migrate
+    output) is refused before any mutation, exactly like a runtime rebind:
+    cutover must never silently no-op on a progressed chain.
     """
 
     metadata = dict(getattr(state, "metadata", {}) or {})
@@ -2115,11 +2116,11 @@ def cutover_runtime_identity(
     )
     persisted_identity = persisted_runtime_binding.get("current_identity")
     if not isinstance(persisted_identity, Mapping):
-        return {
-            "changed": False,
-            "skipped": "no_chain_runtime_binding",
-            "wrapper": "cutover_runtime_identity",
-        }
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"runtime {direction} refused: persisted runtime identity is "
+            "missing (T-0101b migrate must run before any cutover)",
+        )
     return rebind_runtime_identity(
         spec_path,
         state,

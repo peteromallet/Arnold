@@ -254,10 +254,46 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
 
 
 def _extract_wrapper_function(name: str) -> str:
+    """Extract one wrapper function, heredoc- and nested-def-aware.
+
+    The naive "first column-0 ``}`` line" cut truncates any wrapper whose
+    body embeds a ``<<'PY'`` heredoc containing a column-0 ``}`` (e.g. a
+    Python dict literal) or a nested column-0 function definition
+    (``launch_chain_tick`` has both). Walk the text line by line: skip
+    heredoc bodies entirely, track column-0 nested function definitions,
+    and close only on the parent function's own column-0 ``}``.
+    """
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
-    end = text.index("\n}\n", start) + 3
-    return text[start:end]
+    heredoc_re = re.compile(r"(?<![<])<<(-)?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+    nested_def_re = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*\s*\(\)\s*\{\s*")
+    pos = start
+    nested_defs = 0
+    heredoc_terms: list[tuple[str, bool]] = []
+    first_line = True
+    while True:
+        eol = text.find("\n", pos)
+        if eol == -1:
+            raise ValueError(f"unterminated wrapper function: {name}")
+        line = text[pos:eol]
+        nxt = eol + 1
+        if heredoc_terms:
+            term, dash_strip_tabs = heredoc_terms[-1]
+            if (line.lstrip("\t") if dash_strip_tabs else line) == term:
+                heredoc_terms.pop()
+        else:
+            if first_line:
+                first_line = False
+            elif line and not line[0].isspace() and nested_def_re.match(line):
+                nested_defs += 1
+            for match in heredoc_re.finditer(line):
+                heredoc_terms.append((match.group(3), match.group(1) == "-"))
+            if line == "}":
+                if nested_defs:
+                    nested_defs -= 1
+                else:
+                    return text[start:nxt]
+        pos = nxt
 
 
 def _extract_watchdog_embedded_program(function_name: str, marker: str) -> str:
@@ -12394,8 +12430,14 @@ repair_unintended_stop() { : > "$DISPATCH_PATH"; }
     assert "\tobserve\tliveness_unknown\t" in report_path.read_text(encoding="utf-8")
 
 
-def test_meta_repair_marker_and_pgid_helpers(tmp_path: Path) -> None:
-    """meta_dispatch_marker_path, meta_pgid_path, meta_dispatch_marker_set/clear work correctly."""
+def test_meta_repair_marker_and_pgid_helpers(tmp_path, capsys) -> None:
+    """meta_dispatch_marker_path, meta_pgid_path, meta_dispatch_marker_set/clear work correctly.
+
+    T4.1 contract: without a minted MutationCapability the clear is
+    observe-only — it emits the typed audit line through the wrapper's own
+    ``log`` seam and leaves the marker in place; with the capability present
+    it removes marker and pgid files.
+    """
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
 
@@ -12406,13 +12448,21 @@ def test_meta_repair_marker_and_pgid_helpers(tmp_path: Path) -> None:
             _extract_wrapper_function("meta_dispatch_marker_set"),
             _extract_wrapper_function("meta_dispatch_marker_clear"),
             f"MARKER_DIR={str(marker_dir)!r}",
+            # Wrapper-owned log seam (never the ambient /usr/bin/log).
+            'log() { printf \'%s\\n\' "$*" >> "$AUDIT_LOG"; }',
+            'AUDIT_LOG=' + str(tmp_path / "audit.log"),
+            "",
             "META_PATH=$(meta_dispatch_marker_path demo)",
             'echo "MARKER=$META_PATH"',
             "PGID_PATH=$(meta_pgid_path demo)",
             'echo "PGID=$PGID_PATH"',
             "meta_dispatch_marker_set demo managed-run /tmp/manifest.json",
             "test -f \"$META_PATH\" && echo MARKER_EXISTS",
+            # Observe-only clear without a minted capability.
             "meta_dispatch_marker_clear demo",
+            "test -f \"$META_PATH\" && echo MARKER_PRESERVED_WITHOUT_CAPABILITY",
+            # Authoritative clear with the capability present.
+            "MUTATION_CAPABILITY_PRESENT=1 meta_dispatch_marker_clear demo",
             "test ! -f \"$META_PATH\" && echo MARKER_CLEARED",
         ]
     )
@@ -12428,7 +12478,13 @@ def test_meta_repair_marker_and_pgid_helpers(tmp_path: Path) -> None:
     assert any("MARKER=" in line and ".meta-dispatch" in line for line in lines), f"stdout: {result.stdout}"
     assert any("PGID=" in line and ".meta-pgid" in line for line in lines), f"stdout: {result.stdout}"
     assert "MARKER_EXISTS" in lines, f"stdout: {result.stdout}"
+    assert "MARKER_PRESERVED_WITHOUT_CAPABILITY" in lines, f"stdout: {result.stdout}"
     assert "MARKER_CLEARED" in lines, f"stdout: {result.stdout}"
+    audit = (tmp_path / "audit.log").read_text()
+    assert (
+        "meta dispatch marker clear observe-only without minted "
+        "MutationCapability session=demo" in audit
+    ), audit
 
 
 def test_repair_data_maintenance_runs_cleanup_once_and_updates_index(tmp_path: Path) -> None:

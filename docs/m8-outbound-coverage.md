@@ -28,6 +28,7 @@ existing ratchet cross-references, and closure argument when applicable.
 | 8 | `arnold/pipelines/evidence_pack/steps.py:714` | `run` (EmitAttestationStep) | Attestation payload (Mapping) | Tested via `tests/arnold/pipelines/evidence_pack/test_steps.py` | Attestation schema validation | `ATTESTATION_SCHEMA` |
 | 9 | `arnold/pipeline/model_seam.py:1008` | `_audit_capture_payload` | Step payload (Mapping) | Tested via `tests/arnold/pipeline/test_steps.py` pipeline model-seam capture tests | Generalized pipeline capture audit gate | `schema` resolved from invocation metadata |
 | 10 | `arnold/pipelines/megaplan/handlers/finalize.py` | `_validate_finalize_payload` | Finalize worker payload (Mapping) | Tested via `tests/test_handlers_finalize.py` and `tests/test_calibration_routing.py` | C4 finalize input-time chokepoint binding — schema-expressible checks delegated here; residual semantic checks remain in `_finalize_semantic_postcheck` | `_FINALIZE_INPUT_SCHEMA` (module-level input-time schema subset) |
+| 11 | `arnold_pipelines/megaplan/workers/omp.py:1081` | `_reject_unknown_schema_fields` | Parsed omp step payload (Mapping) | Tested via omp worker strict-schema tests | Local-strict omp worker: exact parsed file validated against `additionalProperties: false` before the step runs | `strict_schema` (canonical step schema) |
 | 11 | `arnold/pipeline/native/start_from_path.py:170` | `_validate_injected_state` | Injected native state | Native start-path validation | Native boundary gate | resolved schema |
 | 12 | `arnold/pipelines/evidence_pack/verifier.py:163` | `_validate_payload` | Legacy evidence-pack payload | Evidence-pack verifier coverage | Legacy compatibility boundary | verifier schema |
 | 13 | `arnold_pipelines/evidence_pack/verifier.py:163` | `_validate_payload` | Evidence-pack payload | Evidence-pack verifier coverage | Canonical package boundary | verifier schema |
@@ -83,6 +84,7 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 20 | `arnold_pipelines/megaplan/orchestration/critique_runtime.py:1523` | `handle_revise` | Revise payload | Critique revise tests | Revise output audit | revise payload |
 | 21 | `arnold_pipelines/megaplan/workers/_impl.py:2624` | `_recover_payload_from_candidates` | Worker recovery payload | Worker tests | Worker recovery audit | step payload |
 | 22 | `arnold_pipelines/megaplan/workers/shannon_stream.py:1266` | `run_shannon_stream_step` | Stream worker payload | Shannon stream tests | Stream output audit | step payload |
+| 23 | `.tmp_remote_r5/execute_candidate.py:1142` | `handle_execute` | Stub review payload | Committed remote-r5 execution candidate scratch — audited identically to the canonical execute handler it mirrors | Execute stub-review audit in the candidate tree | `"review"`, `stub_review` |
 
 ### Test Call Sites
 
@@ -118,6 +120,7 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 15 | `arnold_pipelines/megaplan/steps/agent.py:91` | `run` | Agent step output | Pipeline agent tests | Canonical agent chokepoint | worker invocation/output |
 | 16 | `arnold_pipelines/megaplan/workers/_impl.py:3507` | `_run_codex_step_uncapped` | Codex output | Worker integration tests | Canonical worker capture | invocation/output |
 | 17 | `arnold_pipelines/megaplan/workers/_impl.py:3703` | `_run_codex_step_uncapped` | Codex fallback output | Worker integration tests | Canonical worker fallback capture | invocation/output |
+| 18 | `arnold_pipelines/megaplan/workers/omp.py:1448` | `run_omp_step` | Model output (str \| Mapping) | Tested via omp worker integration tests | OMP worker capture chokepoint | `invocation`, `model_output` |
 | 18 | `arnold_pipelines/megaplan/workers/_impl.py:4005` | `run_codex_prep_step` | Codex prep output | Worker prep tests | Canonical prep capture | invocation/output |
 | 19 | `arnold_pipelines/megaplan/workers/hermes.py:2403` | `_run_attempt` | Hermes output | Hermes worker tests | Canonical Hermes capture | invocation/output |
 | 20 | `arnold_pipelines/megaplan/workers/hermes.py:2428` | `_run_attempt` | Hermes Codex-path output | Hermes worker tests | Canonical Hermes fallback capture | invocation/output |
@@ -157,9 +160,9 @@ For other steps, performs legacy required-keys validation only.
 
 | Function | Production Sites | Test Sites | Orphans | Status |
 |----------|-----------------|------------|---------|--------|
-| `validate_payload_against_schema` | 10 | 9 | 0 | Covered |
-| `audit_step_payload` | 10 | 2 | 0 | Covered |
-| `capture_step_output` | 11 | 7 | 0 | Covered |
+| `validate_payload_against_schema` | 11 | 9 | 0 | Covered |
+| `audit_step_payload` | 23 | 2 | 0 | Covered |
+| `capture_step_output` | 18 | 7 | 0 | Covered |
 | `validate_payload` | 1 | 0 | 1 | **FAIL** — live orphan |
 
 ### Known Residual Functions

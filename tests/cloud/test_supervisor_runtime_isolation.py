@@ -57,7 +57,11 @@ python3 -c 'import sys; print(sys.executable)'
     )
     result = subprocess.run(["bash", "-c", script], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    assert Path(result.stdout.strip()).resolve() == Path(sys.executable).resolve()
+    # arnold_supervisor_runtime_init emits a startup attestation JSON line
+    # before the probe output; the resolved interpreter is the last line.
+    probe_output = [line for line in result.stdout.splitlines() if line.strip()]
+    assert json.loads(probe_output[0])["success"] is True
+    assert Path(probe_output[-1]).resolve() == Path(sys.executable).resolve()
 
 
 def test_runtime_library_forces_safe_path_against_shadow_cwd(tmp_path: Path) -> None:
@@ -86,9 +90,11 @@ PYTHONPATH="{str(REPO_ROOT)}:${{PYTHONPATH:-}}" python3 -c 'import arnold_pipeli
     )
     assert result.returncode == 0, result.stderr
     assert "SHADOWED_CWD_IMPORT" not in result.stdout
-    stdout_lines = result.stdout.strip().splitlines()
-    assert stdout_lines[0].startswith(str(REPO_ROOT / "arnold_pipelines"))
-    assert stdout_lines[1] != ""
+    # The startup attestation JSON line precedes the probe's two lines.
+    stdout_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert json.loads(stdout_lines[0])["success"] is True
+    assert stdout_lines[1].startswith(str(REPO_ROOT / "arnold_pipelines"))
+    assert stdout_lines[2] != ""
 
 
 def test_runtime_library_pins_selected_source_for_downstream_python(tmp_path: Path) -> None:
@@ -123,7 +129,11 @@ python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
 
     assert result.returncode == 0, result.stderr
     assert "AMBIENT_EDITABLE_IMPORT" not in result.stdout
-    assert result.stdout.strip().startswith(str(REPO_ROOT / "arnold_pipelines"))
+    # Skip the startup attestation JSON line; the import must pin to the
+    # selected source checkout.
+    probe_output = [line for line in result.stdout.splitlines() if line.strip()]
+    assert json.loads(probe_output[0])["success"] is True
+    assert probe_output[-1].startswith(str(REPO_ROOT / "arnold_pipelines"))
 
 
 def test_unprepared_ambient_install_never_impersonates_isolated_runtime(

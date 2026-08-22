@@ -120,11 +120,11 @@ def test_chain_start_without_binding_never_refreshes_remote_git() -> None:
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=' not in command
     assert "isolated_chain_runtime_binding_drift: missing runtime manifest pin" in command
     assert "isolated_chain_runtime_binding_drift: manifest lacks runtime_root" in command
-    assert "isolated_chain_runtime_binding_drift: manifest lacks runtime identity" in command
-    # T-0301: the generation-interpreter gate (proof completeness +
-    # executable check) runs before the provenance check, and the launch
-    # executes under the generation interpreter — no ambient python, no
-    # editable-install fallback.
+    # T-0301 / G4-001: the persisted SHA is telemetry only — the runtime
+    # identity gate is the generation interpreter (proof completeness +
+    # executable check, before the provenance probe); there is no
+    # --expected-revision pass anymore.
+    assert "--expected-revision" not in command
     assert "manifest lacks dependency generation interpreter" in command
     assert "dependency generation interpreter not executable" in command
     assert 'PYTHONPATH="$ENGINE_DIR"' in command

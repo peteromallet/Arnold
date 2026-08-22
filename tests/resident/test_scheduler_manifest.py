@@ -275,6 +275,7 @@ class _FakeStore:
         self.updated: list[tuple[str, dict[str, Any]]] = []
         self.events: list[dict[str, Any]] = []
         self.created: list[dict[str, Any]] = []
+        self.jobs: dict[str, Any] = {}
 
     def update_scheduled_job(
         self,
@@ -302,6 +303,9 @@ class _FakeStore:
         limit: int = 50,
     ) -> list[Any]:
         return []
+
+    def load_scheduled_job(self, job_id: str) -> Any:
+        return self.jobs.get(job_id)
 
     def log_system_event(self, **fields: Any) -> None:
         self.events.append(fields)

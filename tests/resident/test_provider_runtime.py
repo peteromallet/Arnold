@@ -217,60 +217,27 @@ def test_claude_launcher_persists_new_sessions_and_resumes_exact_id() -> None:
         )
 
 
-def test_hermes_launcher_hydrates_persisted_history_on_resume(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+def test_hermes_launcher_refuses_resume_session_explicitly(
+    tmp_path: Path, capsys
 ) -> None:
+    # The omp-backed launcher has no persisted-history hydration: resuming an
+    # omp session is `omp --resume`, so --resume-session must fail closed with
+    # a clear message instead of silently dropping history.
     launcher = _load_launcher("launch_hermes_agent.py")
-    session_id = "resident_0123456789abcdef"
-    captured: dict[str, object] = {}
-
-    class _DB:
-        def get_session(self, requested):
-            return {"id": requested}
-
-        def get_messages_as_conversation(self, requested):
-            assert requested == session_id
-            return [{"role": "user", "content": "prior turn"}]
-
-    class _Agent:
-        def __init__(self, **kwargs):
-            self.session_id = kwargs["session_id"]
-            self.context_compressor = type(
-                "Compressor",
-                (),
-                {"threshold_tokens": 1000, "context_length": 2000, "threshold_percent": 0.5},
-            )()
-            self._print_fn = None
-
-        def run_conversation(self, **kwargs):
-            captured.update(kwargs)
-            return {
-                "final_response": "RESUMED",
-                "messages": [],
-                "output_tokens": 2,
-            }
-
-    monkeypatch.setattr(launcher, "_load_hermes_env", lambda: None)
-    monkeypatch.setattr(launcher, "_prefer_legacy_megaplan_distribution", lambda: None)
-    monkeypatch.setattr(launcher, "_add_fallback_megaplan_paths", lambda: None)
-    monkeypatch.setattr(
-        launcher,
-        "_import_runtime",
-        lambda: (_Agent, _DB, lambda model: (model, {"api_key": "present"})),
-    )
-
     metadata = tmp_path / "metadata.json"
-    launcher.run(
+
+    exit_code = launcher.run(
         model="zhipu:glm-5.2",
         query="new turn",
-        session_id=session_id,
+        session_id="resident_0123456789abcdef",
         resume_session=True,
         metadata_file=str(metadata),
         project_dir=str(tmp_path),
     )
 
-    assert captured["conversation_history"] == [
-        {"role": "user", "content": "prior turn"}
-    ]
-    assert json.loads(metadata.read_text())["session_id"] == session_id
-    assert "RESUMED" in capsys.readouterr().out
+    captured = capsys.readouterr()
+
+    assert exit_code == 8
+    assert "--resume-session" in captured.err
+    assert "not supported" in captured.err
+    assert not metadata.exists()

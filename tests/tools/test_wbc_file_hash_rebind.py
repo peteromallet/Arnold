@@ -100,14 +100,46 @@ def test_tampering_still_detected():
         )
 
 
-def test_rebound_commit_is_ancestor_of_head():
-    """The rebound commit must be an ancestor of HEAD."""
+
+def _durable_mainline() -> str:
+    """Return the durable mainline ref for historical-anchor ancestry checks.
+
+    Task/epic worktrees legitimately fork from the mainline before pinned
+    historical anchors, so "ancestor of HEAD" is topology-dependent and fails
+    on such lines even though the anchor is intact.  Ancestry of the durable
+    mainline (origin/main, falling back to a local main) is the stable
+    reference the invariant actually protects.
+    """
+    for ref in ("origin/main", "main"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            return ref
+    pytest.fail("no durable mainline ref (origin/main or main) available")
+
+
+def test_rebound_commit_is_ancestor_of_mainline():
+    """The rebound commit must remain on the durable mainline.
+
+    Task worktrees fork before this commit, so HEAD ancestry is
+    topology-dependent; origin/main is the stable reference.
+    """
     result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", REBOUND_COMMIT, "HEAD"],
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            REBOUND_COMMIT,
+            _durable_mainline(),
+        ],
         cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, (
-        f"Rebound commit {REBOUND_COMMIT[:8]} is not an ancestor of HEAD"
+        f"Rebound commit {REBOUND_COMMIT[:8]} is not an ancestor of the "
+        f"durable mainline"
     )
 
 

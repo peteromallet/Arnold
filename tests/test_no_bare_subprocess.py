@@ -49,6 +49,13 @@ FROZEN_LEDGER: dict[str, str] = {
     "arnold_pipelines/megaplan/resident/subagent.py": (
         "canonical resident managed-supervisor and provider-worker launch seams"
     ),
+    # T7.2f: fan-out subagent launcher (omp-backed rewrite).  The Popen with
+    # start_new_session=True IS the tool's contract — one detached process
+    # group per fan child, pidfile-recorded; _kill_tree signals that group.
+    "arnold_pipelines/megaplan/skills/subagent-launcher/fan.py": (
+        "fan-out child launch and process-group termination (one detached "
+        "session per fanned subagent, pidfile-custodied)"
+    ),
 }
 
 

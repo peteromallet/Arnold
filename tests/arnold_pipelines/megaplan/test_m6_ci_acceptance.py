@@ -29,6 +29,25 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+def _durable_mainline() -> str:
+    """Return the durable mainline ref for historical-anchor ancestry checks.
+
+    Task/epic worktrees legitimately fork from the mainline before the
+    committed M6 proof artifacts were generated, so "ancestor of HEAD" is
+    topology-dependent; origin/main (falling back to local main) is the
+    stable reference those proofs actually protect.
+    """
+    for ref in ("origin/main", "main"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            return ref
+    pytest.fail("no durable mainline ref (origin/main or main) available")
+
 TOOLS_DIR = REPO_ROOT / "tools"
 EVIDENCE_DIR = REPO_ROOT / "evidence"
 REPLAY_DIR = EVIDENCE_DIR / "replay"
@@ -740,27 +759,26 @@ class TestFullPipelineIntegration:
         data = json.loads(result.stdout)
         committed_head = data.get("repository_head", "")
 
-        git_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        actual_head = git_result.stdout.strip()
-
-        # Committed HEAD must be an ancestor of (or equal to) actual HEAD.
-        # Exact match is impossible when the evidence is committed because
-        # the commit SHA depends on the file content.
+        # Committed HEAD must be an ancestor of (or equal to) the durable
+        # mainline.  Task worktrees fork before the proof was generated, so
+        # HEAD ancestry is topology-dependent; exact match is impossible when
+        # the evidence is committed because the commit SHA depends on the
+        # file content.
         ancestor_result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", committed_head, actual_head],
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                committed_head,
+                _durable_mainline(),
+            ],
             cwd=str(REPO_ROOT),
             capture_output=True,
             timeout=10,
         )
         assert ancestor_result.returncode == 0, (
             f"Committed proof index HEAD {committed_head} is not an "
-            f"ancestor of git HEAD {actual_head}"
+            f"ancestor of the durable mainline"
         )
 
     def test_committed_prerequisite_head_matches_git_order_independent(
@@ -794,24 +812,24 @@ class TestFullPipelineIntegration:
             current_head_check[0]["head"] if current_head_check else ""
         )
 
-        git_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        actual_head = git_result.stdout.strip()
-
+        # Task worktrees fork before the verification was generated, so the
+        # committed head is checked against the durable mainline, not the
+        # topology-dependent task HEAD.
         ancestor_result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", committed_head, actual_head],
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                committed_head,
+                _durable_mainline(),
+            ],
             cwd=str(REPO_ROOT),
             capture_output=True,
             timeout=10,
         )
         assert ancestor_result.returncode == 0, (
             f"Committed prerequisite verification HEAD {committed_head} "
-            f"is not an ancestor of git HEAD {actual_head}"
+            f"is not an ancestor of the durable mainline"
         )
 
 

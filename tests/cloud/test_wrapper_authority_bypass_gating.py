@@ -64,6 +64,10 @@ RETIRED_AUTHORITY_RISK_IDS = {
     "T29-BYPASS-184",
     "T29-BYPASS-189",
     "T29-BYPASS-190",
+    # The merged-PR needs-human clear was deleted with the T4.1
+    # MutationCapability seal (a9d76caa4a): merged-PR custody is now decided
+    # by the typed canonical-mutation path, so this bypass has no call site.
+    "T29-BYPASS-193",
     "T29-BYPASS-196",
     "T29-BYPASS-199",
     "T29-BYPASS-207",
