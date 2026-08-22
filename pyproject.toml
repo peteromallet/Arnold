@@ -83,7 +83,10 @@ dependencies = [
 ]
 
 [project.scripts]
-arnold = "arnold.cli:main"
+# `arnold` is the conversational agent (omp named-agent runner); the
+# workflow/operator tooling moved to `megaplan`.
+arnold = "agentbox.arnold_agent:main"
+megaplan = "arnold.cli:main"
 agentbox = "agentbox.cli:main"
 
 [project.optional-dependencies]
