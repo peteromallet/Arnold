@@ -2,11 +2,11 @@
   "key": "test_shards_v1",
   "schema_version": "mrc.test-shards.v1",
   "frozen_at": "2026-08-22T01:43:42Z",
-  "frozen_by_task": "T7.1",
+  "refreshed_at": "2026-08-22T17:08:01Z",
   "refreshed_at": "2026-08-22T04:13:42Z",
-  "refreshed_note": "EVDIGEST-2 post-T7.1b delta: BF-001 (six-hour auditor MutationCapability fixture drift, 3 tests) was repaired by T7.1b commit 6c75652572, so its three shard9 inventory entries were removed and shard9's count corrected 4 -> 1 (expected exit unchanged at 1). The same card also repaired BF-002/BF-003 items inventoried under shard1 (repair_contract x5, zero_recovery x7, elapsed_wall_clock_v2 fixture); shard1's frozen counts are left untouched here pending owner refreeze — DEEP-CHECKIN-1 observed shard1 reconciling to 7 failed at T7.2 (3 progress_auditor + 4 env-dependent zero_recovery). Shard commands and expected exits are byte-unchanged; integration_head remains the freeze head a8058c22fd.",
-  "integration_head": "a8058c22fdc285db30b2e85d5aa8ab9268df6571",
-  "integration_head_short": "a8058c22fd",
+  "refreshed_note": "post-repair refreeze after T7.2e/f/g/h + GENROOT chain",
+  "integration_head": "4243cc13a96831c8e52cd672fbf5ca921cf662ec",
+  "integration_head_short": "4243cc13a9",
   "fce_baseline_head": "fce48030a82d4d35d9b4a5184e4c789792b9c172",
   "purpose": "Single source of truth for T7.2/T7.5 shard execution: the canonical nine-shard partition of the full pytest collection at integration HEAD, plus the Batch-1..6 focused-test completeness audit and the complete known-failure inventory that shard exit expectations account for.",
   "runner_contract": {
@@ -25,17 +25,17 @@
   },
   "full_collection": {
     "command": "python -m pytest --collect-only -q",
-    "collected": 21447,
+    "collected": 21466,
     "collection_errors": 0
   },
   "partition_method": "Deterministic greedy first-fit-decreasing over collected-per-file counts (sorted by count desc, path asc), capacity ceil(21447/9)=2384 per shard, shard9 pre-seeded with both originally-known failing files then filled with overflow; one rebalance pass moved files only when it strictly reduced the spread (none was needed). Files within each shard command are lexicographically sorted except the pinned first argument of shard7 (see known_landmines).",
   "union_proof": {
-    "sum_expected_collected": 21447,
-    "equals_full_collection": true,
+    "sum_expected_collected": 21459,
+    "equals_full_collection": false,
     "file_sets_pairwise_disjoint": true,
     "per_shard_collect_only_verified": {
       "shard1": {
-        "collected": 2383,
+        "collected": 2387,
         "exit": 0
       },
       "shard2": {
@@ -43,7 +43,7 @@
         "exit": 0
       },
       "shard3": {
-        "collected": 2383,
+        "collected": 2384,
         "exit": 0
       },
       "shard4": {
@@ -63,7 +63,7 @@
         "exit": 0
       },
       "shard8": {
-        "collected": 2383,
+        "collected": 2390,
         "exit": 0
       },
       "shard9": {
@@ -75,17 +75,17 @@
   },
   "balance": {
     "collected_per_shard": {
-      "shard1": 2383,
+      "shard1": 2387,
       "shard2": 2383,
-      "shard3": 2383,
+      "shard3": 2384,
       "shard4": 2383,
       "shard5": 2383,
       "shard6": 2383,
       "shard7": 2383,
-      "shard8": 2383,
+      "shard8": 2390,
       "shard9": 2383
     },
-    "spread": 0,
+    "spread": 7,
     "note": "balanced by collected-test count only; wall-clock runtime is NOT balanced"
   },
   "expectation_basis": {
@@ -106,7 +106,7 @@
     {
       "id": "shard1",
       "command": "set -o pipefail && python -m pytest -q tests/agentbox/test_tmux_restart_worker.py tests/arnold/workflow/test_attempt_ledger_store.py tests/arnold/workflow/test_boundary_compatibility_replay.py tests/arnold/workflow/test_boundary_templates.py tests/arnold/workflow/test_execution_attempt_ledger.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold_pipelines/megaplan/test_boundary_contracts.py tests/arnold_pipelines/megaplan/test_custody_contracts.py tests/arnold_pipelines/megaplan/test_feature_flags.py tests/arnold_pipelines/megaplan/test_handler_behaviors.py tests/arnold_pipelines/megaplan/test_semantic_health.py tests/cloud/test_meta_repair.py tests/cloud/test_progress_auditor.py tests/cloud/test_repair_contract.py tests/cloud/test_runtime_manifest.py tests/cloud/test_zero_recovery_canary.py 2>&1 | tee docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard1.stdout",
-      "expected_collected": 2383,
+      "expected_collected": 2387,
       "expected_exit": 1
     },
     {
@@ -118,7 +118,7 @@
     {
       "id": "shard3",
       "command": "set -o pipefail && python -m pytest -q tests/arnold/conformance/test_conformance.py tests/arnold/critique_ledger/test_semantic_loop.py tests/arnold/kernel/test_journal.py tests/arnold/pipeline/native/test_compiler.py tests/arnold/pipeline/native/test_persistence_file_backend.py tests/arnold/pipeline/test_media_cost.py tests/arnold/pipeline/test_registry.py tests/arnold/pipeline/test_step_io_envelope_boundary.py tests/arnold/pipelines/evidence_pack/test_verifier.py tests/arnold/workflow/test_boundary_conformance.py tests/arnold/workflow/test_durable_refs.py tests/arnold/workflow/test_ledger_migrations.py tests/arnold/workflow/test_ledger_payload_enforcement.py tests/arnold/workflow/test_machine_readable_ledger_traces.py tests/arnold/workflow/test_payload_policy.py tests/arnold_pipelines/megaplan/_core/test_projection_io.py tests/arnold_pipelines/megaplan/test_chain_execution_binding.py tests/arnold_pipelines/megaplan/test_custody_canary.py tests/arnold_pipelines/megaplan/test_human_gate_view.py tests/arnold_pipelines/megaplan/test_m6_ci_acceptance.py tests/arnold_pipelines/megaplan/test_m6_replay_fixtures.py tests/arnold_pipelines/megaplan/test_maintenance_efficiency_sources.py tests/arnold_pipelines/megaplan/test_north_star_actions_gate_revise.py tests/arnold_pipelines/megaplan/test_real_producer_boundary_fixtures.py tests/arnold_pipelines/megaplan/test_retention_fixtures.py tests/arnold_pipelines/megaplan/test_semantics_carrier.py tests/arnold_pipelines/megaplan/test_status_projection.py tests/arnold_pipelines/megaplan/test_strategy_migration.py tests/arnold_pipelines/megaplan/test_strategy_projection.py tests/arnold_pipelines/megaplan/test_task_splitter.py tests/cloud/test_repair_dispatch_identity.py tests/execute/test_m8a_execute_wiring.py tests/orchestration/test_critique_custody.py tests/test_chain_completion_guard.py 2>&1 | tee docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard3.stdout",
-      "expected_collected": 2383,
+      "expected_collected": 2384,
       "expected_exit": 0
     },
     {
@@ -148,7 +148,7 @@
     {
       "id": "shard8",
       "command": "set -o pipefail && python -m pytest -q tests/agentbox/test_cleanup.py tests/agentbox/test_config.py tests/agentbox/test_operations.py tests/agentbox/test_reset_notifications.py tests/agentbox/test_services.py tests/agentbox/test_version.py tests/agentbox/test_worktrees.py tests/arnold/agent/test_codex_adapter.py tests/arnold/agent/test_context_compressor.py tests/arnold/agent/test_managed_routing.py tests/arnold/conformance/workflow_manifest_runtime/test_golden_regression_rule.py tests/arnold/critique_ledger/test_cutover_isolated_fixture.py tests/arnold/critique_ledger/test_cutover_quiesce.py tests/arnold/critique_ledger/test_cutover_restore.py tests/arnold/critique_ledger/test_cutover_retire.py tests/arnold/critique_ledger/test_one_time_import_fixture.py tests/arnold/critique_ledger/test_projections.py tests/arnold/critique_ledger/test_readonly_isolation.py tests/arnold/execution/test_canonical_fixture.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_fixture_scenarios.py tests/arnold/execution/test_resume.py tests/arnold/execution/test_routing.py tests/arnold/kernel/test_artifact_store.py tests/arnold/kernel/test_artifacts.py tests/arnold/kernel/test_governor.py tests/arnold/kernel/test_ids.py tests/arnold/patterns/test_patterns.py tests/arnold/pipeline/native/test_hooks.py tests/arnold/pipeline/native/test_replay_consistency.py tests/arnold/pipeline/test_artifacts.py tests/arnold/pipeline/test_builder.py tests/arnold/pipeline/test_discovery_manifest.py tests/arnold/pipeline/test_fixture_arnold_only.py tests/arnold/pipeline/test_gradual_typing_additive.py tests/arnold/pipeline/test_model_seam_neutral.py tests/arnold/pipeline/test_profiles_opaque.py tests/arnold/pipeline/test_runner.py tests/arnold/pipeline/test_schema_registry.py tests/arnold/pipeline/test_step_io_handoff.py tests/arnold/pipeline/test_subpipeline_isolation.py tests/arnold/pipeline/test_token_cost.py tests/arnold/pipelines/evidence_pack/test_pipelines.py tests/arnold/pipelines/evidence_pack/test_resume.py tests/arnold/runtime/test_envelope.py tests/arnold/security/test_mcp_git_broker.py tests/arnold/supervisor/test_project_lease_store.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_ledger_payload_store.py tests/arnold/workflow/test_m10_step9_action_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_static_scans.py tests/arnold/workflow/test_wbc_queries.py tests/arnold_pipelines/megaplan/chain/test_reconcile_terminal_finalizer.py tests/arnold_pipelines/megaplan/pipelines/test_creative_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_select_tournament_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_writing_panel_strict_native_contract.py tests/arnold_pipelines/megaplan/test_anchors.py tests/arnold_pipelines/megaplan/test_auto_native_dispatch.py tests/arnold_pipelines/megaplan/test_auto_replan_cursor.py tests/arnold_pipelines/megaplan/test_baseline_deferral_kind_guard.py tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py tests/arnold_pipelines/megaplan/test_cli_projection.py tests/arnold_pipelines/megaplan/test_content_types.py tests/arnold_pipelines/megaplan/test_control_binding.py tests/arnold_pipelines/megaplan/test_critique_complexity_routing.py tests/arnold_pipelines/megaplan/test_discord_dm.py tests/arnold_pipelines/megaplan/test_gate_schema_derived_contract.py tests/arnold_pipelines/megaplan/test_human_gate_state_tokens.py tests/arnold_pipelines/megaplan/test_import_smoke.py tests/arnold_pipelines/megaplan/test_install_sync.py tests/arnold_pipelines/megaplan/test_key_pool_codex.py tests/arnold_pipelines/megaplan/test_legacy_baseline_inventory.py tests/arnold_pipelines/megaplan/test_legacy_deterministic_phase_admission.py tests/arnold_pipelines/megaplan/test_m8a_finalize_wiring.py tests/arnold_pipelines/megaplan/test_m8a_replay_report.py tests/arnold_pipelines/megaplan/test_maintenance_daily_runner_t62.py tests/arnold_pipelines/megaplan/test_maintenance_operations.py tests/arnold_pipelines/megaplan/test_operator_pause.py tests/arnold_pipelines/megaplan/test_override_matrix_cutover.py tests/arnold_pipelines/megaplan/test_override_wbc_transitions.py tests/arnold_pipelines/megaplan/test_package.py tests/arnold_pipelines/megaplan/test_path_resume_proofs.py tests/arnold_pipelines/megaplan/test_phase_result_classify.py tests/arnold_pipelines/megaplan/test_phase_runtime_incarnation.py tests/arnold_pipelines/megaplan/test_phase_wbc_adoption.py tests/arnold_pipelines/megaplan/test_phase_wbc_resume_lifecycle.py tests/arnold_pipelines/megaplan/test_provider_contract_failure_routing.py tests/arnold_pipelines/megaplan/test_reconcile_execute_wiring.py tests/arnold_pipelines/megaplan/test_s6_override_control.py tests/arnold_pipelines/megaplan/test_s6_override_routing.py tests/arnold_pipelines/megaplan/test_s6_traceability_evidence.py tests/arnold_pipelines/megaplan/test_state_delta.py tests/arnold_pipelines/megaplan/test_state_reconciliation.py tests/arnold_pipelines/megaplan/test_strategy_cli_e2e.py tests/arnold_pipelines/megaplan/test_wbc_runtime_producer.py tests/arnold_pipelines/run_authority/test_contracts.py tests/arnold_pipelines/run_authority/test_journal.py tests/arnold_pipelines/run_authority/test_reducer.py tests/arnold_pipelines/test_template_e2e.py tests/bakeoff/test_cli.py tests/bakeoff/test_worktree.py tests/cli/test_m5_workflow_cli.py tests/cloud/test_babysitter_goal.py tests/cloud/test_babysitter_spec.py tests/cloud/test_babysitter_transport.py tests/cloud/test_cloud_status.py tests/cloud/test_cloud_status_custody.py tests/cloud/test_current_target_attestation.py tests/cloud/test_editable_install_sync.py tests/cloud/test_incident_notification_ux.py tests/cloud/test_liveness_lease.py tests/cloud/test_m1_containment_acceptance.py tests/cloud/test_maintenance_unblocker.py tests/cloud/test_phase_command_shim.py tests/cloud/test_probe_records.py tests/cloud/test_progress_auditor_controller.py tests/cloud/test_progress_auditor_liveness.py tests/cloud/test_progress_auditor_ownership.py tests/cloud/test_recovery_topology_surfaces.py tests/cloud/test_repair_enqueue_producers.py tests/cloud/test_repair_occurrence_identity_v2.py tests/cloud/test_repair_request_hooks.py tests/cloud/test_resident_only_recovery.py tests/cloud/test_resident_reconcile_down.py tests/cloud/test_resolver_enforcement.py tests/cloud/test_runtime_census.py tests/cloud/test_runtime_provenance.py tests/cloud/test_simple_fixer.py tests/cloud/test_status_snapshot_projection.py tests/cloud/test_t41_mutation_capability.py tests/docs/test_m5_generated_scans.py tests/execute/test_durable_evidence_accounting.py tests/execute/test_envelope_flag.py tests/execute/test_execute_frontier_authority.py tests/execute/test_merge_scope.py tests/execute/test_tier_binding.py tests/fixtures/state_json/test_load_resume.py tests/m10/test_recovery_verifier.py tests/m11/test_acceptance_receipt.py tests/m11/test_lifecycle_correction.py tests/m11/test_no_debt_receipt.py tests/m11/test_runtime_receipt.py tests/m8/benchmark/test_gate.py tests/m8/regression/test_budget_suspension_regressions.py tests/m8/regression/test_route_bypass.py tests/m8/test_outbound_coverage_catalog.py tests/m8/test_wbc_acceptance_suites.py tests/m9/test_negative_authority_source.py tests/megaplan/test_authority_divergence_recovery.py tests/orchestration/test_blast_radius_floor.py tests/orchestration/test_codex_output_schema.py tests/orchestration/test_finalize_authority.py tests/orchestration/test_full_suite_backstop.py tests/orchestration/test_parallel_critique.py tests/orchestration/test_selector_node_existence.py tests/profiles/test_pipeline_profiles.py tests/resident/test_codex_cli_runner.py tests/resident/test_context_tree.py tests/resident/test_daily_observation_handler.py tests/resident/test_delegation_provenance.py tests/resident/test_discord_reaction_lifecycle.py tests/resident/test_discord_reply_chain.py tests/resident/test_discord_voice_transcription.py tests/resident/test_git_custody.py tests/resident/test_knowledge_context.py tests/resident/test_provider_aware_launch.py tests/resident/test_provider_runtime.py tests/resident/test_scheduler_manifest.py tests/resident/test_status_tree.py tests/resident/test_subagent_terminal_delivery_contract.py tests/resident/test_task_routing.py tests/resident/test_vp_todo_state.py tests/resident/test_vp_todo_sweep_handler.py tests/run_authority/test_dependency_closure.py tests/test_pipeline_discovery_integrity.py tests/test_pipelines_new.py tests/test_plan_completed_atomic_gate.py tests/test_run_maintenance_consolidation_agent.py tests/test_state_reader_audit.py tests/test_tickets_search.py tests/test_validate_maintenance_runtime_consolidation_evidence.py tests/test_worker_exports_compatibility.py 2>&1 | tee docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards/shard8.stdout",
-      "expected_collected": 2383,
+      "expected_collected": 2390,
       "expected_exit": 0
     },
     {
