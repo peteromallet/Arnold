@@ -1,0 +1,3419 @@
+..............................F......................................... [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+....................................................................ssss [ 12%]
+sssssssssssssssss....................................................... [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 36%]
+........................................................................ [ 39%]
+.........................FF............................................. [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................F............................................... [ 66%]
+........................................................................ [ 69%]
+......................................................................F. [ 72%]
+......FF................................................................ [ 75%]
+...........F.......F.F..FFF............................................. [ 78%]
+........................................................................ [ 81%]
+.....s.................................................................. [ 84%]
+...............................F...............F........................ [ 87%]
+....FFFFFF..............FFFFFFFFFFFFFFFF.FFF............................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................F............... [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces _
+
+    def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces() -> None:
+        forbidden_import_prefixes = ("arnold.pipelines", "arnold_pipelines")
+        allowed_megaplan_bridges = {
+            "notify.py": {
+                "arnold_pipelines.megaplan.resident.discord",
+                "arnold_pipelines.megaplan.resident.runtime",
+                "arnold_pipelines.megaplan.store",
+            },
+            "reset_notifications.py": {
+                "arnold_pipelines.megaplan.resident.provenance",
+                "arnold_pipelines.megaplan.resident.runtime",
+            },
+            "resident_profile.py": {
+                "arnold_pipelines.megaplan.resident.reply_chain",
+                "arnold_pipelines.megaplan.resident.timezone",
+            },
+        }
+    
+    
+        for path in AGENTBOX_ROOT.glob("*.py"):
+            module = ast.parse(path.read_text(), filename=str(path))
+            imports: list[str] = []
+            for node in ast.walk(module):
+                if isinstance(node, ast.Import):
+                    imports.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imports.append(node.module)
+    
+            megaplan_imports = {
+                imported
+                for imported in imports
+                if any(
+                    imported == prefix or imported.startswith(f"{prefix}.")
+                    for prefix in forbidden_import_prefixes
+                )
+            }
+            if path.name in allowed_megaplan_bridges:
+                assert megaplan_imports <= allowed_megaplan_bridges[path.name]
+            else:
+>               assert not megaplan_imports, (
+                    f"{path} imports a Megaplan package surface: {sorted(megaplan_imports)}"
+    
+                )
+E               AssertionError: /private/tmp/mrc-gold-checkout/agentbox/services.py imports a Megaplan package surface: ['arnold_pipelines.megaplan.cloud.runtime_manifest']
+E               assert not {'arnold_pipelines.megaplan.cloud.runtime_manifest'}
+
+tests/agentbox/test_package_smoke.py:153: AssertionError
+_______ test_execute_repairs_missing_user_action_gate_for_stale_finalize _______
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_execute_repairs_missing_u0')
+
+    def test_execute_repairs_missing_user_action_gate_for_stale_finalize(
+        tmp_path: Path,
+    ) -> None:
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        plan_dir = project_dir / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        state = {
+            "config": {
+                "mode": "code",
+                "project_dir": str(project_dir),
+            }
+        }
+        finalize_data = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Introduce no new failures vs the recorded baseline;",
+                    "depends_on": [],
+                    "status": "skipped",
+                    "reviewer_verdict": "deferred_baseline_unavailable",
+                },
+                {
+                    "id": "m7-06-runtime-deletion-target-purge",
+                    "description": "Delete runtime targets.",
+                    "depends_on": ["T1"],
+                    "status": "blocked",
+                },
+            ],
+            "sense_checks": [],
+            "watch_items": [],
+            "user_actions": [
+                {
+                    "id": "ua-01-reclassify-deletion-targets",
+                    "description": "Confirm the deletion contract is authoritative.",
+                    "phase": "before_execute",
+                    "blocks_task_ids": ["m7-06-runtime-deletion-target-purge"],
+                    "rationale": "Needed before destructive deletion proceeds.",
+                    "requires_human_only_reason": "Maintainer decision.",
+                }
+            ],
+        }
+    
+>       repaired = _repair_missing_user_action_gate(finalize_data, plan_dir, state)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/arnold_pipelines/megaplan/test_engine_fix_ports.py:940: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/execute/batch.py:302: in _repair_missing_user_action_gate
+    _publish_execute_finalize(
+arnold_pipelines/megaplan/execute/batch.py:224: in _publish_execute_finalize
+    publish_finalize_update(
+arnold_pipelines/megaplan/orchestration/finalize_authority.py:486: in publish_finalize_update
+    expected = _token_for(payload)
+               ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+payload = {'sense_checks': [{'executor_note': '', 'id': 'SC1', 'question': 'Were all before_execute user_actions either programm...act is authoritative.', 'id': 'ua-01-reclassify-deletion-targets', 'phase': 'before_execute', ...}], 'watch_items': []}
+
+    def _token_for(payload: dict[str, Any]) -> FinalizeReadToken:
+        registered = _READ_TOKENS.get(id(payload))
+        if registered is None or registered[0] is not payload:
+>           raise FinalizeCASMismatch(
+                "finalize payload has no read token; load it through "
+                "load_finalize_for_update or supply an explicit initial-publish token"
+            )
+E           arnold_pipelines.megaplan.orchestration.finalize_authority.FinalizeCASMismatch: finalize payload has no read token; load it through load_finalize_for_update or supply an explicit initial-publish token
+
+arnold_pipelines/megaplan/orchestration/finalize_authority.py:243: FinalizeCASMismatch
+_________ test_structured_plan_payload_normalizes_to_canonical_schema __________
+
+    def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
+        normalized = _normalize_plan_capture_payload(
+            {
+                "title": "Ship Fix",
+                "overview": "Do the work.",
+                "steps": [{"title": "Patch", "substeps": [{"instruction": "Edit file"}]}],
+                "questions": [{"question": "Any blockers?"}],
+                "success_criteria": [{"criterion": "Tests pass", "priority": "must"}],
+                "assumptions": [{"assumption": "Repo is clean"}],
+                "changed_surfaces": ["src/thing.py"],
+                "test_blast_radius": {
+                    "strategy": "scoped",
+                    "selectors": [{"kind": "path", "value": "tests/test_thing.py"}],
+                },
+            }
+        )
+    
+        assert "# Ship Fix" in normalized["plan"]
+>       assert "### Step 1: Patch" in normalized["plan"]
+E       AssertionError: assert '### Step 1: Patch' in '# Ship Fix\n\n## Overview\n\nDo the work.\n\n## Step 1: Patch\n\n1. Edit file'
+
+tests/arnold_pipelines/megaplan/test_engine_fix_ports.py:977: AssertionError
+___________ test_scatter_worker_unit_passes_subprocess_wbc_dispatch ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f33f850>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_scatter_worker_unit_passe0')
+
+    def test_scatter_worker_unit_passes_subprocess_wbc_dispatch(monkeypatch, tmp_path: Path) -> None:
+        state = {
+            "name": "plan-T18",
+            "iteration": 1,
+            "config": {"project_dir": str(tmp_path)},
+            "meta": {"current_invocation_id": "inv-T18-subprocess"},
+            "active_step": {"run_id": "run-T18-subprocess"},
+        }
+        activate_phase_wbc(
+            state=state,  # type: ignore[arg-type]
+            plan_dir=tmp_path,
+            step="review",
+            agent="reviewer",
+        )
+        unit = WorkerUnit(
+            step="critique_evaluator",
+            resolved=_resolved_mode(),
+            prompt="prompt",
+            output_path=tmp_path / "out.json",
+            configured_specs=["codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"],
+            attempt_index=1,
+            attempted_specs=["codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"],
+            failed_attempt_reasons=["availability"],
+            fallback_trigger="availability",
+        )
+        captured: dict[str, object] = {}
+    
+        def fake_run_step_with_worker(*args, **kwargs):  # type: ignore[no-untyped-def]
+            captured["wbc_dispatch"] = kwargs.get("wbc_dispatch")
+            return (
+                WorkerResult(
+                    payload={"ok": True},
+                    raw_output="{}",
+                    duration_ms=1,
+                    cost_usd=0.0,
+                ),
+                "claude",
+                "persistent",
+                True,
+            )
+    
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan._core.worker_fanout._render_unit_prompt",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.workers.run_step_with_worker",
+            fake_run_step_with_worker,
+        )
+        index, unit_result, *_ = scatter_worker_unit(
+            7,
+            unit,
+            state=state,  # type: ignore[arg-type]
+            plan_dir=tmp_path,
+            root=tmp_path,
+            args=argparse.Namespace(phase_model=[]),
+            isolation="process",
+        )
+    
+        assert index == 7
+        assert isinstance(unit_result, WorkerUnitResult)
+        spec = captured["wbc_dispatch"]
+        assert spec is not None
+        assert spec.writer_id == "megaplan.worker_dispatch.subprocess"
+>       assert spec.expected_source_version.endswith(
+            ":subprocess:review:claude:claude-sonnet-4-6:high:1"
+        )
+E       AssertionError: assert False
+E        +  where False = <built-in method endswith of str object at 0x118a7d110>(':subprocess:review:claude:claude-sonnet-4-6:high:1')
+E        +    where <built-in method endswith of str object at 0x118a7d110> = 'review:inv-T18-subprocess:subprocess:review:claude:claude-sonnet-4-6:high:1:out.json'.endswith
+E        +      where 'review:inv-T18-subprocess:subprocess:review:claude:claude-sonnet-4-6:high:1:out.json' = CommonWorkerDispatchSpec(facade=<arnold_pipelines.megaplan.custody.wbc_runtime.WbcRuntimeProducerFacade object at 0x10...r:subprocess:1:out.json:complete', failure_source_lookup_key='review:critique_evaluator:subprocess:1:out.json:failure').expected_source_version
+
+tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py:296: AssertionError
+_________ test_watchdog_continues_to_successor_after_stale_goal_closes _________
+
+    def test_watchdog_continues_to_successor_after_stale_goal_closes() -> None:
+        wrapper = (
+            Path(__file__).parents[2]
+            / "arnold_pipelines"
+            / "megaplan"
+            / "cloud"
+            / "wrappers"
+            / "arnold-watchdog"
+        ).read_text(encoding="utf-8")
+    
+        launch = wrapper[wrapper.index("launch_chain_tick() {") :]
+        launch = launch[: launch.index("\n}\n")]
+        progressed = launch.index("progressed)")
+>       terminal_check = launch.index("session_terminal_status", progressed)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: substring not found
+
+tests/cloud/test_repair_goal.py:306: ValueError
+_ test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity __
+
+    def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity() -> None:
+        wrapper = (
+            Path(__file__).parents[2]
+            / "arnold_pipelines"
+            / "megaplan"
+            / "cloud"
+            / "wrappers"
+            / "arnold-watchdog"
+        ).read_text(encoding="utf-8")
+    
+>       assert 'inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"' in wrapper
+E       assert 'inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"' in '#!/usr/bin/env bash\nset -uo pipefail\n\n# The resident watchdog can outlive multiple source activations.  Bash parse... scan_once\n  scan_rc=$?\n  if [[ "$ONCE" == "--once" ]]; then\n    exit "$scan_rc"\n  fi\n  sleep "$INTERVAL"\ndone\n'
+
+tests/cloud/test_repair_goal.py:524: AssertionError
+____ test_watchdog_preserves_goal_control_action_through_dispatch_decision _____
+
+    def test_watchdog_preserves_goal_control_action_through_dispatch_decision() -> None:
+        wrapper = (
+            Path(__file__).parents[2]
+            / "arnold_pipelines"
+            / "megaplan"
+            / "cloud"
+            / "wrappers"
+            / "arnold-watchdog"
+        ).read_text(encoding="utf-8")
+    
+        status = wrapper[wrapper.index("repair_goal_watchdog_status() {") :]
+        status = status[: status.index("\n}\n")]
+        assert 'control_action = str(evaluation.get("control_action") or "")' in status
+        assert "{reason}\\t{control_action}" in status
+    
+        launch = wrapper[wrapper.index("launch_chain_tick() {") :]
+        launch = launch[: launch.index("\n}\n")]
+        assert "repair_goal_control_action" in launch
+        assert 'if [[ "$repair_goal_control_action" == "preserve_live" ]]' in launch
+        preserve = launch.index('if [[ "$repair_goal_control_action" == "preserve_live" ]]')
+>       dispatch = launch.index("repair_unintended_stop", preserve)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: substring not found
+
+tests/cloud/test_repair_goal.py:563: ValueError
+__________ test_shell_supervisors_pin_validated_absolute_interpreter ___________
+
+    def test_shell_supervisors_pin_validated_absolute_interpreter() -> None:
+        expected = {
+            "arnold-watchdog": "watchdog",
+            "arnold-repair-loop": "repair-loop",
+            "arnold-meta-repair-loop": "meta-repair-loop",
+            "arnold-progress-auditor": "progress-auditor",
+        }
+        for wrapper, component in expected.items():
+>           text = _text(wrapper)
+                   ^^^^^^^^^^^^^^
+
+tests/cloud/test_supervisor_runtime_isolation.py:33: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cloud/test_supervisor_runtime_isolation.py:22: in _text
+    return (WRAPPERS / name).read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop'
+
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+________ test_repair_trigger_and_systemd_use_absolute_supervisor_python ________
+
+    def test_repair_trigger_and_systemd_use_absolute_supervisor_python() -> None:
+>       trigger = _text("arnold-repair-trigger")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_supervisor_runtime_isolation.py:242: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cloud/test_supervisor_runtime_isolation.py:22: in _text
+    return (WRAPPERS / name).read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger'
+
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+___________ test_supervisor_queue_binds_current_plan_not_chain_spec ____________
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_supervisor_queue_binds_cu0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x3011ef350>
+
+    def test_supervisor_queue_binds_current_plan_not_chain_spec(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker_dir = tmp_path / "markers"
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        workspace = tmp_path / "workspace"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        marker_dir.mkdir()
+        chain_dir.mkdir(parents=True)
+        spec = workspace / "chain.yaml"
+        spec.write_text("milestones: []\n", encoding="utf-8")
+        (marker_dir / "demo.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo",
+                    "workspace": str(workspace),
+                    "remote_spec": str(spec),
+                    "run_kind": "chain",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (chain_dir / "chain.json").write_text(
+            json.dumps(
+                {
+                    "current_plan_name": "current-quality-plan",
+                    "last_state": "blocked",
+                    "metadata": {"chain_spec_path": str(spec)},
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_dir = workspace / ".megaplan" / "plans" / "current-quality-plan"
+        state_dir.mkdir(parents=True)
+        (state_dir / "state.json").write_text(
+            json.dumps({"name": "current-quality-plan", "current_state": "blocked"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            current_target,
+            "resolve_current_target",
+            lambda *args, **kwargs: {
+                "current_refs": {"current_plan_name": "current-quality-plan"}
+            },
+        )
+    
+        result = enqueue_supervisor_repair_request(
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session="demo",
+            workspace=workspace,
+            remote_spec=str(spec),
+            run_kind="chain",
+            reason="durable_review_quality_block:review_quality_blocked_unknown",
+            log_path=str(tmp_path / "supervise.log"),
+        )
+    
+>       request = result["request"]
+                  ^^^^^^^^^^^^^^^^^
+E       KeyError: 'request'
+
+tests/cloud/test_supervisor_runtime_isolation.py:356: KeyError
+__ test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work ___
+
+    def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() -> None:
+>       meta = _text("arnold-meta-repair-loop")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_supervisor_runtime_isolation.py:460: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cloud/test_supervisor_runtime_isolation.py:22: in _text
+    return (WRAPPERS / name).read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop'
+
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+______ test_supervisor_wrappers_do_not_launch_python_before_runtime_init _______
+
+    def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:
+        expected = {
+            "arnold-watchdog": "watchdog",
+            "arnold-repair-loop": "repair-loop",
+            "arnold-meta-repair-loop": "meta-repair-loop",
+            "arnold-progress-auditor": "progress-auditor",
+        }
+        python_re = re.compile(r"(?m)^[^#\n]*\bpython3\b")
+        for wrapper, component in expected.items():
+            text = _text(wrapper)
+            readiness = text.index(f"arnold_supervisor_runtime_init {component} ")
+            first_python = python_re.search(text)
+            assert first_python is not None
+>           assert first_python.start() > readiness
+E           assert 3769 > 5316
+E            +  where 3769 = <built-in method start of re.Match object at 0x12e024840>()
+E            +    where <built-in method start of re.Match object at 0x12e024840> = <re.Match object; span=(3769, 3804), match='  _manifest_runtime_root="$(python3'>.start
+
+tests/cloud/test_supervisor_runtime_isolation.py:486: AssertionError
+________ test_timeout_bypasses_use_absolute_safe_supervisor_interpreter ________
+
+    def test_timeout_bypasses_use_absolute_safe_supervisor_interpreter() -> None:
+>       repair = _text("arnold-repair-loop")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cloud/test_supervisor_runtime_isolation.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/cloud/test_supervisor_runtime_isolation.py:22: in _text
+    return (WRAPPERS / name).read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop'
+
+/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/pathlib.py:1044: FileNotFoundError
+______________ TestCompletenessAndFreshness.test_no_unlisted_sink ______________
+
+self = <tests.m10.test_git_mutation_inventory.TestCompletenessAndFreshness object at 0x10dde7990>
+inventory = {'generated_by': 'tests/m10/generate_git_mutation_inventory.py', 'milestone': 'M10', 'module_sink_index': {'arnold_pip...nit__.py', 'arnold_pipelines/megaplan/chain/git_ops.py', 'arnold_pipelines/megaplan/chain/target_rebind.py', ...], ...}
+scanned_sink_ids = {'arnold_pipelines/megaplan/auto.py::_publish_done_plan', 'arnold_pipelines/megaplan/bakeoff/merge.py::_git_apply', 'a.../megaplan/bakeoff/worktree.py::create_worktree', 'arnold_pipelines/megaplan/bakeoff/worktree.py::remove_worktree', ...}
+
+    def test_no_unlisted_sink(self, inventory: dict, scanned_sink_ids: set) -> None:
+        listed = {row["sink_id"] for row in inventory["sinks"]}
+        missing = scanned_sink_ids - listed
+>       assert not missing, f"unlisted Git mutation sinks: {sorted(missing)}"
+E       AssertionError: unlisted Git mutation sinks: ['arnold_pipelines/megaplan/chain/__init__.py::_publish_reconcile_selection', 'arnold_pipelines/megaplan/chain/git_ops.py::_cherry_pick_reconcile_selection']
+E       assert not {'arnold_pipelines/megaplan/chain/__init__.py::_publish_reconcile_selection', 'arnold_pipelines/megaplan/chain/git_ops.py::_cherry_pick_reconcile_selection'}
+
+tests/m10/test_git_mutation_inventory.py:82: AssertionError
+_________ TestScannerConsistency.test_scanned_count_matches_inventory __________
+
+self = <tests.m10.test_git_mutation_inventory.TestScannerConsistency object at 0x10ddfd290>
+inventory = {'generated_by': 'tests/m10/generate_git_mutation_inventory.py', 'milestone': 'M10', 'module_sink_index': {'arnold_pip...nit__.py', 'arnold_pipelines/megaplan/chain/git_ops.py', 'arnold_pipelines/megaplan/chain/target_rebind.py', ...], ...}
+scanned_sink_ids = {'arnold_pipelines/megaplan/auto.py::_publish_done_plan', 'arnold_pipelines/megaplan/bakeoff/merge.py::_git_apply', 'a.../megaplan/bakeoff/worktree.py::create_worktree', 'arnold_pipelines/megaplan/bakeoff/worktree.py::remove_worktree', ...}
+
+    def test_scanned_count_matches_inventory(self, inventory: dict, scanned_sink_ids: set) -> None:
+        listed = {row["sink_id"] for row in inventory["sinks"]}
+>       assert listed == scanned_sink_ids
+E       AssertionError: assert {'arnold_pipe...orktree', ...} == {'arnold_pipe...orktree', ...}
+E         
+E         Extra items in the right set:
+E         'arnold_pipelines/megaplan/chain/git_ops.py::_cherry_pick_reconcile_selection'
+E         'arnold_pipelines/megaplan/chain/__init__.py::_publish_reconcile_selection'
+E         Use -v to get more diff
+
+tests/m10/test_git_mutation_inventory.py:190: AssertionError
+______ test_run_persists_exact_self_hashed_custody_and_terminal_receipts _______
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_run_persists_exact_self_h0')
+
+    def test_run_persists_exact_self_hashed_custody_and_terminal_receipts(
+        tmp_path: Path,
+    ) -> None:
+        root, revision, tree = _git_project(
+            tmp_path, "def test_green():\n    assert True\n"
+        )
+>       receipt = _run(tmp_path, root, revision, tree, kind="full_suite")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/m11/test_validation_shard_runner.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+______________ test_xfail_is_counted_as_debt_not_silently_passed _______________
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_xfail_is_counted_as_debt_0')
+
+    def test_xfail_is_counted_as_debt_not_silently_passed(tmp_path: Path) -> None:
+        root, revision, tree = _git_project(
+            tmp_path,
+            "import pytest\n"
+            "@pytest.mark.xfail(reason='owned debt')\n"
+            "def test_debt():\n"
+            "    assert False\n",
+        )
+>       receipt = _run(
+            tmp_path, root, revision, tree, kind="semantic_carrier"
+        )
+
+tests/m11/test_validation_shard_runner.py:131: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_____ test_skip_reason_rendering_is_counted_without_losing_exact_inventory _____
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_skip_reason_rendering_is_0')
+
+    def test_skip_reason_rendering_is_counted_without_losing_exact_inventory(
+        tmp_path: Path,
+    ) -> None:
+        root, revision, tree = _git_project(
+            tmp_path,
+            "import pytest\n"
+            "@pytest.mark.skip(reason='why is this dependency unavailable')\n"
+            "def test_a_deliberately_long_name_that_overflows_pytest_status_columns():\n"
+            "    assert False\n",
+        )
+>       receipt = _run(
+            tmp_path, root, revision, tree, kind="semantic_carrier"
+        )
+
+tests/m11/test_validation_shard_runner.py:150: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_________ test_xpass_is_counted_as_debt_without_losing_exact_inventory _________
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_xpass_is_counted_as_debt_0')
+
+    def test_xpass_is_counted_as_debt_without_losing_exact_inventory(
+        tmp_path: Path,
+    ) -> None:
+        root, revision, tree = _git_project(
+            tmp_path,
+            "import pytest\n"
+            "@pytest.mark.xfail(reason='unexpected recovery')\n"
+            "def test_unexpected_pass():\n"
+            "    assert True\n",
+        )
+>       receipt = _run(
+            tmp_path, root, revision, tree, kind="semantic_carrier"
+        )
+
+tests/m11/test_validation_shard_runner.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly _
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_parametrized_nodeids_with0')
+
+    def test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly(
+        tmp_path: Path,
+    ) -> None:
+        root, revision, tree = _git_project(
+            tmp_path,
+            "import pytest\n"
+            "@pytest.mark.parametrize(\n"
+            "    'value',\n"
+            "    [1, 2, 3],\n"
+            "    ids=[\n"
+            "        'contains spaces',\n"
+            "        'literal PASSED marker :: inside',\n"
+            "        'punctuation !@#$%^&*()={}+,.',\n"
+            "    ],\n"
+            ")\n"
+            "def test_opaque_nodeid(value):\n"
+            "    assert value > 0\n",
+        )
+>       receipt = _run(tmp_path, root, revision, tree, kind="full_suite")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/m11/test_validation_shard_runner.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+____________ test_inherited_test_provenance_preserves_frozen_nodeid ____________
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_inherited_test_provenance0')
+
+    def test_inherited_test_provenance_preserves_frozen_nodeid(
+        tmp_path: Path,
+    ) -> None:
+        root, revision, tree = _git_project(
+            tmp_path,
+            "from conformance_base import ConformanceBase\n"
+            "\n"
+            "class TestConcreteConformance(ConformanceBase):\n"
+            "    pass\n",
+            extra_files={
+                "conformance_base.py": (
+                    "class ConformanceBase:\n"
+                    "    def test_inherited_contract(self):\n"
+                    "        assert True\n"
+                )
+            },
+        )
+>       receipt = _run(tmp_path, root, revision, tree, kind="full_suite")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/m11/test_validation_shard_runner.py:227: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/m11/test_validation_shard_runner.py:67: in _run
+    return run_validation_shard(
+scripts/run_m11_validation_shard.py:406: in run_validation_shard
+    revision, runtime = _assert_identity(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _assert_identity(
+        *,
+        root: Path,
+        expected_revision: str,
+        expected_tree: str,
+        expected_python_sha256: str,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        revision = _git_identity(root)
+        runtime = _runtime_identity(root)
+        if revision != {
+            "git_commit": expected_revision,
+            "git_tree": expected_tree,
+        }:
+            raise ValidationShardError("revision/tree differs from frozen binding")
+        if runtime["python_sha256"] != expected_python_sha256:
+            raise ValidationShardError("interpreter hash differs from frozen binding")
+        if runtime["safe_path"] is not True:
+>           raise ValidationShardError("runner must be invoked with Python -P")
+E           scripts.run_m11_validation_shard.ValidationShardError: runner must be invoked with Python -P
+
+scripts/run_m11_validation_shard.py:265: ValidationShardError
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+__ test_replay_oracle_captures_legacy_action_without_requiring_routed_parity ___
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_replay_oracle_captures_le0/root'), project_dir=...res_le0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2ff240>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e193f10>
+
+    @pytest.mark.replay_oracle
+    def test_replay_oracle_captures_legacy_action_without_requiring_routed_parity(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:182: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_replay_oracle_captures_le0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+______ test_default_force_proceed_captures_canonical_custody_and_artifact ______
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_default_force_proceed_cap0/root'), project_dir=...ed_cap0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x3011dfe20>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e2bda90>
+
+    @pytest.mark.replay_oracle
+    def test_default_force_proceed_captures_canonical_custody_and_artifact(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:227: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_default_force_proceed_cap0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+___ test_routed_simple_actions_match_legacy_replay_oracle[add-note-<lambda>] ___
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat0/root'), project_dir=...ns_mat0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2045e0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f1bbbd0>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat0')
+action = 'add-note', invoke = <function <lambda> at 0x10df06840>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+____ test_routed_simple_actions_match_legacy_replay_oracle[abort-<lambda>] _____
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat1/root'), project_dir=...ns_mat1/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2fcea0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e26ee90>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat1')
+action = 'abort', invoke = <function <lambda> at 0x10df06a20>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat1/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_routed_simple_actions_match_legacy_replay_oracle[set-robustness-<lambda>] _
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat2/root'), project_dir=...ns_mat2/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e204cc0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e361850>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat2')
+action = 'set-robustness', invoke = <function <lambda> at 0x10df07f60>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat2/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_routed_simple_actions_match_legacy_replay_oracle[set-profile-<lambda>] __
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat3/root'), project_dir=...ns_mat3/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2047c0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e383410>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat3')
+action = 'set-profile', invoke = <function <lambda> at 0x10df640e0>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat3/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+__ test_routed_simple_actions_match_legacy_replay_oracle[set-model-<lambda>] ___
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat4/root'), project_dir=...ns_mat4/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e071bc0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e1bec90>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat4')
+action = 'set-model', invoke = <function <lambda> at 0x10df64180>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat4/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+__ test_routed_simple_actions_match_legacy_replay_oracle[set-vendor-<lambda>] __
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat5/root'), project_dir=...ns_mat5/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e302c00>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e528e90>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat5')
+action = 'set-vendor', invoke = <function <lambda> at 0x10df64220>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "add-note",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="routed oracle note",
+                ),
+            ),
+            (
+                "abort",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="abort",
+                    reason="operator abort reason",
+                ),
+            ),
+            (
+                "set-robustness",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-robustness",
+                    robustness="robust",
+                    reason="operator raised robustness",
+                ),
+            ),
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_simple_actions_match_legacy_replay_oracle(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:333: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_simple_actions_mat5/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+____ test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact _____
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from0/root'), project_dir=...d_from0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e207240>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f1d5590>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:384: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+___ test_routed_force_proceed_from_blocked_agent_availability_matches_legacy ___
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from1/root'), project_dir=...d_from1/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e206d40>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e369190>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from1')
+
+    @pytest.mark.replay_oracle
+    def test_routed_force_proceed_from_blocked_agent_availability_matches_legacy(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+    
+        def _prepare_blocked(fixture: PlanFixture) -> None:
+            handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            state = load_state(fixture.plan_dir)
+            state["current_state"] = STATE_BLOCKED
+            state["last_gate"] = {
+                "recommendation": "PROCEED",
+                "passed": False,
+                "preflight_results": {
+                    "project_dir_exists": True,
+                    "project_dir_writable": True,
+                    "success_criteria_present": True,
+                    "claude_available": False,
+                    "codex_available": False,
+                },
+            }
+            write_plan_state(fixture.plan_dir, mode="replace", state=state)
+    
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       _prepare_blocked(plan_fixture)
+
+tests/oracles/test_replay_oracle.py:468: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:449: in _prepare_blocked
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_from1/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_________ test_routed_force_proceed_strict_notes_guard_matches_legacy __________
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_stri0/root'), project_dir=...d_stri0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e072ca0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e584490>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_stri0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_force_proceed_strict_notes_guard_matches_legacy(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+    
+        def _prepare_strict_note(fixture: PlanFixture) -> None:
+            handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            state = load_state(fixture.plan_dir)
+            state["config"]["strict_notes"] = True
+            write_plan_state(fixture.plan_dir, mode="replace", state=state)
+            handle_override(
+                fixture.root,
+                fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="operator note must be absorbed",
+                ),
+            )
+    
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       _prepare_strict_note(plan_fixture)
+
+tests/oracles/test_replay_oracle.py:538: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:522: in _prepare_strict_note
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_force_proceed_stri0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+________ test_routed_recover_blocked_prereq_retry_budget_matches_legacy ________
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_pr0/root'), project_dir=...ked_pr0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e207a60>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e346fd0>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_pr0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_recover_blocked_prereq_retry_budget_matches_legacy(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       _prepare_recoverable_prereq_blocked(
+            plan_fixture,
+            retry_budget=2,
+            timestamp=frozen_now,
+        )
+
+tests/oracles/test_replay_oracle.py:589: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:77: in _prepare_recoverable_prereq_blocked
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_pr0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+______________ test_routed_recover_blocked_quality_matches_legacy ______________
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_qu0/root'), project_dir=...ked_qu0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e204540>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f7c2f10>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_qu0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_recover_blocked_quality_matches_legacy(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan._core.io.now_utc", lambda: frozen_now)
+>       _prepare_recoverable_quality_blocked(plan_fixture)
+
+tests/oracles/test_replay_oracle.py:650: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:111: in _prepare_recoverable_quality_blocked
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_qu0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_______ test_routed_recover_blocked_unknown_phase_preserves_legacy_error _______
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_un0/root'), project_dir=...ked_un0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e204b80>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e358b50>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_un0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_recover_blocked_unknown_phase_preserves_legacy_error(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        def _prepare_unknown_phase(fixture: PlanFixture) -> None:
+            handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            state = load_state(fixture.plan_dir)
+            state["current_state"] = STATE_BLOCKED
+            state["resume_cursor"] = {"phase": "unknown-phase", "retry_strategy": "fresh_session"}
+            write_plan_state(fixture.plan_dir, mode="replace", state=state)
+    
+>       _prepare_unknown_phase(plan_fixture)
+
+tests/oracles/test_replay_oracle.py:710: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:704: in _prepare_unknown_phase
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_recover_blocked_un0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_____________ test_routed_resume_clarify_prep_only_matches_legacy ______________
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_resume_clarify_pre0/root'), project_dir=...fy_pre0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2053a0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e381910>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_resume_clarify_pre0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_resume_clarify_prep_only_matches_legacy(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+    
+        def _prepare_prep_clarification(fixture: PlanFixture) -> str:
+            handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            state = load_state(fixture.plan_dir)
+            set_active_step(state, step="prep", agent="prep", mode="test")
+            metadata = activate_phase_wbc(
+                state=state,
+                plan_dir=fixture.plan_dir,
+                step="prep",
+                agent="prep",
+            )
+            assert metadata is not None
+            state["current_state"] = STATE_AWAITING_HUMAN
+            state["clarification"] = {
+                "intent_summary": "Prep needs a human answer.",
+                "questions": ["Which auth library?"],
+                "source": "prep",
+            }
+            suspend_phase_wbc(
+                state=state,
+                plan_dir=fixture.plan_dir,
+                step="prep",
+                checkpoint={"clarification": state["clarification"]},
+                cursor={"resume_action": "override:resume-clarify"},
+                agent="prep",
+            )
+            state["meta"]["notes"].append(
+                {"timestamp": frozen_now, "note": "Use platform auth.", "source": "user"}
+            )
+            write_plan_state(fixture.plan_dir, mode="replace", state=state)
+            return str(metadata["invocation_id"])
+    
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       legacy_invocation_id = _prepare_prep_clarification(plan_fixture)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/oracles/test_replay_oracle.py:791: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:759: in _prepare_prep_clarification
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_resume_clarify_pre0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_____________ test_routed_replan_matches_legacy_structural_rewrite _____________
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_replan_matches_leg0/root'), project_dir=...es_leg0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e207f60>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12e173d10>
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_replan_matches_leg0')
+
+    @pytest.mark.replay_oracle
+    def test_routed_replan_matches_legacy_structural_rewrite(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        frozen_now = "2026-01-02T03:04:05Z"
+    
+        def _prepare_critiqued_with_note(fixture: PlanFixture) -> None:
+            handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+            handle_override(
+                fixture.root,
+                fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="add-note",
+                    note="rework the deployment structure",
+                ),
+            )
+    
+        monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+        monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+>       _prepare_critiqued_with_note(plan_fixture)
+
+tests/oracles/test_replay_oracle.py:884: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/oracles/test_replay_oracle.py:871: in _prepare_critiqued_with_note
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_replan_matches_leg0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_routed_config_mutations_surface_stale_version_conflicts[set-profile-<lambda>] _
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s0/root'), project_dir=...ions_s0/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2e1bc0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f1c6690>
+action = 'set-profile', invoke = <function <lambda> at 0x10df64900>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_config_mutations_surface_stale_version_conflicts(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:980: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s0/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_routed_config_mutations_surface_stale_version_conflicts[set-model-<lambda>] _
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s1/root'), project_dir=...ions_s1/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e2e2fc0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f6a2350>
+action = 'set-model', invoke = <function <lambda> at 0x10df649a0>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_config_mutations_surface_stale_version_conflicts(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:980: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s1/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+_ test_routed_config_mutations_surface_stale_version_conflicts[set-vendor-<lambda>] _
+arnold_pipelines.megaplan.custody.common_worker_dispatch._FailureEvidenceRecorded: failure evidence recorded
+
+The above exception was the direct cause of the following exception:
+
+plan_fixture = PlanFixture(root=PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s2/root'), project_dir=...ions_s2/root/.megaplan/plans/fixture-plan'), make_args=<function make_args_factory.<locals>._make_args at 0x12e37a0c0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10dc0d590>
+action = 'set-vendor', invoke = <function <lambda> at 0x10df64a40>
+
+    @pytest.mark.replay_oracle
+    @pytest.mark.parametrize(
+        ("action", "invoke"),
+        [
+            (
+                "set-profile",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-profile",
+                    profile="all-deepseek-pro",
+                    reason="operator switched profile",
+                ),
+            ),
+            (
+                "set-model",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-model",
+                    phase="critique",
+                    model="gpt-5.3-codex",
+                    effort="high",
+                    reason="operator repinned model",
+                ),
+            ),
+            (
+                "set-vendor",
+                lambda fixture: fixture.make_args(
+                    plan=fixture.plan_name,
+                    override_action="set-vendor",
+                    phase="critique",
+                    vendor="claude",
+                    reason="operator swapped vendor",
+                ),
+            ),
+        ],
+    )
+    def test_routed_config_mutations_surface_stale_version_conflicts(
+        plan_fixture: PlanFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        action,
+        invoke,
+    ) -> None:
+>       handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+tests/oracles/test_replay_oracle.py:980: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+arnold_pipelines/megaplan/handlers/plan.py:167: in handle_plan
+    worker, agent, mode, refreshed = _pkg._run_worker(
+arnold_pipelines/megaplan/handlers/shared.py:414: in _run_worker
+    return worker_module.run_step_with_worker(
+arnold_pipelines/megaplan/workers/_impl.py:7505: in run_step_with_worker
+    dispatch_result = wbc_dispatch.run(_dispatch_with_binding)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:119: in run
+    raise exc from _FailureEvidenceRecorded(terminal)
+arnold_pipelines/megaplan/custody/common_worker_dispatch.py:107: in run
+    worker_result = dispatch(start)
+                    ^^^^^^^^^^^^^^^
+arnold_pipelines/megaplan/workers/_impl.py:7477: in _dispatch_with_binding
+    return _run_step_with_worker_legacy(
+arnold_pipelines/megaplan/workers/_impl.py:7667: in _run_step_with_worker_legacy
+    require_bound_chain_spec(root, plan_name=plan_dir.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/mrc-gold-basetemp/shard7/test_routed_config_mutations_s2/root')
+
+    def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+        """Fail closed unless exactly one canonical execution binding owns the plan."""
+    
+        matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+>           raise CliError(
+                "worker_launch_preflight_mismatch",
+                f"Canonical worker runtime binding is {status} for plan "
+                f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+                extra={
+                    "canonical_runtime_binding": {
+                        "status": status,
+                        "plan_name": plan_name,
+                        "candidates": [str(path.resolve(strict=False)) for path in matches],
+                    }
+                },
+            )
+E           arnold_pipelines.megaplan.types.CliError: Canonical worker runtime binding is missing for plan fixture-plan: 0 candidates.
+
+arnold_pipelines/megaplan/chain/execution_binding.py:2183: CliError
+---------------------------- Captured stderr setup -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+----------------------------- Captured stderr call -----------------------------
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+________________ test_real_dispatch_seams_use_shared_supervisor ________________
+
+    def test_real_dispatch_seams_use_shared_supervisor() -> None:
+        root = Path(__file__).resolve().parents[1]
+        watchdog = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog").read_text()
+        auditor = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor").read_text()
+        hermes = (
+            root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        ).read_text()
+    
+        assert "--run-kind automatic_watchdog_source_repair" in watchdog
+        assert "--run-kind automatic_progress_audit_agent" in auditor
+>       assert "automatic_research_subagent" in hermes
+E       assert 'automatic_research_subagent' in '#!/usr/bin/env python3\n"""Launch a hermes-backed agentic subagent through omp (Oh My Pi).\n\nThis script is the omp-...tall with `pip install fire`.")\n        sys.exit(1)\n    fire.Fire(run)\n\n\nif __name__ == "__main__":\n    main()\n'
+
+tests/test_managed_agent.py:718: AssertionError
+=============================== warnings summary ===============================
+tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py::test_cross_family_quota_advances
+  /Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/huggingface_hub/file_download.py:1727: DeprecationWarning: hf_xet.download_files() is deprecated. Use XetSession().new_file_download_group().start_download_file() instead.
+    xet_get(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/agentbox/test_package_smoke.py::test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces
+FAILED tests/arnold_pipelines/megaplan/test_engine_fix_ports.py::test_execute_repairs_missing_user_action_gate_for_stale_finalize
+FAILED tests/arnold_pipelines/megaplan/test_engine_fix_ports.py::test_structured_plan_payload_normalizes_to_canonical_schema
+FAILED tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py::test_scatter_worker_unit_passes_subprocess_wbc_dispatch
+FAILED tests/cloud/test_repair_goal.py::test_watchdog_continues_to_successor_after_stale_goal_closes
+FAILED tests/cloud/test_repair_goal.py::test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity
+FAILED tests/cloud/test_repair_goal.py::test_watchdog_preserves_goal_control_action_through_dispatch_decision
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_shell_supervisors_pin_validated_absolute_interpreter
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_repair_trigger_and_systemd_use_absolute_supervisor_python
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_supervisor_queue_binds_current_plan_not_chain_spec
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_supervisor_wrappers_do_not_launch_python_before_runtime_init
+FAILED tests/cloud/test_supervisor_runtime_isolation.py::test_timeout_bypasses_use_absolute_safe_supervisor_interpreter
+FAILED tests/m10/test_git_mutation_inventory.py::TestCompletenessAndFreshness::test_no_unlisted_sink
+FAILED tests/m10/test_git_mutation_inventory.py::TestScannerConsistency::test_scanned_count_matches_inventory
+FAILED tests/m11/test_validation_shard_runner.py::test_run_persists_exact_self_hashed_custody_and_terminal_receipts
+FAILED tests/m11/test_validation_shard_runner.py::test_xfail_is_counted_as_debt_not_silently_passed
+FAILED tests/m11/test_validation_shard_runner.py::test_skip_reason_rendering_is_counted_without_losing_exact_inventory
+FAILED tests/m11/test_validation_shard_runner.py::test_xpass_is_counted_as_debt_without_losing_exact_inventory
+FAILED tests/m11/test_validation_shard_runner.py::test_parametrized_nodeids_with_spaces_and_status_words_are_preserved_exactly
+FAILED tests/m11/test_validation_shard_runner.py::test_inherited_test_provenance_preserves_frozen_nodeid
+FAILED tests/oracles/test_replay_oracle.py::test_replay_oracle_captures_legacy_action_without_requiring_routed_parity
+FAILED tests/oracles/test_replay_oracle.py::test_default_force_proceed_captures_canonical_custody_and_artifact
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[add-note-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[abort-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-robustness-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-profile-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-model-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_simple_actions_match_legacy_replay_oracle[set-vendor-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact
+FAILED tests/oracles/test_replay_oracle.py::test_routed_force_proceed_from_blocked_agent_availability_matches_legacy
+FAILED tests/oracles/test_replay_oracle.py::test_routed_force_proceed_strict_notes_guard_matches_legacy
+FAILED tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_prereq_retry_budget_matches_legacy
+FAILED tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_quality_matches_legacy
+FAILED tests/oracles/test_replay_oracle.py::test_routed_recover_blocked_unknown_phase_preserves_legacy_error
+FAILED tests/oracles/test_replay_oracle.py::test_routed_resume_clarify_prep_only_matches_legacy
+FAILED tests/oracles/test_replay_oracle.py::test_routed_replan_matches_legacy_structural_rewrite
+FAILED tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-profile-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-model-<lambda>]
+FAILED tests/oracles/test_replay_oracle.py::test_routed_config_mutations_surface_stale_version_conflicts[set-vendor-<lambda>]
+FAILED tests/test_managed_agent.py::test_real_dispatch_seams_use_shared_supervisor
+41 failed, 2320 passed, 22 skipped, 1 warning in 177.95s (0:02:57)

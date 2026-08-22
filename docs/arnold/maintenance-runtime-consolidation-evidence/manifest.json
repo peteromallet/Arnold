@@ -5169,7 +5169,7 @@
   "dual_role_warning": "Receipt mrc-f9dc5e179053d407a5f4ee2d0c65d81f31ca096762c3aeb5 is the SOL1-early adjudication (role SOL-REVIEW, model openai-codex/gpt-5.6-sol, dispositions over T4.3 refusal / cancellation liveness / fence TOCTOU / T7.2h composite). It is NOT the T7.2d classification implementer; that card is mrc-7e8b9b0011197244b23427773e4350659af5703f3aecb455 (resume/incremental retry after the killed first dispatch mrc-55541e81). Cite per role.",
   "hollow_commit_refusal": "mrc-5be8f4e7 (T7.2f salvage verify+commit) verified the salvaged diff but REFUSED to commit: the proposed heredoc-aware _extract_wrapper_function fix was proven surgical (57/58 extractions byte-identical) yet the 6 OURS-REGRESSION test_launch_chain_tick params were still red - committing would ship a knowingly incomplete repair. T7.2f2 (mrc-7f4caa2e) landed the fix and committed.",
   "noncanonical_shardrun_quarantine": "The first T7.2 shard run executed a full nine-shard pass at 6c75652572 in violation of the collect-only refreeze expectation of its brief; its stdout captures were quarantined untracked until commit 2b3a0d3a4b placed them under docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-t72-6c75652572/ (named to distinguish from the canonical artifacts/shards/ set committed at ea7f0bcb2d). Named by DEEP check-in #4.",
-  "refreshed_at_utc": "2026-08-22T15:55:00Z",
+  "refreshed_at_utc": "2026-08-22T23:07:41Z",
   "refreshed_by": "EVDIG-A manifest refresh + durable SHA mapping + log completion",
   "routing_directives_recap": [
    "G5 window: XHARD task routing switched Grok 4.6 -> openrouter/stealth/ox-alpha (wrapper LAUNCHERS+ROUTES update; availability probed live).",
@@ -8100,5 +8100,21 @@
    "status": "integrated",
    "task_id": "GENROOT-001"
   }
- ]
+ ],
+ "gold_run": {
+  "head": "5bf1912a730f2028bdcd343de250bd9fe394b58c",
+  "ran_at_utc": "2026-08-22T23:01:41Z",
+  "verdict": "inventory_match",
+  "aggregate": {
+   "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards_run_gold.json",
+   "provenance": "canonical gold nine-shard run aggregate rebuilt from raw stdout (aggregate context receipt mrc-f23f052e7, verdict receipt mrc-0aa3ac7a)",
+   "sha256": "117c45bc8cc956f168c6647210599c5216e3b740e28c5416091427bf55c0a55d",
+   "status": "committed"
+  },
+  "stdout_captures": {
+   "path": "docs/arnold/maintenance-runtime-consolidation-evidence/artifacts/shards-gold-5bf1912a73",
+   "contents": "shard1-9 stdout + runner.log captures, results.ndjson, tainted-attempt-1-missing-basetemp-parent quarantine"
+  },
+  "summary": "196/196 inventoried failures registered (zero unexpected); 34 inventory nodes green at gold head post-repair; shard3 exit_mismatch anomaly (all five inline-known conformance-suite nodes green -> exit 0 vs expected 1, repaired inventory not drift)"
+ }
 }

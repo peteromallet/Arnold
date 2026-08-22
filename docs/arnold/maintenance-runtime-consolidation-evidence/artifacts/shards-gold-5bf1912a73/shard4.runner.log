@@ -1,0 +1,72 @@
+== shard4 started_epoch=1787437108 ==
+set -o pipefail && python -m pytest -q tests/agentbox/test_git_worktree.py tests/arnold/pipeline/native/test_checkpoint.py tests/arnold/pipeline/native/test_pack_metadata.py tests/arnold/pipeline/native/test_pack_queries.py tests/arnold/pipeline/native/test_pack_registry.py tests/arnold/pipeline/test_c4_static_checks.py tests/arnold/pipeline/test_contract_reduce.py tests/arnold/pipeline/test_media_content.py tests/arnold/pipeline/test_resume.py tests/arnold/runtime/test_event_journal.py tests/arnold/supervisor/test_restart.py tests/arnold_pipelines/megaplan/custody/test_projections.py tests/arnold_pipelines/megaplan/test_authority_views.py tests/arnold_pipelines/megaplan/test_chain_m5a_successor_gate.py tests/arnold_pipelines/megaplan/test_contract_reality_failure_conditions.py tests/arnold_pipelines/megaplan/test_custody_compatibility.py tests/arnold_pipelines/megaplan/test_fallback_chains_profile_validation.py tests/arnold_pipelines/megaplan/test_m6_authority_reader_registry.py tests/arnold_pipelines/megaplan/test_m6_migration_matrix.py tests/arnold_pipelines/megaplan/test_maintenance_efficiency_analysis.py tests/arnold_pipelines/megaplan/test_north_star_critical_robustness.py tests/arnold_pipelines/megaplan/test_north_star_severity_schema.py tests/arnold_pipelines/megaplan/test_projection_rebuild_metadata.py tests/arnold_pipelines/megaplan/test_prompt_advisory_rebuild_metadata.py tests/arnold_pipelines/megaplan/test_resume_routing.py tests/arnold_pipelines/megaplan/test_strategy_compatibility_e2e.py tests/arnold_pipelines/megaplan/test_strategy_mutations.py tests/arnold_pipelines/megaplan/test_strategy_parser.py tests/arnold_pipelines/megaplan/test_strategy_validator.py tests/arnold_pipelines/megaplan/test_strategy_version_policy.py tests/arnold_pipelines/megaplan/test_task_feasibility.py tests/arnold_pipelines/megaplan/test_ticket_inventory.py tests/arnold_pipelines/megaplan/test_validation_compiler.py tests/arnold_pipelines/megaplan/test_workflows_components.py tests/arnold_pipelines/megaplan/watchdog/test_liveness_correlation_authority.py tests/cloud/test_current_target.py tests/cloud/test_isolated_chain_runner.py tests/cloud/test_maintenance_recovery.py tests/cloud/test_repair_requests.py tests/cloud/test_wrapper_authority_bypass_gating.py tests/execute/test_authority_dispatch_validation.py tests/m8/test_controlled_writer_registry.py tests/resident/test_currently_running_command.py tests/resident/test_launch_subagent.py tests/test_pipeline_run_cli.py 2>&1 | tee "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/shards-gold-5bf1912a73/shard4.stdout"
+-- stdout --
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+.F...................................................................... [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+__________ test_non_authoritative_cleanup_best_effort_remains_allowed __________
+
+    def test_non_authoritative_cleanup_best_effort_remains_allowed() -> None:
+        examples = {
+            "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-resident": (
+                'docker exec "$CONTAINER" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true'
+            ),
+            "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-watchdog": (
+                'docker exec "$CONTAINER" bash -lc "tmux kill-session -t watchdog 2>/dev/null || true"'
+            ),
+            "arnold_pipelines/megaplan/cloud/templates/entrypoint.sh.tmpl": (
+                'arnold config set execution.auto_approve true >/dev/null 2>&1 || true'
+            ),
+            "arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat": (
+                "pids=$(pgrep -f 'codex exec' || true)"
+            ),
+        }
+        for module_path, snippet in examples.items():
+>           assert snippet in (REPO_ROOT / module_path).read_text(encoding="utf-8")
+E           assert 'docker exec "$CONTAINER" bash -lc "tmux kill-session -t watchdog 2>/dev/null || true"' in '#!/usr/bin/env bash\n# Ensure the megaplan watchdog is alive in the resident-only container.\n# Rewritten 2026-08-17 ...AINER procs=${watchdog_procs}"\n  exit 0\nfi\n\nlog "watchdog_restart_failed_not_alive container=$CONTAINER"\nexit 1\n'
+E            +  where '#!/usr/bin/env bash\n# Ensure the megaplan watchdog is alive in the resident-only container.\n# Rewritten 2026-08-17 ...AINER procs=${watchdog_procs}"\n  exit 0\nfi\n\nlog "watchdog_restart_failed_not_alive container=$CONTAINER"\nexit 1\n' = read_text(encoding='utf-8')
+E            +    where read_text = (PosixPath('/private/tmp/mrc-gold-checkout') / 'arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-watchdog').read_text
+
+tests/cloud/test_wrapper_authority_bypass_gating.py:632: AssertionError
+=============================== warnings summary ===============================
+tests/resident/test_launch_subagent.py::test_discord_origin_flows_from_inbound_turn_into_managed_launch
+  /Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/huggingface_hub/file_download.py:1727: DeprecationWarning: hf_xet.download_files() is deprecated. Use XetSession().new_file_download_group().start_download_file() instead.
+    xet_get(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/cloud/test_wrapper_authority_bypass_gating.py::test_non_authoritative_cleanup_best_effort_remains_allowed
+1 failed, 2382 passed, 1 warning in 33.99s
+== exit=1 duration=36s free_gib_after=9 ==

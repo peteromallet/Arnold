@@ -1,0 +1,7 @@
+INVALIDATED before any canonical evidence row existed.
+Cause: /private/tmp/mrc-gold-basetemp (basetemp PARENT) was never provisioned; pytest's
+given-basetemp mkdir is single-level (parents=False), so every tmp_path fixture setup raised
+FileNotFoundError -> shard1 reported "1 failed, 1715 passed, 671 errors" in 27.65s.
+Not a suite/test outcome; environment provisioning defect by the validator.
+Remedy: mkdir -p basetemp parent baked into runner; canonical attempt restarted from shard1.
+No shard advanced past shard1; zero canonical rows recorded from this attempt.

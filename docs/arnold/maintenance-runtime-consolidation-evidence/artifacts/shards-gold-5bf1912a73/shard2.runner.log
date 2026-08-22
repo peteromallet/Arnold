@@ -1,0 +1,45 @@
+== shard2 started_epoch=1787436236 ==
+set -o pipefail && python -m pytest -q tests/arnold/critique_ledger/test_cl2_admission_command.py tests/arnold/critique_ledger/test_cl2_entry_gate.py tests/arnold/critique_ledger/test_schemas.py tests/arnold/pipeline/native/test_decorators.py tests/arnold/pipeline/native/test_graph_projection.py tests/arnold/pipeline/native/test_runtime.py tests/arnold/pipeline/test_contract_result.py tests/arnold/pipeline/test_executor_hooks.py tests/arnold/pipeline/test_resume_validation.py tests/arnold/pipeline/test_step_invocation.py tests/arnold/pipeline/test_validator.py tests/arnold/workflow/test_boundary_evidence.py tests/arnold_pipelines/megaplan/test_contract_reality_matrices.py tests/arnold_pipelines/megaplan/test_custody_lease_store.py tests/arnold_pipelines/megaplan/test_execute_policy.py tests/arnold_pipelines/megaplan/test_maintenance_contracts.py tests/arnold_pipelines/megaplan/test_native_golden_manifest.py tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py tests/arnold_pipelines/megaplan/test_strategy_cli.py tests/arnold_pipelines/megaplan/test_wbc_boundary_inventory.py tests/cloud/test_cloud_chain_command.py tests/cloud/test_feature_flags.py tests/cloud/test_runtime_lifecycle.py tests/cloud/test_ssh_prelaunch_observation.py tests/cloud/test_status_snapshot.py 2>&1 | tee "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/shards-gold-5bf1912a73/shard2.stdout"
+-- stdout --
+.................s...................................................... [  3%]
+.........................ss............................................. [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+tests/arnold/critique_ledger/test_schemas.py::TestGoldenCases::test_golden_case[g-old-03-occurrence-preserve-unknown-field]
+  /Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_pytest/raises.py:622: PytestWarning: matching against an empty string will *always* pass. If you want to check for an empty message you need to pass '^$'. If you don't want to match you should pass `None` or leave out the parameter.
+    super().__init__(match=match, check=check)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2380 passed, 3 skipped, 1 warning in 539.39s (0:08:59)
+== exit=0 duration=541s free_gib_after=9 ==

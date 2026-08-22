@@ -474,3 +474,10 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 ## Authority refresh closure (EVDIG-A)
 
 - Manifest refreshed to frozen HEAD `4243cc13a9` (integration_current_sha = observed_integration_worktree_sha, clean observation in `mrc-evdigest3`); tasks/gates/receipts/allowances backfilled through T7.2 → T7.2d → T7.2e/f/g/h → SOL1-early → SOL-FREEZE chain → GENROOT chain; durable dangling-source → integrated-canonical mapping recorded in manifest `repair_sha_mapping`. Canonical validator: exit 0, `{"status":"valid"}`.
+
+## Gold nine-shard run @ 5bf1912a73 — verdict inventory_match
+
+- Head-bumped refreeze: test-shards.json integration_head `4243cc13a9` → `5bf1912a73` (refreshed_at 2026-08-22T21:56:46Z); structural diff vs committed version touches exactly integration_head/integration_head_short/refreshed_at/refreshed_note.
+- Canonical post-repair rerun of all nine shards at that head; aggregate rebuilt from raw stdout after agent death — aggregate context receipt `mrc-f23f052e7`, verdict receipt `mrc-0aa3ac7a`. Verdict **inventory_match**: 196/196 inventoried failures registered across shards 1/4/5/6/7/8/9 (7/1/3/5/41/28/111), zero unexpected failures.
+- Anomaly: 34 inventory nodes green at gold head post-repair; shard3 exited 0 vs expected 1 because all five inline-known conformance-suite nodes passed — recorded as exit_mismatch reflecting repaired inventory, not drift, under the stated verdict rule.
+- Evidence committed: `artifacts/shards_run_gold.json` (sha256 `117c45bc…`) alongside `artifacts/shards-gold-5bf1912a73/` (nine stdout + runner.log captures, results.ndjson, tainted-attempt-1-missing-basetemp-parent quarantine); manifest gains a top-level `gold_run` record (schema additionalProperties) and refreshed notes.refreshed_at_utc; canonical validator exit 0.

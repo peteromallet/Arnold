@@ -1,0 +1,436 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+..........................F............................................. [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+............................F........................................... [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+..............................................FF....F................... [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions __
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard6/test_handle_outcome_retries_st0')
+
+    def test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions(
+        tmp_path: Path,
+    ) -> None:
+        plan_dir = tmp_path / ".megaplan" / "plans" / "stale-plan"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            (
+                '{"name":"stale-plan","current_state":"awaiting_human","meta":{},'
+                '"resume_cursor":{"phase":"execute"}}'
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "finalize.json").write_text(
+            '{"user_actions":[{"id":"ua-1","phase":"before_execute"}]}',
+            encoding="utf-8",
+        )
+        (plan_dir / "user_action_resolutions.json").write_text(
+            '{"ua-1":{"action_id":"ua-1","state":"satisfied","created_at":"2026-06-28T00:00:00Z","created_by":"test"}}',
+            encoding="utf-8",
+        )
+    
+        spec = SimpleNamespace(
+            on_failure_policy=SimpleNamespace(
+                retry="retry_milestone",
+                escalate="bump_profile",
+                abort="stop_chain",
+            ),
+            on_escalate_policy=SimpleNamespace(
+                retry="retry_milestone",
+                escalate="bump_profile",
+                abort="stop_chain",
+            ),
+            robustness="standard",
+        )
+        milestone = SimpleNamespace(label="m7", profile=None, robustness=None)
+        state = ChainState()
+    
+        decision = _handle_outcome(
+            DriverOutcome(
+                status="awaiting_human",
+                plan="stale-plan",
+                final_state="awaiting_human",
+                iterations=1,
+                reason="stale blocked gate",
+            ),
+            spec=spec,
+            writer=lambda _message: None,
+            milestone=milestone,
+            state=state,
+            root=tmp_path,
+        )
+    
+>       assert decision == "retry"
+E       AssertionError: assert 'stop' == 'retry'
+E         
+E         - retry
+E         + stop
+
+tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py:248: AssertionError
+_______ test_live_execute_worker_is_not_a_finalized_state_contradiction ________
+
+    def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
+        target = {
+            "authoritative_source": "chain_state",
+            "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+            "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+            "chain_state": {
+                "present": True,
+                "fingerprint": "sha256:stale-chain",
+                "milestone_total": 10,
+                "completed_count": 2,
+            },
+            "active_step_heartbeat": {
+                "active": True,
+                "worker_pid": "1004788",
+                "pid_live": True,
+            },
+        }
+    
+>       assert repair_contract._has_terminality_contradiction(target) is False
+E       AssertionError: assert True is False
+E        +  where True = <function _has_terminality_contradiction at 0x1074d7a60>({'active_step_heartbeat': {'active': True, 'pid_live': True, 'worker_pid': '1004788'}, 'authoritative_source': 'chain_...le-chain', 'milestone_total': 10, 'present': True}, 'current_refs': {'current_plan_name': 's3-boundary-coverage'}, ...})
+E        +    where <function _has_terminality_contradiction at 0x1074d7a60> = repair_contract._has_terminality_contradiction
+
+tests/cloud/test_repair_custody.py:669: AssertionError
+_ test_non_codex_continuation_worker_resumes_exact_session[hermes-zhipu:glm-5.2-resident_0123456789abcdef0123456789abcdef---resume-session] _
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard6/test_non_codex_continuation_wo0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12bd9aa10>
+caller_provenance = {'applicability': 'applicable', 'channel_id': None, 'conversation_key': 'discord:dm:42', 'correlation_id': 'discord-corr-f637319be9c04cbb4f7e4faf', ...}
+backend = 'hermes', model = 'zhipu:glm-5.2'
+session_id = 'resident_0123456789abcdef0123456789abcdef'
+resume_flag = '--resume-session'
+
+    @pytest.mark.parametrize(
+        ("backend", "model", "session_id", "resume_flag"),
+        [
+            (
+                "hermes",
+                "zhipu:glm-5.2",
+                "resident_0123456789abcdef0123456789abcdef",
+                "--resume-session",
+            ),
+            (
+                "claude",
+                "opus",
+                "019f5d2e-d5da-75f3-a617-4712a1c57cc5",
+                "--resume",
+            ),
+        ],
+    )
+    def test_non_codex_continuation_worker_resumes_exact_session(
+        tmp_path: Path,
+        monkeypatch,
+        caller_provenance: dict,
+        backend: str,
+        model: str,
+        session_id: str,
+        resume_flag: str,
+    ) -> None:
+        _write_run(
+            tmp_path,
+            backend=backend,
+            model=model,
+            session_id=session_id,
+        )
+        monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+        result = subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message=f"Resume {backend} now.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
+        captured: dict[str, object] = {}
+    
+        class _Provider:
+            pid = 9877
+    
+            def wait(self, timeout=None):
+                captured["timeout"] = timeout
+                return 0
+    
+            def poll(self):
+                return 0
+    
+        def fake_provider(argv, **kwargs):
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
+            output = kwargs["stdout"]
+            if backend == "hermes":
+                output.write(b"CONTINUED\n")
+                Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "resolved_model": model,
+                            "toolsets": ["file", "web", "terminal"],
+                            "usage": {"output_tokens": 2},
+                            "events": [],
+                        }
+                    )
+                )
+            else:
+                output.write(
+                    (
+                        json.dumps(
+                            {
+                                "type": "system",
+                                "subtype": "init",
+                                "session_id": session_id,
+                                "model": model,
+                                "tools": ["Read", "Bash"],
+                            }
+                        )
+                        + "\n"
+                        + json.dumps(
+                            {
+                                "type": "result",
+                                "subtype": "success",
+                                "session_id": session_id,
+                                "is_error": False,
+                                "result": "CONTINUED",
+                                "usage": {"output_tokens": 2},
+                            }
+                        )
+                        + "\n"
+                    ).encode()
+                )
+            output.flush()
+            return _Provider()
+    
+        monkeypatch.setattr(subagent.subprocess, "Popen", fake_provider)
+        child_path = Path(result.continuation_manifest_path)
+        assert subagent._run_managed_manifest(child_path) == 0
+    
+        child = json.loads(child_path.read_text())
+        argv = captured["argv"]
+>       assert resume_flag in argv
+E       AssertionError: assert '--resume-session' in ['python3', '/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py', '--model', 'deepseek:deepseek-v4-flash', '--toolsets', 'file,web', ...]
+
+tests/resident/test_subagent_followup.py:562: AssertionError
+----------------------------- Captured stdout call -----------------------------
+
+[managed-provider-raw begin backend=hermes path=/private/tmp/mrc-gold-basetemp/shard6/test_non_codex_continuation_wo0/.megaplan/plans/resident-subagents/subagent-20260822-222343-6e9f9f0f/provider.raw]
+CONTINUED
+
+[managed-provider-raw end backend=hermes]
+_ test_non_codex_continuation_worker_resumes_exact_session[claude-opus-019f5d2e-d5da-75f3-a617-4712a1c57cc5---resume] _
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard6/test_non_codex_continuation_wo1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x13fcbe410>
+caller_provenance = {'applicability': 'applicable', 'channel_id': None, 'conversation_key': 'discord:dm:42', 'correlation_id': 'discord-corr-f637319be9c04cbb4f7e4faf', ...}
+backend = 'claude', model = 'opus'
+session_id = '019f5d2e-d5da-75f3-a617-4712a1c57cc5', resume_flag = '--resume'
+
+    @pytest.mark.parametrize(
+        ("backend", "model", "session_id", "resume_flag"),
+        [
+            (
+                "hermes",
+                "zhipu:glm-5.2",
+                "resident_0123456789abcdef0123456789abcdef",
+                "--resume-session",
+            ),
+            (
+                "claude",
+                "opus",
+                "019f5d2e-d5da-75f3-a617-4712a1c57cc5",
+                "--resume",
+            ),
+        ],
+    )
+    def test_non_codex_continuation_worker_resumes_exact_session(
+        tmp_path: Path,
+        monkeypatch,
+        caller_provenance: dict,
+        backend: str,
+        model: str,
+        session_id: str,
+        resume_flag: str,
+    ) -> None:
+        _write_run(
+            tmp_path,
+            backend=backend,
+            model=model,
+            session_id=session_id,
+        )
+        monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+        result = subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message=f"Resume {backend} now.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
+        captured: dict[str, object] = {}
+    
+        class _Provider:
+            pid = 9877
+    
+            def wait(self, timeout=None):
+                captured["timeout"] = timeout
+                return 0
+    
+            def poll(self):
+                return 0
+    
+        def fake_provider(argv, **kwargs):
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
+            output = kwargs["stdout"]
+            if backend == "hermes":
+                output.write(b"CONTINUED\n")
+                Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "resolved_model": model,
+                            "toolsets": ["file", "web", "terminal"],
+                            "usage": {"output_tokens": 2},
+                            "events": [],
+                        }
+                    )
+                )
+            else:
+                output.write(
+                    (
+                        json.dumps(
+                            {
+                                "type": "system",
+                                "subtype": "init",
+                                "session_id": session_id,
+                                "model": model,
+                                "tools": ["Read", "Bash"],
+                            }
+                        )
+                        + "\n"
+                        + json.dumps(
+                            {
+                                "type": "result",
+                                "subtype": "success",
+                                "session_id": session_id,
+                                "is_error": False,
+                                "result": "CONTINUED",
+                                "usage": {"output_tokens": 2},
+                            }
+                        )
+                        + "\n"
+                    ).encode()
+                )
+            output.flush()
+            return _Provider()
+    
+        monkeypatch.setattr(subagent.subprocess, "Popen", fake_provider)
+        child_path = Path(result.continuation_manifest_path)
+        assert subagent._run_managed_manifest(child_path) == 0
+    
+        child = json.loads(child_path.read_text())
+        argv = captured["argv"]
+>       assert resume_flag in argv
+E       AssertionError: assert '--resume' in ['python3', '/workspace/runtime-candidates/arnold-r7-fresh-child-20260805/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py', '--model', 'deepseek:deepseek-v4-flash', '--toolsets', 'file,web', ...]
+
+tests/resident/test_subagent_followup.py:562: AssertionError
+----------------------------- Captured stdout call -----------------------------
+
+[managed-provider-raw begin backend=claude path=/private/tmp/mrc-gold-basetemp/shard6/test_non_codex_continuation_wo1/.megaplan/plans/resident-subagents/subagent-20260822-222343-fcb7cef5/provider.raw]
+{"type": "system", "subtype": "init", "session_id": "019f5d2e-d5da-75f3-a617-4712a1c57cc5", "model": "opus", "tools": ["Read", "Bash"]}
+{"type": "result", "subtype": "success", "session_id": "019f5d2e-d5da-75f3-a617-4712a1c57cc5", "is_error": false, "result": "CONTINUED", "usage": {"output_tokens": 2}}
+
+[managed-provider-raw end backend=claude]
+_ test_continuation_worker_resumes_exact_parent_session_and_records_acceptance _
+
+tmp_path = PosixPath('/private/tmp/mrc-gold-basetemp/shard6/test_continuation_worker_resum0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x14a180750>
+caller_provenance = {'applicability': 'applicable', 'channel_id': None, 'conversation_key': 'discord:dm:42', 'correlation_id': 'discord-corr-f637319be9c04cbb4f7e4faf', ...}
+
+    def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance(
+        tmp_path: Path, monkeypatch, caller_provenance: dict
+    ) -> None:
+        _write_run(tmp_path)
+        monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+        result = subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message="Use both summaries.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
+        captured: dict[str, object] = {}
+    
+        class _Codex:
+            pid = 9876
+    
+            def wait(self, timeout=None):
+                return 0
+    
+            def poll(self):
+                return 0
+    
+        def fake_codex(argv, **kwargs):
+            captured["argv"] = list(argv)
+            captured["env"] = kwargs["env"]
+            return _Codex()
+    
+        monkeypatch.setattr(subagent.subprocess, "Popen", fake_codex)
+        child_path = Path(result.continuation_manifest_path)
+        assert subagent._run_codex_manifest(child_path) == 0
+    
+        child = json.loads(child_path.read_text())
+        argv = captured["argv"]
+>       assert argv[:3] == ["codex", "exec", "resume"]
+E       AssertionError: assert ['python3', '...y', '--model'] == ['codex', 'exec', 'resume']
+E         
+E         At index 0 diff: 'python3' != 'codex'
+E         Use -v to get more diff
+
+tests/resident/test_subagent_followup.py:750: AssertionError
+----------------------------- Captured stdout call -----------------------------
+
+[managed-provider-raw begin backend=codex path=/private/tmp/mrc-gold-basetemp/shard6/test_continuation_worker_resum0/.megaplan/plans/resident-subagents/subagent-20260822-222343-979e4a8a/provider.raw]
+
+[managed-provider-raw end backend=codex]
+=============================== warnings summary ===============================
+tests/agentbox/test_resident_profile.py::test_agentbox_operator_runs_through_resident_runtime_persistence_and_outbound_sink
+  /Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/huggingface_hub/file_download.py:1727: DeprecationWarning: hf_xet.download_files() is deprecated. Use XetSession().new_file_download_group().start_download_file() instead.
+    xet_get(
+
+tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py: 23 warnings
+  /private/tmp/mrc-gold-checkout/arnold_pipelines/megaplan/chain/spec.py:1996: UserWarning: merge_policy should only be set away from `auto` when the user explicitly requests a human PR merge gate after every milestone; `review` will park unattended/cloud chains at awaiting_pr_merge.
+    return ChainSpec.from_dict(raw or {})
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py::test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions
+FAILED tests/cloud/test_repair_custody.py::test_live_execute_worker_is_not_a_finalized_state_contradiction
+FAILED tests/resident/test_subagent_followup.py::test_non_codex_continuation_worker_resumes_exact_session[hermes-zhipu:glm-5.2-resident_0123456789abcdef0123456789abcdef---resume-session]
+FAILED tests/resident/test_subagent_followup.py::test_non_codex_continuation_worker_resumes_exact_session[claude-opus-019f5d2e-d5da-75f3-a617-4712a1c57cc5---resume]
+FAILED tests/resident/test_subagent_followup.py::test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
+5 failed, 2378 passed, 24 warnings in 97.00s (0:01:36)

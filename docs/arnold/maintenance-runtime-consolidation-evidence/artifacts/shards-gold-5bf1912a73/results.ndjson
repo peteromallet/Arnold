@@ -1,0 +1,9 @@
+{"id":"shard1","exit":1,"started_epoch":1787436050,"duration_s":171,"free_gib_after":9}
+{"id":"shard2","exit":0,"started_epoch":1787436236,"duration_s":541,"free_gib_after":9}
+{"id":"shard3","exit":0,"started_epoch":1787436782,"duration_s":297,"free_gib_after":8}
+{"id":"shard4","exit":1,"started_epoch":1787437108,"duration_s":36,"free_gib_after":9}
+{"id":"shard5","exit":1,"started_epoch":1787437148,"duration_s":195,"free_gib_after":8}
+{"id":"shard6","exit":1,"started_epoch":1787437350,"duration_s":100,"free_gib_after":9}
+{"id":"shard7","exit":1,"started_epoch":1787437462,"duration_s":180,"free_gib_after":9}
+{"id":"shard8","exit":1,"started_epoch":1787437650,"duration_s":289,"free_gib_after":8}
+{"id":"shard9","exit":1,"started_epoch":1787437962,"duration_s":865,"free_gib_after":5}
