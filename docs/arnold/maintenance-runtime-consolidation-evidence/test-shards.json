@@ -2,8 +2,8 @@
   "key": "test_shards_v1",
   "schema_version": "mrc.test-shards.v1",
   "frozen_at": "2026-08-22T01:43:42Z",
+  "frozen_by_task": "T7.1",
   "refreshed_at": "2026-08-22T17:08:01Z",
-  "refreshed_at": "2026-08-22T04:13:42Z",
   "refreshed_note": "post-repair refreeze after T7.2e/f/g/h + GENROOT chain",
   "integration_head": "4243cc13a96831c8e52cd672fbf5ca921cf662ec",
   "integration_head_short": "4243cc13a9",
@@ -71,7 +71,7 @@
         "exit": 0
       }
     },
-    "verification": "each frozen command's pytest argument list was run with --collect-only -q at HEAD: exactly 2383 tests collected, exit 0, for all nine shards"
+    "verification": "each frozen command's pytest argument list was re-run with --collect-only -q at HEAD 4243cc13a96831c8e52cd672fbf5ca921cf662ec (pyenv CPython 3.11.11 / pytest 9.0.2): exit 0 on all nine shards; shard1 collected 2387 (+4 vs freeze), shard3 collected 2384 (+1), shard8 collected 2390 (+7), the rest unchanged at 2383; union of the frozen file sets collects 21459 while the full suite collects 21466 — the 7-test gap is tests/cloud/test_promotion_default_config.py, which exists at this head but appears in no frozen shard command"
   },
   "balance": {
     "collected_per_shard": {
