@@ -296,9 +296,9 @@ def test_sol_review_dispatch_builds_sol_command_and_rejects_wrong_route(tmp_path
     command = commands[0]
     assert command[1] == str(
         launcher.INTEGRATION_WORKTREE
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
     )
-    assert "--model=codex:gpt-5.6-sol" in command
+    assert "--model=openrouter/openai/gpt-5.6-sol" in command
 
     capsys.readouterr()
     wrong_root = tmp_path / "sol-review-wrong-route"

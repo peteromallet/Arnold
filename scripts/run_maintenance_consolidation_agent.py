@@ -27,7 +27,7 @@ ROUTES = {
     "XHARD": "ox-alpha", "XHARD-REVIEW": "gpt-5.6-sol", "XHARD-REVISION": "ox-alpha", "JUDGMENT": "gpt-5.6-sol",
     "HARD": "ox-alpha", "HARD-REVIEW": "gpt-5.6-sol", "HARD-REVISION": "ox-alpha",
     "BRIEF": "ox-alpha", "WORKSPACE": "ox-alpha", "INTEGRATION": "ox-alpha",
-    "VALIDATION": "ox-alpha", "REPORT": "gpt-5.6-sol", "SOL-REVIEW": "gpt-5.6-sol",
+    "VALIDATION": "ox-alpha", "REPORT": "gpt-5.6-sol", "SOL-REVIEW": "gpt-5.6-sol", "GROK-JUDGMENT": "grok-4.6",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
