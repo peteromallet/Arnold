@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 
@@ -143,3 +145,81 @@ def test_flags_after_message_are_rejected(monkeypatch, capsys) -> None:
     assert arnold_agent.main(["follow-up", "-c"]) == 1
 
     assert "flags must precede the message" in capsys.readouterr().err
+
+
+class _FakeStderr:
+    """Minimal write-only stream with a controllable isatty."""
+
+    def __init__(self, isatty: bool) -> None:
+        self._isatty = isatty
+        self.parts: list[str] = []
+
+    def isatty(self) -> bool:
+        return self._isatty
+
+    def write(self, text: str) -> int:
+        self.parts.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+def test_identity_label_default_and_custom_agents() -> None:
+    assert arnold_agent._identity_label("arnold") == "AgentBox Operator"
+    assert arnold_agent._identity_label("scout") == "agent · scout"
+
+
+def test_one_shot_header_brands_stderr_and_tab_title_on_a_tty() -> None:
+    stream = _FakeStderr(isatty=True)
+    arnold_agent._print_one_shot_header("arnold", stream=stream)
+    rendered = "".join(stream.parts)
+    assert "\x1b]0;arnold · AgentBox Operator\x07" in rendered
+    assert "\x1b[1marnold · AgentBox Operator\x1b[0m" in rendered
+
+
+def test_one_shot_header_uses_custom_agent_label() -> None:
+    stream = _FakeStderr(isatty=True)
+    arnold_agent._print_one_shot_header("scout", stream=stream)
+    assert "agent · scout" in "".join(stream.parts)
+
+
+def test_one_shot_header_skipped_when_not_a_tty() -> None:
+    stream = _FakeStderr(isatty=False)
+    arnold_agent._print_one_shot_header("arnold", stream=stream)
+    assert stream.parts == []
+
+def test_select_omp_bin_prefers_branded_build(monkeypatch, tmp_path) -> None:
+    branded = tmp_path / "omp"
+    branded.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    monkeypatch.delenv("OMP_BIN", raising=False)
+    monkeypatch.delenv("ARNOLD_STOCK_OMP", raising=False)
+
+    arnold_agent._select_omp_bin()
+
+    assert os.environ["OMP_BIN"] == str(branded)
+
+
+def test_select_omp_bin_keeps_existing_override(monkeypatch, tmp_path) -> None:
+    branded = tmp_path / "omp"
+    branded.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    monkeypatch.setenv("OMP_BIN", "/custom/omp")
+    monkeypatch.delenv("ARNOLD_STOCK_OMP", raising=False)
+
+    arnold_agent._select_omp_bin()
+
+    assert os.environ["OMP_BIN"] == "/custom/omp"
+
+
+def test_select_omp_bin_stock_opt_out(monkeypatch, tmp_path) -> None:
+    branded = tmp_path / "omp"
+    branded.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    monkeypatch.delenv("OMP_BIN", raising=False)
+    monkeypatch.setenv("ARNOLD_STOCK_OMP", "1")
+
+    arnold_agent._select_omp_bin()
+
+    assert "OMP_BIN" not in os.environ

@@ -59,6 +59,21 @@ def _find_launcher() -> Path | None:
     return None
 
 
+# Branded omp build: the local oh-my-pi fork compiled as a standalone binary.
+# Preferred over stock `omp` so the CLI surface (version string, terminal tab
+# title, status line) carries Arnold branding. OMP_BIN set in the environment
+# always wins; ARNOLD_STOCK_OMP=1 opts out entirely.
+_BRANDED_OMP = Path.home() / "Documents" / "oh-my-pi" / "packages" / "coding-agent" / "dist" / "omp"
+
+
+def _select_omp_bin(env=None) -> None:
+    """Point the agent launcher at the branded build when it exists."""
+    target = os.environ if env is None else env
+    if target.get("ARNOLD_STOCK_OMP") == "1":
+        return
+    if _BRANDED_OMP.is_file():
+        target.setdefault("OMP_BIN", str(_BRANDED_OMP))
+
 # omp flags that consume a following value token.
 _VALUE_FLAGS = frozenset({"-r", "--resume", "--session-dir", "--profile"})
 
@@ -75,6 +90,33 @@ def _split_flags(rest: list[str]) -> tuple[list[str], list[str]]:
             flags.append(rest[index])
             index += 1
     return flags, rest[index:]
+
+
+def _identity_label(agent: str) -> str:
+    """Short role label for the header line: default persona vs custom agent."""
+    return "AgentBox Operator" if agent == DEFAULT_AGENT else f"agent · {agent}"
+
+
+def _one_shot_header(agent: str) -> str:
+    """Branded identity line shown at the top of a one-shot run."""
+    return f"arnold · {_identity_label(agent)}"
+
+
+def _print_one_shot_header(agent: str, stream=None) -> None:
+    """Brand the top of a one-shot run before omp takes over the terminal.
+
+    omp's print mode owns stdout and writes its own status to stderr, so the
+    identity line goes to stderr too, landing above 'Working...'. The terminal
+    tab title gets the same brand via OSC 0. The interactive TUI clears the
+    screen and sets its own title, so this only runs for one-shot messages.
+    Skipped entirely when stderr is not a terminal so piped output stays clean.
+    Flushed explicitly: os.execvp replaces the process without flushing.
+    """
+    stream = sys.stderr if stream is None else stream
+    if not stream.isatty():
+        return
+    print(f"\x1b]0;{_one_shot_header(agent)}\x07", end="", file=stream, flush=True)
+    print(f"\x1b[1m{_one_shot_header(agent)}\x1b[0m", file=stream, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     if message:
         # One-shot: answer printed to stdout, then exit.
         exec_argv += ["--print", *message]
+        _print_one_shot_header(agent)
+    _select_omp_bin()
     # Hand the terminal over wholesale either way.
     os.execvp(str(launcher), exec_argv)
 

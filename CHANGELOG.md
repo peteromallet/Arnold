@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`arnold` one-shot runs are branded.** A one-shot invocation (`arnold "…"`) now prints an identity line (`arnold · AgentBox Operator`) to stderr above omp's `Working...` status and sets the terminal tab title to the same brand via OSC 0. TTY-gated: piped output stays clean, and the interactive TUI (which clears the screen and owns its own title) is unchanged.
+- **`arnold` prefers the branded omp build.** When `~/Documents/oh-my-pi/packages/coding-agent/dist/omp` exists, runs go through the rebranded fork binary (`arnold/17.2.12`, `Arnold working...`, `arnold` tab-title brand). `OMP_BIN` in the environment always wins; `ARNOLD_STOCK_OMP=1` opts back out.
+
 ## 0.23.0
 
 This release lands the pipeline rationalization + dynamic primitives sprint: `doc` and `creative` graduate to first-class atomic pipelines, the legacy `--mode doc|creative|metaplan|joke` axis is deprecated on `megaplan init`, the bake-off `metaplan` alias is removed, and the pattern library gains five run-time-decided primitives.
