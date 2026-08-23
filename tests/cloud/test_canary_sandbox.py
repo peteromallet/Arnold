@@ -20,20 +20,27 @@ pair so the generation build stays hermetic/offline — proving:
 from __future__ import annotations
 import json
 import os
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from arnold_pipelines.megaplan.cloud.canary_sandbox import (
     CanaryError,
+    PHASE_FILE,
+    PID_FILE,
     REDIRECTED_ENV_VARS,
     build,
     containment_violations,
+    liveness,
     restore,
     sandbox_env_spec,
     take_snapshot,
 )
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -532,3 +539,152 @@ def test_restore_cli_wrapper_end_to_end(tmp_path: Path, source_repo: Path) -> No
     verdict = json.loads(proc.stdout)
     assert verdict["mode"] == "verify_only"
     assert verdict["ok"] is False  # post-flow state differs from baseline
+
+
+# ── supervision + crash recovery (deliverable 3) ────────────────────────────
+
+_MODULE = "arnold_pipelines.megaplan.cloud.canary_sandbox"
+
+
+def _wait_for_phase(root: Path, phase: str, timeout: float = 300.0) -> bool:
+    deadline = time.monotonic() + timeout
+    phase_file = root / PHASE_FILE
+    while time.monotonic() < deadline:
+        if phase_file.is_file() and phase_file.read_text().strip() == phase:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _canary_argv(*args: str) -> list[str]:
+    return [sys.executable, "-m", _MODULE, *args]
+
+
+@pytest.mark.integration
+def test_supervisor_restores_after_external_kill_9_mid_flow(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """kill -9 mid-flow -> the EXTERNAL supervisor rolls the state back."""
+
+    root = tmp_path / "canary-root"
+    env = {
+        **os.environ,
+        "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE": "promotion-adjacent-mutation",
+    }
+    supervisor = subprocess.Popen(
+        _canary_argv(
+            "build",
+            "--supervise",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+            "--supervisor-timeout",
+            "240",
+        ),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert _wait_for_phase(root, "promotion-adjacent-mutation"), (
+            (root / "logs" / "worker.log").read_text()[-4000:]
+            if (root / "logs" / "worker.log").is_file()
+            else "worker never reached the pause phase"
+        )
+        worker_pid = int((root / PID_FILE).read_text().strip())
+        os.kill(worker_pid, signal.SIGKILL)  # REAL external kill -9
+        out, _ = supervisor.communicate(timeout=240)
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.communicate()
+    assert supervisor.returncode == 0, out[-4000:]
+
+    report = json.loads((root / "report.json").read_text())
+    assert report["mode"] == "build-supervised"
+    assert report["outcome"] == "killed_by_signal_9", report["outcome"]
+    assert report["recovery"]["ok"] is True
+    # State is back at the prepared baseline: gen-1 pointer, no retention.
+    pointer = json.loads((root / "manifests" / "runtime-manifest.json").read_text())
+    assert pointer["generation"] == 1
+    assert not list((root / "manifests").glob("runtime-manifest.json.previous-*.json"))
+    assert (root / PHASE_FILE).read_text().strip() == "recovered-by-supervisor"
+    # Independent verification agrees with the supervisor's verdict.
+    verdict = restore(root, verify_only=True)
+    assert verdict["ok"] is True, verdict["mismatches"]
+
+
+@pytest.mark.integration
+def test_restart_recovery_after_container_death(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """Container death kills flow AND any supervisor: rollback on NEXT start."""
+
+    root = tmp_path / "canary-root"
+    env = {**os.environ, "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE": "probe-commit"}
+    flow = subprocess.Popen(
+        _canary_argv("build", "--source-repo", str(source_repo), "--root", str(root)),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert _wait_for_phase(root, "probe-commit"), (
+        "flow never reached probe-commit (snapshot already taken)"
+    )
+    flow_pid = int((root / PID_FILE).read_text().strip())
+    assert flow_pid == flow.pid  # unsupervised build: flow IS this process
+    os.kill(flow_pid, signal.SIGKILL)
+    assert flow.wait(timeout=30) == -signal.SIGKILL
+    midflow_phase = (root / PHASE_FILE).read_text().strip()
+    assert midflow_phase != "done"
+
+    # Nothing survived (container-death analogue). NEXT START: the standalone
+    # restore liveness-probes the recorded pid and performs the rollback.
+    proc = subprocess.run(
+        _canary_argv("restore", "--root", str(root)),
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    result = json.loads(proc.stdout)
+    assert result["ok"] is True, result["mismatches"]
+    assert result["restart_recovery_detected"] is True
+    assert result["liveness"]["alive"] is False
+    assert result["liveness"]["phase"] == midflow_phase
+    pointer = json.loads((root / "manifests" / "runtime-manifest.json").read_text())
+    assert pointer["generation"] == 1
+
+
+def test_restore_refuses_while_canary_process_alive(tmp_path: Path) -> None:
+    """Fail-closed liveness gate: a possibly-live writer blocks restore."""
+
+    root = _fake_state_root(tmp_path)
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        (root / PID_FILE).write_text(f"{holder.pid}\n")
+        with pytest.raises(CanaryError) as excinfo:
+            restore(root)
+        assert excinfo.value.code == "canary_still_running"
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+    # Once the process is gone, restore proceeds.
+    result = restore(root)
+    assert result["ok"] is True
+
+
+def test_liveness_tracks_real_process_exit(tmp_path: Path) -> None:
+    holder = subprocess.Popen(["sleep", "30"])
+    (tmp_path / PID_FILE).write_text(f"{holder.pid}\n")
+    live = liveness(tmp_path)
+    assert live["pid"] == holder.pid and live["alive"] is True
+    holder.kill()
+    holder.wait(timeout=10)
+    dead = liveness(tmp_path)
+    assert dead["pid"] == holder.pid and dead["alive"] is False

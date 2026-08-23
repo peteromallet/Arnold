@@ -15,6 +15,12 @@
 #
 # Usage: arnold-canary-build build --source-repo <repo> [--root <dir>]
 #            [--slug <slug>] [--base-ref <ref>] [--allow-non-tmp-root]
+#            [--supervise [--supervisor-timeout <seconds>]]
+#
+# --supervise: external supervision (reject finding 4). The flow runs in a
+# setsid'd worker; this CLI stays the supervisor and restores the pre-mutation
+# snapshot if the worker dies uncleanly (SIGKILL, timeout). Container death
+# kills both — recovery on restart: arnold-canary-restore --root <dir>.
 #
 # Refuses to start when the ambient environment carries any protected
 # ARNOLD_* variable (live routing leak) and when any redirected path would

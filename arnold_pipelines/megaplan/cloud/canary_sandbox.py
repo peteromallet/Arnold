@@ -20,6 +20,17 @@ Two installed surfaces back the T7.4 canary contract (mrc reject receipt
     journal + creation/promotion journals + generation store/build locks +
     runtime-root checkout state), verifying byte-exact reconstruction.
 
+``arnold-canary-build build --supervise``
+    Finding 4: in-process ERR/EXIT handling cannot fire on SIGKILL, container
+    death or power loss, so ``--supervise`` runs the flow in a setsid'd
+    worker with THIS process as an external supervisor. Any worker death
+    without the done marker triggers restore() from the pre-mutation
+    snapshot; a wedged flow is SIGKILLed at ``--supervisor-timeout`` (whole
+    process group). If the container itself dies, the supervisor dies too —
+    the durable recovery-on-restart path is then ``arnold-canary-restore``,
+    which liveness-probes the recorded worker pid and refuses to touch state
+    while a canary might still be running.
+
 Assertion honesty (finding 3/4): the builder NEVER claims "zero writes".
 It reports ``no durable protected-state delta in named paths`` — before/after
 recursive SHA-256 digests of the enumerated live protected roots — and states
@@ -40,6 +51,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -50,6 +62,20 @@ from typing import Any
 
 SANDBOX_SCHEMA = "arnold.megaplan.cloud.canary_sandbox.v1"
 SNAPSHOT_SCHEMA = "arnold.megaplan.cloud.canary_snapshot.v1"
+
+# Liveness / supervision bookkeeping, all INSIDE the sandbox root (finding 4:
+# durable crash recovery supervised outside the canary process).
+PHASE_FILE = ".canary-phase"
+HEARTBEAT_FILE = ".canary-heartbeat"
+PID_FILE = ".canary-pid"
+WORKER_SPEC_FILE = "worker-spec.json"
+PHASE_DONE = "done"
+PHASE_RECOVERED = "recovered-by-supervisor"
+# TEST-ONLY hooks (never set in production): the flow SIGKILLs itself after
+# writing the named phase (real uncatchable kill), or pauses there forever
+# so a test can deliver an EXTERNAL kill -9 mid-flow.
+TEST_CRASH_PHASE_ENV = "ARNOLD_CANARY_TEST_CRASH_AFTER_PHASE"
+TEST_PAUSE_PHASE_ENV = "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE"
 
 # The COMPLETE selected-state tuple (reject receipt finding 2), relative to
 # the sandbox root. The pre-mutation snapshot covers exactly these paths;
@@ -559,7 +585,65 @@ def _candidate_module_argv(env: dict[str, str], *args: str) -> list[str]:
 
 
 def _phase(root: Path, name: str) -> None:
-    (root / ".canary-phase").write_text(name + "\n", encoding="utf-8")
+    """Advance the durable phase marker + heartbeat; honor TEST hooks."""
+
+    heartbeat_line = f"{name} {time.time()}\n"
+    (root / PHASE_FILE).write_text(name + "\n", encoding="utf-8")
+    (root / HEARTBEAT_FILE).write_text(heartbeat_line, encoding="utf-8")
+    crash_after = os.environ.get(TEST_CRASH_PHASE_ENV)
+    if crash_after == name:
+        # Real SIGKILL: no cleanup handler, trap or atexit runs — the exact
+        # uncatachable-death class the supervisor must recover from.
+        os.kill(os.getpid(), signal.SIGKILL)
+    pause_at = os.environ.get(TEST_PAUSE_PHASE_ENV)
+    if pause_at == name:
+        # Park mid-flow so a test can deliver an EXTERNAL kill -9.
+        while True:
+            time.sleep(0.2)
+            (root / HEARTBEAT_FILE).write_text(heartbeat_line, encoding="utf-8")
+
+
+def liveness(root: Path) -> dict[str, Any]:
+    """Liveness of the canary process recorded for *root* (finding 4).
+
+    ``alive`` probes the recorded pid with ``os.kill(pid, 0)``. PID reuse
+    cannot be distinguished, so the check is deliberately FAIL-CLOSED: a
+    possibly-alive pid REFUSES restore; only a confirmed-dead pid lets the
+    restart recovery proceed.
+    """
+
+    pid: int | None = None
+    pid_file = root / PID_FILE
+    if pid_file.is_file():
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+        except ValueError:
+            pid = None
+    alive = False
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True  # process exists, owned by another user
+    phase = ""
+    phase_file = root / PHASE_FILE
+    if phase_file.is_file():
+        phase = phase_file.read_text(encoding="utf-8").strip()
+    heartbeat_age = None
+    heartbeat = root / HEARTBEAT_FILE
+    if heartbeat.is_file():
+        heartbeat_age = round(time.time() - heartbeat.stat().st_mtime, 3)
+    return {
+        "pid": pid,
+        "alive": alive,
+        "phase": phase,
+        "heartbeat_age_seconds": heartbeat_age,
+        "caveat": "os.kill(pid, 0) cannot distinguish PID reuse; an "
+        "'alive' verdict refuses restore rather than risk a live writer",
+    }
 
 
 def build(
@@ -570,8 +654,48 @@ def build(
     base_ref: str,
     generation_build_strategy: str | None,
     allow_non_tmp: bool,
+    supervise: bool = False,
+    supervisor_timeout: float = 900.0,
 ) -> dict[str, Any]:
-    """Run the full disposable canary build; returns the report dict."""
+    """Run the disposable canary build, optionally under external supervision."""
+
+    conflicts = ambient_conflicts()
+    if conflicts:
+        raise CanaryError(
+            "ambient_arnold_env",
+            "refusing: ambient environment carries protected ARNOLD_* "
+            "variables (live runtime routing would leak into the canary): "
+            + ", ".join(f"{v}={os.environ[v]}" for v in conflicts),
+        )
+    if supervise:
+        return _build_supervised(
+            source_repo=source_repo,
+            root=root,
+            slug=slug,
+            base_ref=base_ref,
+            generation_build_strategy=generation_build_strategy,
+            allow_non_tmp=allow_non_tmp,
+            supervisor_timeout=supervisor_timeout,
+        )
+    allocated = _allocate_root(str(root) if root else None, allow_non_tmp)
+    return _build_flow(
+        source_repo=source_repo,
+        root=allocated,
+        slug=slug,
+        base_ref=base_ref,
+        generation_build_strategy=generation_build_strategy,
+    )
+
+
+def _build_flow(
+    *,
+    source_repo: Path,
+    root: Path,
+    slug: str,
+    base_ref: str,
+    generation_build_strategy: str | None,
+) -> dict[str, Any]:
+    """The promote-adjacent flow itself; *root* is already allocated/fresh."""
 
     t0 = time.time()
     source_repo = source_repo.resolve(strict=True)
@@ -583,16 +707,11 @@ def build(
     if base_ref in ("HEAD", ""):
         base_ref = head
 
-    conflicts = ambient_conflicts()
-    if conflicts:
-        raise CanaryError(
-            "ambient_arnold_env",
-            "refusing: ambient environment carries protected ARNOLD_* "
-            "variables (live runtime routing would leak into the canary): "
-            + ", ".join(f"{v}={os.environ[v]}" for v in conflicts),
-        )
+    # Liveness record FIRST: any crash leaves a pid a supervisor or a
+    # restart-time restore can probe before touching state.
+    root = Path(root)
+    (root / PID_FILE).write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    root = _allocate_root(str(root) if root else None, allow_non_tmp)
     spec = sandbox_env_spec(root)
     flow_env = _flow_env(spec, root / "src")
     if generation_build_strategy:
@@ -793,6 +912,154 @@ def build(
     _phase(root, "done")
     return report
 
+def _worker_main(spec_path: str) -> int:
+    """Entry point of the supervised flow worker (see _build_supervised)."""
+
+    cfg = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+    _build_flow(
+        source_repo=Path(cfg["source_repo"]),
+        root=Path(cfg["root"]),
+        slug=cfg["slug"],
+        base_ref=cfg.get("base_ref") or "HEAD",
+        generation_build_strategy=cfg.get("generation_build_strategy") or None,
+    )
+    return 0
+
+
+def _build_supervised(
+    *,
+    source_repo: Path,
+    root: Path,
+    slug: str,
+    base_ref: str,
+    generation_build_strategy: str | None,
+    allow_non_tmp: bool,
+    supervisor_timeout: float,
+) -> dict[str, Any]:
+    """Deliverable 3/3: the flow under an EXTERNAL supervisor (finding 4).
+
+    This process IS the supervisor; the flow runs in a worker that
+    ``start_new_session`` puts into its own session/process group (setsid).
+    In-worker ERR/EXIT handling cannot fire on SIGKILL or container death,
+    so rollback lives OUTSIDE the canary process: any worker death without
+    the done marker triggers :func:`restore` from the pre-mutation snapshot.
+
+    If the container/host itself dies, the supervisor dies with it — the
+    durable recovery-on-restart path is then ``arnold-canary-restore
+    --root <root>``, which liveness-probes the recorded worker pid before
+    reconstructing (refuses while a canary might still be running).
+    """
+
+    root = _allocate_root(str(root) if root else None, allow_non_tmp)
+    (root / "logs").mkdir(parents=True, exist_ok=True)
+    worker_spec = {
+        "source_repo": str(source_repo),
+        "root": str(root),
+        "slug": slug,
+        "base_ref": base_ref or "HEAD",
+        "generation_build_strategy": generation_build_strategy or "",
+    }
+    spec_path = root / WORKER_SPEC_FILE
+    spec_path.write_text(
+        json.dumps(worker_spec, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    module = "arnold_pipelines.megaplan.cloud.canary_sandbox"
+    # The worker runs with cwd=sandbox root, where THIS package does not
+    # exist — hand it the builder repo's import path explicitly.
+    builder_root = str(Path(__file__).resolve().parents[3])
+    worker_env = dict(os.environ)
+    prior_path = worker_env.get("PYTHONPATH")
+    worker_env["PYTHONPATH"] = (
+        builder_root + (os.pathsep + prior_path if prior_path else "")
+    )
+    worker_rc: int | None = None
+    timed_out = False
+    with open(root / "logs" / "worker.log", "ab") as log_fh:
+        worker = subprocess.Popen(
+            [sys.executable, "-m", module, "_worker", str(spec_path)],
+            cwd=str(root),
+            env=worker_env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # setsid: worker leads its own pgroup
+        )
+        deadline = time.monotonic() + supervisor_timeout
+        while True:
+            worker_rc = worker.poll()
+            if worker_rc is not None:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                try:
+                    # The worker is its own process-group leader, so this
+                    # reaps the whole tree (git/pip children included).
+                    os.killpg(worker.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                worker_rc = worker.wait(timeout=30)
+                break
+            time.sleep(0.25)
+
+    phase_at_death = ""
+    phase_file = root / PHASE_FILE
+    if phase_file.is_file():
+        phase_at_death = phase_file.read_text(encoding="utf-8").strip()
+
+    if (
+        not timed_out
+        and worker_rc == 0
+        and phase_at_death == PHASE_DONE
+        and (root / "report.json").is_file()
+    ):
+        report = json.loads((root / "report.json").read_text(encoding="utf-8"))
+        report["supervision"] = {
+            "used": True,
+            "outcome": "clean_exit",
+            "worker_returncode": worker_rc,
+            "note": "flow completed under supervision; the pre-mutation "
+            "snapshot is retained for arnold-canary-restore --verify-only",
+        }
+        (root / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return report
+
+    # Unclean death — signal (rc<0, e.g. -9), nonzero exit, or watchdog
+    # timeout SIGKILL. The supervisor rolls the selected state back NOW.
+    if timed_out:
+        outcome = "supervisor_timeout_sigkill"
+    elif worker_rc is not None and worker_rc < 0:
+        outcome = f"killed_by_signal_{-worker_rc}"
+    else:
+        outcome = f"exit_{worker_rc}"
+    recovery = restore(root)
+    result: dict[str, Any] = {
+        "schema": SANDBOX_SCHEMA,
+        "mode": "build-supervised",
+        "root": str(root),
+        "outcome": outcome,
+        "worker_returncode": worker_rc,
+        "phase_at_death": phase_at_death,
+        "liveness": liveness(root),
+        "recovery": {
+            "ok": recovery["ok"],
+            "verified_entries": recovery["verified_entries"],
+            "report": str(root / "snapshot" / RESTORE_REPORT),
+        },
+        "note": "worker ran setsid'd under this supervisor; unclean death "
+        "triggered restore of the pre-mutation snapshot. Container/host "
+        "death kills the supervisor too — the restart path is "
+        "arnold-canary-restore --root <root> (liveness-checked).",
+    }
+    (root / "report.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _phase(root, PHASE_RECOVERED)
+    return result
+
 
 # ── snapshot / restore ──────────────────────────────────────────────────────
 
@@ -988,11 +1255,14 @@ def verify_against_entries(
 def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
     """Restore the complete selected-state tuple from the builder's snapshot.
 
-    Refuses relocation to a different root, verifies the tar digest against
-    the snapshot manifest, wipes the current state of each covered tuple
-    path, extracts with a traversal-safe member filter, then verifies EVERY
-    entry (existence, type, bytes, symlink target, mode). Raises
-    :class:`CanaryError` on any verification failure.
+    Liveness-gated (finding 4): refuses MID-FLOW while the recorded canary
+    pid might still be running; a confirmed-dead pid with a non-done phase
+    is reported as ``restart_recovery_detected`` (container death →
+    next-start rollback). Refuses relocation to a different root, verifies
+    the tar digest against the snapshot manifest, wipes the current state of
+    each covered tuple path, extracts with a traversal-safe member filter,
+    then verifies EVERY entry (existence, type, bytes, symlink target,
+    mode). Raises :class:`CanaryError` on any verification failure.
     """
 
     root = Path(root).expanduser().resolve(strict=False)
@@ -1004,6 +1274,25 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             f"snapshot was taken at root {data['root']}; restoring into "
             f"{root} is refused (worktree admin embeds absolute paths)",
         )
+    liv = liveness(root)
+    restart_recovery_detected = bool(liv["pid"]) and not liv["alive"] and (
+        liv["phase"] not in (PHASE_DONE, PHASE_RECOVERED)
+    )
+    # Fail-closed ONLY mid-flow: a possibly-live writer during the mutation
+    # blocks restore. A done/recovered phase means no flow is running — a
+    # stale (possibly PID-reused) pid must not block re-baselining.
+    if (
+        liv["pid"] is not None
+        and liv["alive"]
+        and liv["phase"] not in (PHASE_DONE, PHASE_RECOVERED)
+        and not verify_only
+    ):
+        raise CanaryError(
+            "canary_still_running",
+            f"liveness check: canary process pid {liv['pid']} appears ALIVE "
+            f"mid-flow (phase={liv['phase']!r}); refusing to restore under "
+            "a live writer — let it exit or kill it first",
+        )
     tar_path = snap_dir / data["tar"]
     actual_tar_sha = _sha256_file(tar_path)
     if actual_tar_sha != data["tar_sha256"]:
@@ -1012,6 +1301,7 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             f"snapshot tar digest mismatch (expected {data['tar_sha256']}, "
             f"got {actual_tar_sha}) — refusing to restore untrusted bytes",
         )
+
 
     if verify_only:
         mismatches = verify_against_entries(root, data["entries"])
@@ -1022,6 +1312,8 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             "ok": not mismatches,
             "mismatches": mismatches[:50],
             "verified_entries": len(data["entries"]) - len(mismatches),
+            "liveness": liv,
+            "restart_recovery_detected": restart_recovery_detected,
             "restored_dimensions": list(RESTORED_DIMENSIONS),
             "not_covered_dimensions": list(NOT_COVERED_DIMENSIONS),
         }
@@ -1092,6 +1384,8 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
         "mismatches": mismatches[:50],
         "extracted_members": extracted,
         "verified_entries": len(data["entries"]) - len(mismatches),
+        "liveness": liv,
+        "restart_recovery_detected": restart_recovery_detected,
         "wiped_paths": wiped,
         "coverage": data["coverage"],
         "restored_dimensions": list(RESTORED_DIMENSIONS),
@@ -1128,6 +1422,23 @@ def main(argv: list[str] | None = None) -> int:
     build_p.add_argument("--base-ref", default="HEAD")
     build_p.add_argument("--generation-build-strategy", default="")
     build_p.add_argument("--allow-non-tmp-root", action="store_true")
+    build_p.add_argument(
+        "--supervise",
+        action="store_true",
+        help="run the flow in a setsid'd worker under THIS process as an "
+        "external supervisor; restore the snapshot on unclean death "
+        "(SIGKILL/timeout/container-death restart via arnold-canary-restore)",
+    )
+    build_p.add_argument(
+        "--supervisor-timeout",
+        type=float,
+        default=900.0,
+        help="seconds before the supervisor SIGKILLs a wedged flow (default 900)",
+    )
+
+    # Hidden: entry point of the supervised worker (never user-facing).
+    worker_p = sub.add_parser("_worker")
+    worker_p.add_argument("spec")
 
     restore_p = sub.add_parser(
         "restore",
@@ -1152,9 +1463,13 @@ def main(argv: list[str] | None = None) -> int:
                 base_ref=args.base_ref,
                 generation_build_strategy=args.generation_build_strategy or None,
                 allow_non_tmp=args.allow_non_tmp_root,
+                supervise=args.supervise,
+                supervisor_timeout=args.supervisor_timeout,
             )
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0
+        if args.command == "_worker":
+            return _worker_main(args.spec)
         if args.command == "restore":
             result = restore(args.root, verify_only=args.verify_only)
             print(json.dumps(result, indent=2, sort_keys=True))
