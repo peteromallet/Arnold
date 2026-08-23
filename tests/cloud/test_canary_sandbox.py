@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud.canary_sandbox import (
+    PID_IDENTITY_FILE,
     SNAPSHOT_ANCHOR_FILE,
     CanaryError,
     PHASE_FILE,
@@ -963,6 +964,141 @@ def _wait_for_phase(root: Path, phase: str, timeout: float = 300.0) -> bool:
 
 def _canary_argv(*args: str) -> list[str]:
     return [sys.executable, "-m", _MODULE, *args]
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+@pytest.mark.integration
+def test_unclean_worker_death_reaps_surviving_child_subprocess(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """FAILURE INJECTION (G7.4-PRE-2 item 3): the worker leaves a REAL child
+    subprocess alive inside its process group; an external SIGKILL of the
+    WORKER ONLY must not let restore race that child — the supervisor kills
+    the whole recorded group and PROVES it gone before restoring."""
+
+    root = tmp_path / "canary-root"
+    env = {
+        **os.environ,
+        "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE": "promotion-adjacent-mutation",
+        "ARNOLD_CANARY_TEST_SPAWN_CHILD_AT_PHASE": "promotion-adjacent-mutation",
+    }
+    supervisor = subprocess.Popen(
+        _canary_argv(
+            "build",
+            "--supervise",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+            "--supervisor-timeout",
+            "240",
+        ),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert _wait_for_phase(root, "promotion-adjacent-mutation"), (
+            (root / "logs" / "worker.log").read_text()[-4000:]
+            if (root / "logs" / "worker.log").is_file()
+            else "worker never reached the pause phase"
+        )
+        worker_pid = int((root / PID_FILE).read_text().strip())
+        child_pid = int((root / ".canary-test-child-pid").read_text().strip())
+        assert _pid_alive(child_pid), "injected child should be alive mid-flow"
+        os.kill(worker_pid, signal.SIGKILL)  # kill the LEADER only
+        out, _ = supervisor.communicate(timeout=240)
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.communicate()
+    assert supervisor.returncode == 0, out[-4000:]
+
+    report = json.loads((root / "report.json").read_text())
+    assert report["outcome"] == "killed_by_signal_9", report["outcome"]
+    reaping = report["stages"]["mutate"]["process_group"]
+    assert reaping is not None and reaping["sigkill_delivered"] is True
+    assert reaping["group_proven_gone"] is True
+    assert report["recovery"]["attempted"] is True
+    assert report["recovery"]["ok"] is True
+    # The surviving child was reaped WITH the group before restore ran.
+    assert not _pid_alive(child_pid), (
+        f"child pid {child_pid} survived the supervised recovery"
+    )
+    # Supervisor persisted PGID + start identity outside the sandbox root.
+    sup_record = json.loads(
+        (supervisor_dir(root) / "supervisor.json").read_text()
+    )
+    mutate_workers = [w for w in sup_record["workers"] if w["stage"] == "mutate"]
+    assert mutate_workers and mutate_workers[-1]["identity"]["pgid"] == worker_pid
+    assert mutate_workers[-1]["identity"]["lstart"]
+
+
+def test_restart_liveness_checks_pgid_and_start_identity(tmp_path: Path) -> None:
+    """A live PID alone must NOT wedge recovery forever: with recorded
+    PGID+start identity MISMATCHING the live process (PID reuse), restore
+    proceeds; with MATCHING identity it stays fail-closed; with NO recorded
+    identity (legacy PID file) it stays fail-closed."""
+
+    root = _fake_state_root(tmp_path)
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        import arnold_pipelines.megaplan.cloud.canary_sandbox as cs
+
+        real_identity = cs._process_identity(holder.pid)
+        # 1) Matching identity -> definitely our old writer -> refuse.
+        (root / PID_FILE).write_text(f"{holder.pid}\n")
+        (root / PID_IDENTITY_FILE).write_text(json.dumps(real_identity))
+        liv = liveness(root)
+        assert liv["alive"] is True and liv["identity_match"] is True
+        with pytest.raises(CanaryError) as excinfo:
+            restore(root)
+        assert excinfo.value.code == "canary_still_running"
+
+        # 2) Mismatching identity -> PID reuse -> restore proceeds.
+        (root / PID_IDENTITY_FILE).write_text(
+            json.dumps(
+                {
+                    "pid": holder.pid,
+                    "pgid": (real_identity["pgid"] or 0) + 5_000_000,
+                    "lstart": "Thu Jan  1 00:00:00 2026",
+                }
+            )
+        )
+        liv = liveness(root)
+        assert liv["alive"] is True and liv["identity_match"] is False
+        result = restore(root)
+        assert result["ok"] is True, result["mismatches"]
+        assert result["liveness"]["identity_match"] is False
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+    # 3) Legacy bare-pid record, no identity file -> fail closed while alive.
+    root2 = tmp_path / "fake-root-legacy"
+    (root2 / "manifests").mkdir(parents=True)
+    (root2 / "manifests" / "runtime-manifest.json").write_text('{"generation": 1}\n')
+    take_snapshot(root2)
+    holder2 = subprocess.Popen(["sleep", "30"])
+    try:
+        (root2 / PID_FILE).write_text(f"{holder2.pid}\n")
+        liv = liveness(root2)
+        assert liv["identity_match"] is None
+        with pytest.raises(CanaryError) as excinfo2:
+            restore(root2)
+        assert excinfo2.value.code == "canary_still_running"
+    finally:
+        holder2.kill()
+        holder2.wait(timeout=10)
 
 
 @pytest.mark.integration

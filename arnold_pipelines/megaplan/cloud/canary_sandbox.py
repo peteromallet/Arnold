@@ -84,6 +84,11 @@ RESTORE_REPORT = "restore-report.json"
 # so a test can deliver an EXTERNAL kill -9 mid-flow.
 TEST_CRASH_PHASE_ENV = "ARNOLD_CANARY_TEST_CRASH_AFTER_PHASE"
 TEST_PAUSE_PHASE_ENV = "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE"
+TEST_SPAWN_CHILD_PHASE_ENV = "ARNOLD_CANARY_TEST_SPAWN_CHILD_AT_PHASE"
+# Extended liveness identity (G7.4-PRE-2 item 3): PID_FILE keeps the bare
+# pid for compatibility; this sibling file adds PGID + process-start
+# identity so restart recovery can tell a live OURS from a reused PID.
+PID_IDENTITY_FILE = ".canary-pid-identity.json"
 
 # The COMPLETE selected-state tuple (reject receipt finding 2), relative to
 # the sandbox root. The pre-mutation snapshot covers exactly these paths;
@@ -667,6 +672,15 @@ def _phase(root: Path, name: str) -> None:
     heartbeat_line = f"{name} {time.time()}\n"
     (root / PHASE_FILE).write_text(name + "\n", encoding="utf-8")
     (root / HEARTBEAT_FILE).write_text(heartbeat_line, encoding="utf-8")
+    spawn_child_at = os.environ.get(TEST_SPAWN_CHILD_PHASE_ENV)
+    if spawn_child_at == name:
+        # TEST-ONLY failure injection: leave a REAL child subprocess alive
+        # inside the worker's process group so hardening tests can prove the
+        # supervisor reaps the whole group, not just the leader.
+        child = subprocess.Popen(["sleep", "300"])
+        (root / ".canary-test-child-pid").write_text(
+            f"{child.pid}\n", encoding="utf-8"
+        )
     crash_after = os.environ.get(TEST_CRASH_PHASE_ENV)
     if crash_after == name:
         # Real SIGKILL: no cleanup handler, trap or atexit runs — the exact
@@ -678,6 +692,59 @@ def _phase(root: Path, name: str) -> None:
         while True:
             time.sleep(0.2)
             (root / HEARTBEAT_FILE).write_text(heartbeat_line, encoding="utf-8")
+
+
+def _process_identity(pid: int) -> dict[str, Any] | None:
+    """PGID + process-start identity for *pid* (``ps``; macOS/Linux).
+
+    ``lstart`` is stable per process INSTANCE, so a live lookup matching a
+    recorded ``lstart``+``pgid`` distinguishes OUR old worker from a reused
+    PID that happens to be alive.
+    """
+
+    proc = _run(
+        ["ps", "-o", "pgid=,lstart=", "-p", str(pid)],
+        check=False,
+    )
+    out = proc.stdout.strip()
+    if proc.returncode != 0 or not out:
+        return None
+    parts = out.split(None, 1)
+    if len(parts) != 2 or not parts[0].isdigit():
+        return None
+    return {"pid": pid, "pgid": int(parts[0]), "lstart": parts[1].strip()}
+
+
+def _reap_process_group(pgid: int, leader: subprocess.Popen) -> dict[str, Any]:
+    """SIGKILL the ENTIRE recorded process group, then PROVE it is gone.
+
+    Order matters: SIGKILL first, THEN reap the leader (its zombie would
+    otherwise keep ``killpg(..., 0)`` reporting the group alive), then poll
+    until the group lookup raises ProcessLookupError — only then may
+    restore touch state (G7.4-PRE-2 item 3).
+    """
+
+    detail: dict[str, Any] = {"pgid": pgid}
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        detail["sigkill_delivered"] = True
+    except ProcessLookupError:
+        detail["sigkill_delivered"] = False
+    try:
+        leader.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+    deadline = time.monotonic() + 15.0
+    proven = False
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+            time.sleep(0.05)
+        except ProcessLookupError:
+            proven = True
+            break
+    detail["group_proven_gone"] = proven
+    return detail
 
 
 def liveness(root: Path) -> dict[str, Any]:
@@ -697,6 +764,9 @@ def liveness(root: Path) -> dict[str, Any]:
         except ValueError:
             pid = None
     alive = False
+    identity_match: bool | None = None
+    recorded_identity: dict[str, Any] | None = None
+    current_identity: dict[str, Any] | None = None
     if pid is not None:
         try:
             os.kill(pid, 0)
@@ -705,6 +775,34 @@ def liveness(root: Path) -> dict[str, Any]:
             alive = False
         except PermissionError:
             alive = True  # process exists, owned by another user
+        ident_file = root / PID_IDENTITY_FILE
+        if ident_file.is_file():
+            try:
+                recorded_identity = json.loads(
+                    ident_file.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                recorded_identity = None
+        if alive:
+            # G7.4-PRE-2 item 3: a live pid alone is NOT proof our canary is
+            # still running — PIDs get reused. Match PGID AND start identity
+            # when the worker recorded them; fail closed when it did not.
+            current_identity = _process_identity(pid)
+            if (
+                recorded_identity
+                and current_identity
+                and recorded_identity.get("lstart") is not None
+            ):
+                # A record whose OWN ps lookup failed (null lstart) proves
+                # nothing either way — unknown, never "mismatch".
+                identity_match = (
+                    recorded_identity.get("lstart")
+                    == current_identity.get("lstart")
+                    and recorded_identity.get("pgid")
+                    in (None, current_identity.get("pgid"))
+                )
+            else:
+                identity_match = None  # unknown -> fail closed downstream
     phase = ""
     phase_file = root / PHASE_FILE
     if phase_file.is_file():
@@ -716,10 +814,15 @@ def liveness(root: Path) -> dict[str, Any]:
     return {
         "pid": pid,
         "alive": alive,
+        "identity_match": identity_match,
+        "recorded_identity": recorded_identity,
+        "current_identity": current_identity,
         "phase": phase,
         "heartbeat_age_seconds": heartbeat_age,
-        "caveat": "os.kill(pid, 0) cannot distinguish PID reuse; an "
-        "'alive' verdict refuses restore rather than risk a live writer",
+        "caveat": "an 'alive' verdict blocks restore only when the recorded "
+        "PGID+start identity ALSO match (definitely our old worker) or when "
+        "no identity was recorded (fail-closed); a live pid with mismatched "
+        "identity is PID reuse and must not wedge recovery forever",
     }
 
 
@@ -818,7 +921,19 @@ def _build_flow(
 
     # Liveness record FIRST: any crash leaves a pid a supervisor or a
     # restart-time restore can probe before touching state.
-    (root / PID_FILE).write_text(f"{os.getpid()}\n", encoding="utf-8")
+    _pid = os.getpid()
+    (root / PID_FILE).write_text(f"{_pid}\n", encoding="utf-8")
+    # Persist PGID + start identity so restart recovery can tell a live
+    # OURS from a reused PID (G7.4-PRE-2 item 3).
+    _ident = _process_identity(_pid) or {}
+    (root / PID_IDENTITY_FILE).write_text(
+        json.dumps(
+            {"pid": _pid, "pgid": _ident.get("pgid"), "lstart": _ident.get("lstart")},
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     for sub in ("home", "tmp", "xdg/cache", "xdg/config", "xdg/data", "xdg/state",
                 "cache/pip", "cache/uv", "base", "manifests", "markers",
@@ -1080,16 +1195,22 @@ def _run_supervised_worker(
     log_path: Path,
     worker_env: dict[str, str],
     timeout: float,
-) -> tuple[int | None, bool]:
-    """Run ONE setsid'd worker stage; returns ``(returncode, timed_out)``.
+    on_spawn=None,
+) -> tuple[int | None, bool, dict[str, Any] | None]:
+    """Run ONE setsid'd worker stage.
 
-    The worker is its own process-group leader (start_new_session), so the
-    watchdog timeout SIGKILLs the whole group — git/pip children included.
+    Returns ``(returncode, timed_out, reaping)``. On EVERY unclean outcome —
+    nonzero exit, death by signal, or watchdog timeout — the ENTIRE recorded
+    process group is SIGKILLed and PROVEN gone before returning, so restore
+    can never race a surviving git/pip child (G7.4-PRE-2 item 3). *on_spawn*
+    receives ``(pid, identity)`` immediately after spawn so the supervisor
+    can persist PGID + start identity outside the sandbox.
     """
 
     module = "arnold_pipelines.megaplan.cloud.canary_sandbox"
     worker_rc: int | None = None
     timed_out = False
+    reaping: dict[str, Any] | None = None
     with open(log_path, "ab") as log_fh:
         worker = subprocess.Popen(
             [sys.executable, "-m", module, "_worker", str(spec_path)],
@@ -1099,6 +1220,8 @@ def _run_supervised_worker(
             stderr=subprocess.STDOUT,
             start_new_session=True,  # setsid: worker leads its own pgroup
         )
+        if on_spawn is not None:
+            on_spawn(worker.pid, _process_identity(worker.pid))
         deadline = time.monotonic() + timeout
         while True:
             worker_rc = worker.poll()
@@ -1106,14 +1229,16 @@ def _run_supervised_worker(
                 break
             if time.monotonic() >= deadline:
                 timed_out = True
-                try:
-                    os.killpg(worker.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                worker_rc = worker.wait(timeout=30)
                 break
-            time.sleep(0.25)
-    return worker_rc, timed_out
+        unclean = timed_out or worker_rc != 0
+        if unclean:
+            reaping = _reap_process_group(worker.pid, worker)
+            # _reap_process_group already waited on the leader; recover
+            # the recorded exit status for the report.
+            worker_rc = worker.poll()
+            if worker_rc is None:
+                worker_rc = worker.wait(timeout=30)
+    return worker_rc, timed_out, reaping
 
 
 def _outcome_label(worker_rc: int | None, timed_out: bool) -> str:
@@ -1166,7 +1291,11 @@ def _build_supervised(
     # SANITIZED worker env (reject finding 1): allowlisted passthrough plus
     # the redirected spec only; ONLY the test-only hooks are forwarded.
     worker_env = _flow_env(sandbox_env_spec(root), Path(builder_root))
-    for hook in (TEST_CRASH_PHASE_ENV, TEST_PAUSE_PHASE_ENV):
+    for hook in (
+        TEST_CRASH_PHASE_ENV,
+        TEST_PAUSE_PHASE_ENV,
+        TEST_SPAWN_CHILD_PHASE_ENV,
+    ):
         if hook in os.environ:
             worker_env[hook] = os.environ[hook]
 
@@ -1192,6 +1321,27 @@ def _build_supervised(
 
     log_path = root / "logs" / "worker.log"
     stages: dict[str, Any] = {}
+    supervisor_record = supervisor_dir(root) / "supervisor.json"
+
+    def note_worker(stage: str, pid: int, identity: dict | None) -> None:
+        # Persist PGID + start identity OUTSIDE the sandbox so a restart
+        # recovery can verify whether a live PID is really our old worker.
+        supervisor_record.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            records = json.loads(supervisor_record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            records = {"workers": []}
+        records.setdefault("workers", []).append(
+            {
+                "stage": stage,
+                "pid": pid,
+                "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "identity": identity,
+            }
+        )
+        tmp = supervisor_record.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, supervisor_record)
 
     def finish(result: dict[str, Any], phase: str | None = None) -> dict[str, Any]:
         result["stages"] = stages
@@ -1205,10 +1355,18 @@ def _build_supervised(
         return result
 
     # ── stage 1: prepare ────────────────────────────────────────────────
-    prep_rc, prep_timed_out = _run_supervised_worker(
-        spec_for("prepare"), log_path, worker_env, supervisor_timeout
+    prep_rc, prep_timed_out, prep_reaping = _run_supervised_worker(
+        spec_for("prepare"),
+        log_path,
+        worker_env,
+        supervisor_timeout,
+        on_spawn=lambda pid, ident: note_worker("prepare", pid, ident),
     )
-    stages["prepare"] = {"returncode": prep_rc, "timed_out": prep_timed_out}
+    stages["prepare"] = {
+        "returncode": prep_rc,
+        "timed_out": prep_timed_out,
+        "process_group": prep_reaping,
+    }
 
     snap_dir = root / SNAPSHOT_DIR
     manifest_path = snap_dir / SNAPSHOT_MANIFEST
@@ -1284,10 +1442,18 @@ def _build_supervised(
     )
 
     # ── stage 2: mutate ─────────────────────────────────────────────────
-    mut_rc, mut_timed_out = _run_supervised_worker(
-        spec_for("mutate"), log_path, worker_env, supervisor_timeout
+    mut_rc, mut_timed_out, mut_reaping = _run_supervised_worker(
+        spec_for("mutate"),
+        log_path,
+        worker_env,
+        supervisor_timeout,
+        on_spawn=lambda pid, ident: note_worker("mutate", pid, ident),
     )
-    stages["mutate"] = {"returncode": mut_rc, "timed_out": mut_timed_out}
+    stages["mutate"] = {
+        "returncode": mut_rc,
+        "timed_out": mut_timed_out,
+        "process_group": mut_reaping,
+    }
 
     phase_at_death = ""
     phase_file = root / PHASE_FILE
@@ -1345,6 +1511,32 @@ def _build_supervised(
             f"report at {root / 'report.json'}",
         )
 
+    if mut_reaping is not None and not mut_reaping.get("group_proven_gone"):
+        # The whole recorded group must be PROVEN gone before any restore
+        # touches state; a surviving git/pip child would race the rollback.
+        result = finish(
+            {
+                "schema": SANDBOX_SCHEMA,
+                "mode": "build-supervised",
+                "root": str(root),
+                "outcome": "worker_group_survived_sigkill",
+                "worker_returncode": mut_rc,
+                "phase_at_death": phase_at_death,
+                "process_group": mut_reaping,
+                "liveness": liveness(root),
+                "recovery": {
+                    "attempted": False,
+                    "reason": "the worker process group did not provably "
+                    "die after SIGKILL — restoring under a surviving "
+                    "writer would race it",
+                },
+            }
+        )
+        raise CanaryError(
+            "worker_group_survived_sigkill",
+            "could not prove the worker process group gone after SIGKILL; "
+            f"no restore attempted — inspect {root / 'report.json'}",
+        )
     outcome = _outcome_label(mut_rc, mut_timed_out)
     recovery = restore(root)
     result: dict[str, Any] = {
@@ -1643,12 +1835,13 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
     # Fail-closed ONLY mid-flow: a possibly-live writer during the mutation
     # blocks restore. A done/recovered phase means no flow is running — a
     # stale (possibly PID-reused) pid must not block re-baselining.
-    if (
+    alive_writer_blocks = (
         liv["pid"] is not None
         and liv["alive"]
+        and liv["identity_match"] is not False  # verified ours OR unknown
         and liv["phase"] not in (PHASE_DONE, PHASE_RECOVERED)
-        and not verify_only
-    ):
+    )
+    if alive_writer_blocks and not verify_only:
         raise CanaryError(
             "canary_still_running",
             f"liveness check: canary process pid {liv['pid']} appears ALIVE "
