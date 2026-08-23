@@ -1,0 +1,13 @@
+== dead-state capture T74RESUME5 S9 halt ==
+captured_at_utc: 2026-08-23T22:02:04Z
+phase_file: failed-before-snapshot
+c7c5dcd10749727892602d469e8606ebfff2beeddf906dee22fc511906f9d585  /tmp/arnold-t74-20260823T040812Z-3347570-clean/.canary-heartbeat
+26aed45df0d34a0c0cf0c12b33c53107ac8b849a13047f70aedd131ea9a3550d  /tmp/arnold-t74-20260823T040812Z-3347570-clean/.canary-phase
+5446320f67322c99d1b6644701058b05145906261353ff422939ae2999eea545  /tmp/arnold-t74-20260823T040812Z-3347570-clean/.canary-pid
+7c0c1dbe3e873c7884aca637fd21ace97d3d63959aea545caa1aea60902fd520  /tmp/arnold-t74-20260823T040812Z-3347570-clean/.canary-pid-identity.json
+f68ecc30e77d0b10e26c92307c53a0e7f72eaf0f480b0979b1ade4e83741fb7e  /tmp/arnold-t74-20260823T040812Z-3347570-clean/report.json
+c6d6758d9a65606233a9d3244613e961c7692dc82f11801eceb99123a35c7363  /tmp/arnold-t74-20260823T040812Z-3347570-clean/sandbox-env.json
+b023eff89f1f0db891675a11b59ab150d56c75e80877ddd59b16d2408f59e294  /tmp/arnold-t74-20260823T040812Z-3347570-clean/worker-spec.json
+b76c91aac4a802abf0b8cd9c129b758fe8536df4a3b8828207213d3928ffcf55  /tmp/arnold-t74-20260823T040812Z-3347570-clean.supervisor/supervisor.json
+== generation census ==
+gen_files=7992 gen_nlink_gt_1=0

@@ -1,0 +1,11 @@
+#!/bin/sh
+# T74RESUME5 remedy D (JUDG-S9 blend): PATH-staged uv wrapper.
+# Forces UV_LINK_MODE=copy in the child env of every uv spawn so cached
+# wheels are copied, never hardlinked, into generation venvs. PATH is
+# inside the candidate's _ENV_PASSTHROUGH allowlist (canary_sandbox.py:165),
+# so this changes invocation only: zero candidate-code change, zero
+# snapshot-contract change. Child binary is the digest-verified staged
+# uv 0.12.5 (sha256 b65f23a420c4acc96427efb30e5ed9bc0f7e25d2d712000f6ede77c1a0de5f46).
+set -eu
+export UV_LINK_MODE=copy
+exec /tmp/arnold-t74-resume3-uv/bin/uv "$@"

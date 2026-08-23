@@ -1,7 +1,7 @@
 {
  "schema": "arnold.t7.4.resume_verdict.v1",
- "task": "T74RESUME4",
- "generated_at_utc": "2026-08-23T23:10:00Z",
+ "task": "T74RESUME5",
+ "generated_at_utc": "2026-08-23T22:20:00Z",
  "run_id": "t74-20260823T040812Z-3347570",
  "box": {
   "ssh": "root@159.69.51.216",
@@ -17,7 +17,7 @@
   "shipped_container_path": "/tmp/arnold-t74-20260823T040812Z-3347570/oom-history-attestation.shipped.json",
   "shipped_sha256": "5d50475e796782a4b5cc46fb56973fa3b2f7b249c955a6ff3d95ae3f5cc4ef5f",
   "independent_verification_receipt": "mrc-3a13409a",
-  "note": "Unchanged from T74RESUME2c/RESUME3: shipped copy is field-identical to the committed one except evidence/prior-helper/rule-receipt path strings remapped to container-local copies; every remapped file's SHA-256 equals its committed counterpart."
+  "note": "Unchanged from T74RESUME2c/RESUME3/RESUME4: shipped copy is field-identical to the committed one except evidence/prior-helper/rule-receipt path strings remapped to container-local copies; every remapped file's SHA-256 equals its committed counterpart."
  },
  "steps": [
   {"step": "S1", "name": "freeze constants / session env", "status": "pass_prior_session", "note": "Carried from T74RESUME2c records; frozen env.sh intact and re-sourced this session at /tmp/arnold-t74-latest-run -> run dir."},
@@ -26,10 +26,10 @@
   {"step": "S4", "name": "install CLI runner", "status": "pass_prior_session", "note": "Carried: t74-run-cli.py digest ee49c544… re-verified this session."},
   {"step": "S5", "name": "install assertions/digests", "status": "pass_prior_session", "note": "Carried: t74-assert.py digest 85d45251… re-verified this session."},
   {"step": "S6", "name": "validate evidence pack candidate", "status": "pass_prior_session", "note": "Carried: evidence-validator.json NDJSON preserved on host run dir."},
-  {"step": "S7", "name": "quiescence preflight", "status": "pass_prior_session", "note": "Carried; this session's pre-S9 check showed watchdog-only ambient activity (listener-only allowed), no canary/megaplan workers."},
-  {"step": "S8", "name": "amended comparator S8 + full T0.0 snapshot", "status": "pass", "note": "Carried from T74RESUME2c: accepted_historical_exception record r2; full streaming-v2 T0.0 snapshot completed 18:32 UTC, no third OOM; helper digests re-verified byte-identical at T74RESUME3 and again at T74RESUME4 start."},
-  {"step": "S9", "name": "clean supervised canary build (--generation-build-strategy uv + uv.toml link-mode=copy amendment)", "status": "fail", "attempts": [
-    {"n": 1, "when_utc": "2026-08-23T20:30:35Z launch, death ~20:44Z", "exit": 2, "cause": "amendment 9d06fdfe21 executed as authorized but NEUTRALIZED by uv project-config boundary semantics: staged container /tmp/uv.toml (link-mode = \"copy\", sha256 8a2864b8e80a0d644f485940c064d83b15eadd6bee001b61c960dca0c95376e0) is an ancestor of the sandbox project root, yet the candidate's committed pyproject.toml carries a [tool.uv] table (line 103), which makes uv 0.12.5 treat the project as its own settings root and NOT merge ancestor-directory uv.toml files. Install therefore ran in default hardlink mode; prepare reached phase=snapshot (runtime-create SUCCEEDED, generation venv 05b40a47e3e6b501 built past the audioop-lts wall exactly as in T74RESUME3) and take_snapshot refused the nlink=2 generation state (hardlink_unsupported). Supervisor containment proven: failed_before_snapshot (exit_2), phase_at_death snapshot, group_proven_gone true, zero mutation. Evidence: clean-build.stdout.uv.r4.json, t74resume4-dead-state.capture.txt."}
+  {"step": "S7", "name": "quiescence preflight", "status": "pass_prior_session", "note": "Carried; fence re-read at this session start showed watchdog-only ambient activity; oom=2 oom_kill=2 invariant held."},
+  {"step": "S8", "name": "amended comparator S8 + full T0.0 snapshot", "status": "pass", "note": "Carried from T74RESUME2c: accepted_historical_exception record r2; full streaming-v2 T0.0 snapshot completed 18:32 UTC 2026-08-23, no third OOM; helper digests re-verified byte-identical at T74RESUME3/4 and again at T74RESUME5 start."},
+  {"step": "S9", "name": "clean supervised canary build (--generation-build-strategy uv + JUDG-S9 remedy D wrapper)", "status": "fail", "attempts": [
+    {"n": 1, "when_utc": "2026-08-23T21:42:38Z launch, supervisor SIGKILL 21:59:02Z (~16.4 min)", "exit": "build CLI exited 0 reporting structured failed_before_snapshot (worker_returncode -9); staged-script exit arc=1 after t74-assert crashed KeyError 'candidate' on the failure-schema report", "cause": "fixed supervisor budget exhausted: --supervisor-timeout 900 elapsed during prepare/snapshot and the supervisor SIGKILLed the prepare process group (group_proven_gone true, timed_out true). Remedy D itself was mechanically EFFECTIVE: the generation venv built by this attempt (05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc) has 7992 files with nlink>1 count = 0 across the entire tree take_snapshot scans — the resume3/resume4 hardlink wall is gone under the candidate's real [tool.uv] config. The death point moved from hardlink_unsupported-refusal to time-bound SIGKILL because this session's containment-audit (~97 GB protected-root census) ran on a cold page cache and consumed ~15 min of the 900 s budget before runtime-create (+copy-mode install I/O vs hardlink) and the full-tree snapshot scan could complete inside it."}
   ]},
   {"step": "S10a", "name": "config/profile/manifest reads+attest", "status": "not_run_blocked_by_s9"},
   {"step": "S10b", "name": "read-only plan surfaces probe", "status": "not_run_blocked_by_s9"},
@@ -38,71 +38,91 @@
   {"step": "S12a", "name": "verify-only dirty expectation", "status": "not_run_blocked_by_s9"},
   {"step": "S12b", "name": "standalone restore", "status": "not_run_blocked_by_s9"},
   {"step": "S12c", "name": "verify-only clean both roots (rollback 0-durable-delta)", "status": "not_run_blocked_by_s9"},
-  {"step": "S13", "name": "post-rollback exact comparison + OOM-fence recheck (amended)", "status": "not_run_blocked_by_s9", "note": "Staged script /root/t74-resume2/s13-amended-compare.sh re-verified byte-identical to recorded digest 0bee9c896528d8a5fbc4b40cf00e3007bdf3d1ad1e459e2a2f5fc12b6eaca4a3 at T74RESUME4 start; never executed (blocked by S9)."},
+  {"step": "S13", "name": "post-rollback exact comparison + OOM-fence recheck (amended)", "status": "not_run_blocked_by_s9", "note": "Staged script /root/t74-resume2/s13-amended-compare.sh re-verified byte-identical to recorded digest 0bee9c896528d8a5fbc4b40cf00e3007bdf3d1ad1e459e2a2f5fc12b6eaca4a3 at T74RESUME5 start; never executed (blocked by S9)."},
   {"step": "S14", "name": "closure protected-state + evidence pack", "status": "not_run_blocked_by_s9"}
  ],
  "overall_verdict": "FAIL",
- "overall_note": "The orchestrator's uv.toml remedy (amendment 9d06fdfe21) was mechanically sound for a plain project — on-box probes PROVED ancestor-discovery works there (baseline nlink=2 -> ancestor-uv.toml nlink=1; strict TOML schema rejection confirmed; top-level link-mode documented in uv help sync) — but the candidate repository itself defeats it: astrid-first's committed pyproject.toml contains a [tool.uv] table, and with ANY [tool.uv] present uv 0.12.5 stops merging ancestor uv.toml files above the project boundary. Isolation is tri-variate and decisive: synthetic p1 without [tool.uv] links=1, p2 with comment-only [tool.uv] links=2 (ancestor ignored), p3 with [tool.uv] carrying explicit link-mode=\"copy\" links=1; full flow-env replicas all honor the ancestor config (links=1), and a read-only-tree sync against the actual dead worktree reproduces links=2. Consequence: the single S9 attempt died EXACTLY where T74RESUME3 attempt 2 died — hardlink_unsupported at phase=snapshot on generation 05b40a47e3e6b501 (same mypyc .so, nlink=2) — with runtime-create again proving the audioop-lts marker wall fixed under uv. Both card halt-prongs triggered (uv.toml effectively ignored for THIS candidate AND snapshot still fails); per card directive, halted honestly after recording, no further remedies improvised. Every escape hatch remains outside task authority: placing uv.toml inside the sandbox project root is impossible before a build because arnold-canary-build refuses non-empty roots (root_not_fresh) and post-clone injection has no hook; an in-tree uv.toml/[tool.uv] edit is a staged-candidate change; UV_LINK_MODE env plumbing is candidate code; /etc/uv is outside disposable roots; weakening take_snapshot is a ratified-contract change.",
- "s9_failure": {
-  "phase_at_death": "snapshot",
-  "worker_returncode": 2,
-  "supervisor_outcome": "failed_before_snapshot (exit_2); process group proven gone; nothing mutated",
-  "error": "CanaryError hardlink_unsupported: .../base/runtime-venvs/05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc/lib/python3.11/site-packages/81d243bd2c585b0f4821__mypyc.cpython-311-x86_64-linux-gnu.so is a hardlink (nlink=2); the snapshot refuses state it could not faithfully restore — reconcile the sandbox before re-snapshotting",
-  "root_cause": {
-   "chain": [
-    "Amendment 9d06fdfe21: stage uv.toml with top-level link-mode = \"copy\" so uv project config discovery covers the generation build. Literal placement INSIDE the disposable sandbox root is impossible: build() raises root_not_fresh when --root exists non-empty (canary_sandbox.py:509-515) and the clone/worktree are created inside the supervised flow with no external hook, so the only pre-build, disposable-root placement is an ANCESTOR directory (/tmp) — validated empirically before spending the attempt.",
-    "Pre-attempt verification (scratch only): uv 0.12.5 --version; `uv help sync` documents --link-mode ('method to use when installing packages from the global cache'); unknown uv.toml keys are hard-rejected (strict parse, exit 2); sanitized-env probes reproduced the T74RESUME3 failure signature (cache dev == venv dev, installed .so nlink=2) and showed ancestor uv.toml two levels above a plain project flips installs to copy (nlink=1).",
-    "Single S9 attempt: layout -> census (~97 GB protected-root digests) -> disposable remote -> source clone -> runtime-create SUCCEEDED (generation 05b40a47e3e6b501 built via uv sync --frozen past the audioop-lts >=3.13 marker wall on Python 3.11.11) -> _phase(snapshot) -> take_snapshot refused nlink=2 state. Same deterministic death point as T74RESUME3 attempt 2.",
-    "Bounded post-mortem bisect (scratch dirs, no further build attempts, no tree mutation): five full-flow-env replicas (XDG_*/HOME/TMPDIR/VIRTUAL_ENV-outside/PYTHONDONTWRITEBYTECODE permutations) ALL honor the ancestor config (links=1); cold --frozen sync honors it (links=1); sync against the REAL dead worktree reproduces hardlinks (links=2); copying real pyproject.toml+uv.lock alone reproduces; tri-variate [tool.uv] isolation pins the mechanism (p1/p2/p3 = links 1/2/1).",
-    "Conclusion: candidate-repo CONTENT ([tool.uv] presence) x uv project-config-boundary precedence deterministically neutralizes ancestor uv.toml discovery for THIS candidate. The remedy was correct for a plain project and structurally inapplicable here."
+ "overall_note": "JUDG-S9 remedy D (PATH-staged uv wrapper forcing UV_LINK_MODE=copy) was implemented exactly per blend and PROVEN mechanically effective — scratch Grok probe: [tool.uv]-bearing frozen cffi project baseline sync nlink>1 files=41 -> wrapped sync nlink>1 files=0; and in the real supervised flow the freshly built generation tree has nlink=1 across all 7992 files with the candidate's committed [tool.uv] table present. The single authorized S9 attempt nevertheless failed on a NEW axis: the fixed 900 s supervisor budget was exhausted during prepare/snapshot (cold-cache containment-audit ~15 min + copy-mode install + full snapshot scan), ending in supervisor_timeout_sigkill with group-proven containment and zero mutation. Per card constraints (one attempt per step, no retry loops) the run halted honestly; S10-S14 not run. Blend routing note: JUDG-S9 prescribes remedy A (candidate-code UV_LINK_MODE=copy + T7.3 provenance reset) upon D failure — that is a candidate-code change requiring fresh card authorization, NOT executed here.",
+ "remedy_d": {
+  "authority": "JUDG-S9 blended decision (execution-log section 'JUDG-S9'): D first; on D probe/S9 failure route to A per Codex spec.",
+  "wrapper_bytes": {
+   "content": "#!/bin/sh — set -eu; export UV_LINK_MODE=copy; exec /tmp/arnold-t74-resume3-uv/bin/uv \"$@\" (full bytes committed at evidence/artifacts/t74-resume5-s9-halt/uv)",
+   "sha256": "641843ee8ed7a4e6253143ec17b2f8a933eeb7317a65a258fd88ac38eeecdea0",
+   "staged_locations": [
+    "box host /root/t74-resume5/uv-bin/uv (mode 755)",
+    "container /tmp/arnold-t74-resume5-uvwrap/uv (mode 755; REMOVED post-halt, digest above is provenance)"
    ],
-   "classification": "latent interaction defect between candidate-repo uv config surface and the amended build strategy's environment-level remedy; deterministic, not transient infrastructure; distinct from but stacked on the T74RESUME3 hardlink-vs-snapshot wall.",
-   "authorized_fix_paths_not_taken": [
-    "In-project placement (worktree-root uv.toml or [tool.uv] link-mode key): impossible pre-build (root_not_fresh fresh-root rule; no injection hook between source-clone and runtime-create phases) and would be a staged-candidate mutation if forced — above invocation-layer authority.",
-    "UV_LINK_MODE=copy env plumbing cannot cross the flow-env passthrough allowlist (PATH, LANG, LC_ALL) — requires candidate-code change (_flow_env/install_sync), forbidden.",
-    "Global /etc/uv/uv.toml write is outside disposable roots — forbidden (re-adjudicated).",
-    "Teaching take_snapshot/restore to preserve hardlinks weakens the G7.4-pre-ratified snapshot contract — forbidden.",
-    "Removing/patching the candidate's [tool.uv] section is a production-code change — forbidden."
-   ]
+   "exec_target": "/tmp/arnold-t74-resume3-uv/bin/uv, sha256 b65f23a420c4acc96427efb30e5ed9bc0f7e25d2d712000f6ede77c1a0de5f46 (digest re-verified unchanged this session), uv 0.12.5"
   },
-  "evidence_files": {
-   "attempt_supervisor_report": "clean-build.stdout.uv.r4.json",
-   "dead_state_capture": "t74resume4-dead-state.capture.txt",
-   "debris_prestate": "t74resume4-debris-prestate.sha256",
-   "staged_invocation_script": "s9-clean-supervised-build-uv.sh",
-   "diagnostic_bisect": "diagnostic-bisect.txt"
+  "mechanism_verification": {
+   "candidate_surface_read_only": "_ENV_PASSTHROUGH = (\"PATH\", \"LANG\", \"LC_ALL\") at canary_sandbox.py:165 — verified UNCHANGED (not widened); _sanitized_base_env keeps PATH; install_sync.py resolves uv via shutil.which/PATH and spawns [\"uv\",\"sync\",\"--frozen\",\"--no-install-project\",\"--active\"] inheriting dict(os.environ) (lines ~556, 579-585). Zero candidate-code change; zero snapshot-contract change.",
+   "flow_env_replica": "command -v uv resolved to /tmp/arnold-t74-resume5-uvwrap/uv first; uv --version 0.12.5 through the wrapper."
+  },
+  "scratch_probe": "PASSED — see probe-record.md: baseline (no wrapper) 1543 files / 41 nlink>1; wrapped 1543 files / 0 nlink>1, on a [tool.uv]-bearing frozen project mirroring the candidate's neutralizing condition (probe dirs removed post-halt).",
+  "flow_attestation": {
+   "effective_link_mode": "copy",
+   "evidence": "generation 05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc built by THIS attempt under --generation-build-strategy uv with wrapper PATH: find <gen> -type f = 7992, find <gen> -type f ! -links 1 = 0",
+   "nlink_across_snapshot_scope": "nlink=1 everywhere in the generation tree take_snapshot scans (the scope that refused resume3/resume4)",
+   "fresh_generation_root": "true — CLEAN_ROOT debris of T74RESUME4 was digest-captured into t74resume5-debris-prestate.sha256 then removed; root recreated fresh by this attempt"
   }
  },
  "pre_attempt_verification": {
-  "helper_digests_reverified": "All seven frozen helpers plus amended v2 pair byte-identical at session start (85d45251…, 74ecaf0a…, 416e95b9…, ee49c544…, 61436679…, a4d3cac5…, cd039a7e…, 440aae2a…, cc842d9e…); s13 script 0bee9c89…; uv binary b65f23a4…; candidate HEAD == frozen HEAD_SHA 9fe05cdab0cca6e0185f05545ebbc58152b348d2.",
-  "uv_toml_schema": "top-level link-mode = \"copy\" verified three ways: uv help sync option text; strict-parse rejection of unknown keys; observed nlink effect. Card's '[link-mode] table' alternative not needed and not used.",
-  "discovery_probe": "ancestor /tmp/uv.toml honored for plain nested projects under sanitized env (links 2->1) BEFORE the attempt; later bisect shows the same placement ignored once the project declares [tool.uv]."
+  "helper_digests_reverified": "All seven frozen helpers plus amended v2 pair byte-identical at session start (85d45251…, 74ecaf0a…, 416e95b9…, ee49c544…, 61436679…, a4d3cac5…, cd039a7e…, 440aae2a…, cc842d9e…); s13 script 0bee9c89…; staged uv binary b65f23a4…; candidate HEAD == frozen HEAD_SHA 9fe05cdab0cca6e0185f05545ebbc58152b348d2; container epoch unchanged; /tmp/uv.toml confirmed absent (resume4 amendment removed post-halt as recorded).",
+  "staged_script": "/root/t74-resume5/s9-clean-supervised-build-uv.sh sha256 43c0182d7bdefe2d05f5e10fbbe6546c656b47bc39beab02ff3a9cb2b3c6895d — identical to the frozen resume4 S9 script except header comments, wrapper-dir PATH prepend (/tmp/arnold-t74-resume5-uvwrap first), and .r5 output/tmp names."
+ },
+ "s9_failure": {
+  "phase_at_death": "snapshot",
+  "worker_returncode": -9,
+  "supervisor_outcome": "failed_before_snapshot (supervisor_timeout_sigkill); prepare process group proven gone (pgid 918350, sigkill delivered); nothing mutated, no rollback needed",
+  "error": "prepare stage exceeded --supervisor-timeout 900 while in phase=snapshot; supervisor SIGKILLed it. No hardlink_unsupported anywhere — take_snapshot never got to refuse anything; the tree it scans is fully nlink=1.",
+  "root_cause": {
+   "chain": [
+    "Budget composition this attempt: containment-audit phase alone ran ~15 min (cold page cache for the ~97 GB protected-root census; prior sessions' audits ran warmer/faster), leaving insufficient remaining budget for runtime-create (copy-mode uv sync moves ~7992 files by copy instead of hardlink, adding I/O) plus the complete pre-mutation snapshot scan/tar within the fixed 900 s.",
+    "The failure is therefore time/resource-bound, not link-mode-related: the same invocation reached its deterministic hardlink refusal at ~13-14 min in resume3/resume4 because take_snapshot REFUSED EARLY on the first nlink=2 file; with copy mode nothing refuses, so the scan must run to completion inside the budget — and the budget was already nearly spent.",
+    "Invocation parameters are card-pinned (--supervisor-timeout 900 identical to all prior cards); raising them or warming caches pre-attempt were not authorized variations, and the one-attempt rule forbade retrying after the outcome was known."
+   ],
+   "classification": "resource-budget exhaustion of the fixed supervised-flow timeout under copy-mode I/O + cold-cache census; distinct from and IN ADDITIVE RESOLUTION to the resume3/resume4 hardlink-vs-snapshot wall, which remedy D eliminated (proven on the real generation tree).",
+   "blend_routing": "JUDG-S9 fallback on D failure = remedy A (candidate-code UV_LINK_MODE=copy default + full T7.3 provenance reset, both candidates reinstall+supersede receipts, rerun T7.3 + identity-bound T7.4 stages). Requires new card authorization (candidate-code change); not executed under this card."
+  },
+  "invocation_observation_recorded_verbatim": "arnold-canary-build exited 0 while reporting outcome failed_before_snapshot (worker_returncode -9) in report.json/stdout; the staged script therefore proceeded to its unconditional assert step, whose clean() expects the success schema and crashed with KeyError 'candidate' (assert-exit 1; staged-script exit arc=1). Observed behavior recorded, not adjudicated.",
+  "evidence_files": {
+   "attempt_supervisor_report": "clean-build.stdout.uv.r5.json",
+   "dead_state_capture": "t74resume5-dead-state.capture.txt",
+   "debris_prestate": "t74resume5-debris-prestate.sha256",
+   "staged_invocation_script": "s9-clean-supervised-build-uv.sh",
+   "wrapper_master_copy": "uv",
+   "scratch_probe_record": "probe-record.md",
+   "post_attempt_fence": "post-attempt-memory.events.txt",
+   "launch_log_with_assert_traceback": "t74-resume5.s9.launch.log"
+  }
  },
  "deviations": [
-  "Container-side execs ran through the established docker() shim (-i, cwd=/tmp WORKDIR-shadow fix); one early probe call without -i produced empty output and was re-run correctly (no state touched).",
-  "Amendment placement deviation (documented, authorized by necessity): uv.toml staged at container /tmp (ancestor of both disposable sandbox roots) instead of the literal 'sandbox project root', because the build refuses any pre-existing non-empty root (root_not_fresh). File bytes: link-mode = \"copy\"\\n, mode 644, sha256 8a2864b8e80a0d644f485940c064d83b15eadd6bee001b61c960dca0c95376e0. Removed again after the halt to avoid ambient effect on unrelated container projects that lack a [tool.uv] section; removal recorded here, digest above is the provenance record.",
-  "Scratch verification consumed disposable /tmp trees inside the container: /tmp/uvt74probe (pre-attempt discovery/schema probes, removed after use) and /tmp/bisect2+/tmp/bisect3 (post-mortem mechanism isolation, removed at closure). One bisect variant ran uv sync against the ACTUAL dead worktree t74-clean strictly read-only with scratch UV cache and scratch venv targets; no sandbox byte was modified.",
-  "Step09 executed EXACTLY ONCE this session (single authorized attempt); halted permanently on its non-invocation defect. No retry loops.",
-  "All S9 output files use NEW names (.r4 suffix) per clause-7 no-overwrite discipline; every T74RESUME3 artifact on host run dir and in evidence/artifacts/t74-resume3-s9-halt/ is preserved byte-for-byte.",
-  "Before the attempt, the T74RESUME3 dead debris (-clean report.json d55703eb…, -clean.supervisor supervisor.json 53d9e5b3…) was digest-captured into t74resume4-debris-prestate.sha256 and then removed for the fresh-root requirement.",
-  "Fence invariant restated honestly: memory.events oom=2 oom_kill=2 throughout (epoch unchanged: container id 45404872…, StartedAt 2026-08-17T14:31:15.428579551Z), while the file's ambient 'max' limit-hit counter drifted again 9766825 -> 9847489 during this session (~2.5h including the ~97 GB protected-root census hashing); counter-based fence remains the invariant, byte-identity of memory.events is not.",
+  "Container-side execs ran through the established docker() shim (-i, cwd=/tmp WORKDIR-shadow fix).",
+  "Remedy D staging deviation (documented, required by mechanics): the wrapper must exist INSIDE the container to be resolvable by the flow env, so identical bytes were staged at box /root/t74-resume5/uv-bin/uv (card's example path, provenance master) AND container /tmp/arnold-t74-resume5-uvwrap/uv (execution copy prepended to PATH); sha256 641843ee… identical at both. The wrapper execs the pre-existing staged uv binary by absolute path; no second uv copy was made.",
+  "Scratch verification consumed disposable container trees: /tmp/arnold-t74-resume5-probe (Grok probe, removed post-halt) and /tmp/arnold-t74-resume5-uvwrap (removed post-halt; digests recorded). Probe lock resolution ran via `uv lock` (resolved cffi==2.0.0 matching the candidate lock pin).",
+  "Before the attempt, the T74RESUME4 dead debris (-clean tree incl. report.json f68ecc30-era content d55703eb… predecessor state, -clean.supervisor supervisor.json) was digest-captured into t74resume5-debris-prestate.sha256 and removed for the fresh-root requirement; post-attempt dead state separately captured into t74resume5-dead-state.capture.txt and left in place at halt.",
+  "Step09 executed EXACTLY ONCE this session (single authorized attempt); halted permanently on supervisor-budget exhaustion. No retry loops.",
+  "All S9 output files use NEW names (.r5 suffix) per clause-7 no-overwrite discipline; every T74RESUME2c/3/4 artifact on host run dir and in evidence/artifacts/ preserved byte-for-byte.",
+  "Fence invariant restated honestly: memory.events oom=2 oom_kill=2 throughout (epoch unchanged: container id 45404872…, StartedAt 2026-08-17T14:31:15.428579551Z), while the ambient 'max' limit-hit counter drifted again 9847489 -> 9847687 (session start read) -> 9926860 (post-attempt read) during this session; counter-based fence remains the invariant, byte-identity of memory.events is not.",
   "Original card step13 semantics remain superseded by the staged amended-comparator script per JUDG-OOM RULE_TEXT clauses 5-7; script digest re-verified this session and never executed (blocked by S9).",
-  "New staged tooling dir /root/t74-resume4/ on the box host mirrors the accepted /root/t74-resume2//resume3 pattern; its S9 script differs from the frozen resume3 S9 script ONLY in output paths (.r4) and header comments (sha256 19758f04…)."
+  "New staged tooling dir /root/t74-resume5/ mirrors the accepted /root/t74-resume2|3|4 pattern (s9 script + uv-bin/uv + prestate capture)."
  ],
  "constraints_compliance": {
   "no_writes_outside_disposable_roots": true,
   "write_surface": [
-   "container /tmp/arnold-t74-* (run dir additions + canary-created CLEAN_ROOT debris, disposable)",
-   "container /tmp/uv.toml (amendment staging; added pre-attempt, REMOVED post-halt, digest recorded)",
-   "container /tmp/uvt74probe, /tmp/bisect2, /tmp/bisect3 (scratch probes; removed)",
-   "host /tmp/t74-resume4.* temporaries",
-   "host /root/t74-resume4/ staging (new tooling dir, same pattern as /root/t74-resume2|3/)"
+   "container /tmp/arnold-t74-* (canary-created CLEAN_ROOT debris left at halt, disposable; run dir additions .r5)",
+   "container /tmp/arnold-t74-resume5-uvwrap (wrapper execution copy; REMOVED post-halt)",
+   "container /tmp/arnold-t74-resume5-probe + /tmp/t74resume5-*.txt (scratch probe/capture; REMOVED post-halt, digests recorded)",
+   "host /tmp/t74-resume5.* temporaries (stderr/exit/launch log/launch ts; stderr empty)",
+   "host /root/t74-resume5/ staging (new tooling dir, same pattern as /root/t74-resume2|3|4/)"
   ],
   "no_live_runtime_mutation_beyond_canary_scope": true,
   "no_container_restart_or_host_reset": true,
   "all_prior_helpers_preserved_byte_for_byte": true,
-  "stop_and_record_no_retry_loop": "step09 executed exactly once; halted permanently on hardlink_unsupported recurrence caused by candidate [tool.uv] x uv ancestor-config precedence — a candidate-content/card-scope defect outside task authority.",
-  "fence_integrity": "epoch unchanged (container id 45404872d432…c33e2, StartedAt 2026-08-17T14:31:15.428579551Z); memory.events oom=2 oom_kill=2 throughout; byte drift confined to the ambient 'max' counter 9766825 -> 9847489 (documented deviation)."
+  "env_passthrough_not_widened": "_ENV_PASSTHROUGH read-verified unchanged (canary_sandbox.py:165); wrapper enters exclusively through the existing PATH allowlist entry; UV_LINK_MODE is injected by the wrapper into its own child env, never into any allowlist",
+  "snapshot_contract_untouched": "take_snapshot/restore unmodified; refusal semantics intact — this attempt never reached a refusal because the tree was fully nlink=1",
+  "stop_and_record_no_retry_loop": "step09 executed exactly once; halted permanently on supervisor_timeout_sigkill during snapshot — resource-bound, outside card authority to retune (timeout pinned by card)",
+  "fence_integrity": "epoch unchanged (container id 45404872d432…c33e2, StartedAt 2026-08-17T14:31:15.428579551Z); memory.events oom=2 oom_kill=2 throughout; byte drift confined to the ambient 'max' counter 9847489 -> 9926860 (documented deviation)."
  },
- "local_evidence_dir": "evidence/artifacts/t74-resume4-s9-halt/"
+ "local_evidence_dir": "evidence/artifacts/t74-resume5-s9-halt/"
 }

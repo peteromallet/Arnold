@@ -1,0 +1,9 @@
+/tmp/arnold-t74-20260823T040812Z-3347570/env.sh: line 13: warning: setlocale: LC_CTYPE: cannot change locale (UTF-8)
+Traceback (most recent call last):
+  File "/tmp/arnold-t74-20260823T040812Z-3347570/t74-assert.py", line 290, in <module>
+    clean(sys.argv[2])
+  File "/tmp/arnold-t74-20260823T040812Z-3347570/t74-assert.py", line 72, in clean
+    assert report["candidate"]["source_head"] == HEAD
+           ~~~~~~^^^^^^^^^^^^^
+KeyError: 'candidate'
+cat: /tmp/arnold-t74-20260823T040812Z-3347570-clean.supervisor/snapshot-anchor.json: No such file or directory
