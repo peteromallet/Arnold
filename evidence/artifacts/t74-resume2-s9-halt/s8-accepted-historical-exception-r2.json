@@ -1,0 +1,57 @@
+{
+  "container_epoch": {
+    "container_id": "45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2",
+    "started_at": "2026-08-17T14:31:15.428579551Z"
+  },
+  "evidence_digests": {
+    "preserved_host_oom_records": "a11ccf56d39f81eb50616b98eb62363fde0be6cfd74898cbe5d06b460710398c",
+    "s8_host_kernel_oom_log": "bd5097105a74c4545c343bf010605c62c273976b27d92a87d0427172a670cc6b",
+    "s8_memory_events": "f56d65f3daa4fe72352ec2dd36c0126729441c3ac730e31dc89a34f2cd743c8c",
+    "s8_snapshot_oom_diagnosis": "161fd3575e9ae7c02abe72845ab49524eef7698ef7133e24a355987f8c81dd51",
+    "s8fix_oomkilled_evidence": "5e8d19d17b1f4f5d4fcbfe453d17575db140f7595f57cd02a3007efb0750b515",
+    "snapshot_attempt_050325_exit_137": "e3b9c2844b5a5c2677b3a2279db2ec8487491dd9a23d6b22fac153391b3bb63c",
+    "snapshot_attempt_051801_exit_137": "e3b9c2844b5a5c2677b3a2279db2ec8487491dd9a23d6b22fac153391b3bb63c",
+    "streaming_bounded_rss_proof": "131893b2c1922bfd0f4d9593677b65413f37d6c63134af300e67fca13bedb4eb",
+    "streaming_differential_equality_proof": "e2188ee7a31f6e385f4ccd184a826a9efff84e783bf55af1992e8b852243c8f9",
+    "streaming_helper": "440aae2a34ee80d588c9ac3b8116726a45be935c5463954a441f1767034477ee"
+  },
+  "existing_comparator": {
+    "first_exit_code": 1,
+    "first_stderr_sha256": "51e75930d8172389da357fde785803f3cadd2ca025631d09f692957083b64a25",
+    "first_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path": "/tmp/arnold-t74-20260823T040812Z-3347570/t74-sva-compare-v2.py",
+    "sha256": "a4d3cac51c8a4c92caba082ba826d0d0cedc8c59abfa68d4cd8a6e5778cf67d3"
+  },
+  "helper": {
+    "path": "/tmp/arnold-t74-20260823T040812Z-3347570/t74-oom-exception-3f7d04775f5743a9c14b0057864fe7f4bdf4cb0a84231732bc958a2142a19969/t74-oom-exception-compare.py",
+    "sha256": "3f7d04775f5743a9c14b0057864fe7f4bdf4cb0a84231732bc958a2142a19969"
+  },
+  "inputs": {
+    "candidate": {
+      "path": "/tmp/arnold-t74-20260823T040812Z-3347570/t74-pre-inspect.sva.s8r2.json",
+      "sha256": "fe0c5cbf2843fb84c7b19c1f58af7833477cbf00693e94c9f2f8bd8993276cf8"
+    },
+    "canonical": {
+      "path": "/tmp/arnold-t74-20260823T040812Z-3347570/t00-canonical-inspect.sva.s8r2.json",
+      "sha256": "42f703eb6d1ab0b212feeab788921ad957ed3fe71ac7099e1c038e6440ffe5d3"
+    }
+  },
+  "phase": "S8",
+  "record_type": "accepted_historical_exception",
+  "rule_receipt": {
+    "path": "/tmp/arnold-t74-20260823T040812Z-3347570/oom-history-evidence/mrc-ed48627a7fda489e96a16d449d3067b942b42eef99bf1196.stdout",
+    "sha256": "ccbd2e8f3669b1ff7371ff0fbdeca074eca523fafb548d4bab884305d2af9289"
+  },
+  "run_id": "t74-20260823T040812Z-3347570",
+  "s13_oom_fence": null,
+  "s8_oom_fence": {
+    "cgroup_identity": "0::/system.slice/docker-45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2.scope",
+    "cgroup_path": "/sys/fs/cgroup/system.slice/docker-45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2.scope",
+    "host_kernel_oom_log_cursor": "s=a247fbbd36874d7180f3f902fcac4545;i=818d04c;b=ce621a4956ca4d099df7001093e67efe;m=1c43f0f30a1;t=659affd93a611;x=62b275f813d8c639",
+    "host_kernel_oom_log_evidence": "s8_host_kernel_oom_log",
+    "host_kernel_oom_log_sha256": "bd5097105a74c4545c343bf010605c62c273976b27d92a87d0427172a670cc6b",
+    "memory_events_evidence": "s8_memory_events",
+    "oom_kill_counter": 2
+  },
+  "schema": "arnold.t7.4.accepted_historical_exception.v1"
+}

@@ -1,0 +1,10 @@
+mp/arnold-t74-20260823T040812Z-3347570-clean/src/arnold_pipelines/megaplan/cloud/install_sync.py", line 615, in _build_generation
+    raise GenerationError(
+arnold_pipelines.megaplan.cloud.install_sync.GenerationError: dependency install failed for generation /tmp/arnold-t74-20260823T040812Z-3347570-clean/base/runtime-venvs/05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc: ERROR: Ignored the following versions that require a different python version: 0.1.0 Requires-Python >=3.13; 0.2.0 Requires-Python >=3.13; 0.2.1 Requires-Python >=3.13; 0.2.2 Requires-Python >=3.13
+ERROR: Could not find a version that satisfies the requirement audioop-lts==0.2.2 (from versions: none)
+ERROR: No matching distribution found for audioop-lts==0.2.2
+
+[notice] A new release of pip is available: 24.0 -> 26.2.1
+[notice] To update, run: python -m pip install --upgrade pip
+arnold-runtime-create: dependency generation build/verify FAILED for '/tmp/arnold-t74-20260823T040812Z-3347570-clean/base/runtime-candidates/t74-clean' (frozen spec: '/tmp/arnold-t74-20260823T040812Z-3347570-clean/base/runtime-candidates/t74-clean/uv.lock') — refusing to create a runtime without a verifiable generation
+

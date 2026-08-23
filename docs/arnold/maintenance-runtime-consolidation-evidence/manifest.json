@@ -639,6 +639,14 @@
    "receipt_id": "canary-rollback-1",
    "sha256": "5fd2e73231ad13ca405ac8fbc21ed1addf8bb1deb06e245bc85ec9a0341b2141",
    "status": "historical_complete"
+ },
+  {
+   "byte_length": 9528,
+   "path": "evidence/artifacts/t74-verdict.json",
+   "provenance": "T74RESUME2 resume of canary run t74-20260823T040812Z-3347570 on box arnold-agentbox-01 container megaplan-cloud-agent-resident-only: S1-S8 pass (amended comparator accepted_historical_exception twice; no new OOM; epoch unchanged), halted at S9 on marker-blind pip-strategy dependency replay (audioop-lts==0.2.2 requires-python >=3.13 vs frozen Python 3.11.11); S10-S14 not run per stop-and-record constraint.",
+   "receipt_id": "canary-rollback-t74-resume",
+   "sha256": "6713f4e0184c7b8913cfb4ac28e34ed0d54efeab80e400a73643c6d25d7e4979",
+   "status": "halted_s9_dependency_replay"
   }
  ],
  "candidate_install_receipts": [

@@ -1,0 +1,92 @@
+{
+ "schema": "arnold.t7.4.resume_verdict.v1",
+ "task": "T74RESUME2",
+ "generated_at_utc": "2026-08-23T19:00:52Z",
+ "run_id": "t74-20260823T040812Z-3347570",
+ "box": {
+  "ssh": "root@159.69.51.216",
+  "hostname": "arnold-agentbox-01",
+  "container": "megaplan-cloud-agent-resident-only",
+  "container_id": "45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2",
+  "container_started_at": "2026-08-17T14:31:15.428579551Z"
+ },
+ "integration_head": "f4b8777b854cbf961f4ec2d7a35064dddf06695b",
+ "attestation": {
+  "committed_path": "evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/oom-history-attestation.json",
+  "committed_sha256": "5de023cdb3bf45612029da7a360297d958635a9d3844c4b2e0fe7f3df3696664",
+  "shipped_container_path": "/tmp/arnold-t74-20260823T040812Z-3347570/oom-history-attestation.shipped.json",
+  "shipped_sha256": "5d50475e796782a4b5cc46fb56973fa3b2f7b249c955a6ff3d95ae3f5cc4ef5f",
+  "independent_verification_receipt": "mrc-3a13409a",
+  "note": "Shipped copy is field-identical to the committed one except evidence/prior-helper/rule-receipt path strings remapped to container-local copies; every remapped file's SHA-256 equals its committed counterpart."
+ },
+ "steps": [
+  {"step": "S1", "name": "freeze constants / session env", "status": "pass_prior_session", "note": "Executed in prior sessions; receipts in mrc-run-20260820 worktree step01 artifacts; frozen env.sh intact and sourced this session."},
+  {"step": "S2", "name": "install snapshot helper", "status": "pass_prior_session", "note": "t74-live-snapshot.py v1 installed 04:08; streaming v2 (bounded RSS) installed 05:56."},
+  {"step": "S3", "name": "install amended comparator stack", "status": "pass_prior_session", "note": "step03b installed content-addressed t74-oom-exception-3f7d0477... comparator + J4/SVA v2 helpers into run dir; fixtures green (fixtures.box.s8fix.json)."},
+  {"step": "S4", "name": "install CLI runner", "status": "pass_prior_session"},
+  {"step": "S5", "name": "install assertions/digests", "status": "pass_prior_session"},
+  {"step": "S6", "name": "validate evidence pack candidate", "status": "pass_prior_session", "note": "evidence-validator.json NDJSON diagnostics preserved on host run dir."},
+  {"step": "S7", "name": "quiescence preflight", "status": "pass_prior_session"},
+  {"step": "S8", "name": "amended comparator S8 + full T0.0 snapshot", "status": "pass", "evidence": [
+    "s8-accepted-historical-exception-r2.json: record_type=accepted_historical_exception, phase=S8, run_id matches, helper digest 3f7d04775f..., first_exit_code=1 then exception accepted; inputs = t00-canonical-inspect.sva.s8r2.json (42f703eb...) + t74-pre-inspect.sva.s8r2.json (fe0c5cbf...) — both digests re-verified locally",
+    "r1 record s8-accepted-historical-exception.json identical shape at 18:15 UTC (prior leg of this resume); both records preserved, neither overwritten",
+    "quiescence-pre-s8r2.json ok=true busy=[] immediately before resumed S8",
+    "full T0.0 snapshot sub-step completed 18:32 UTC via frozen streaming helper t74-live-snapshot-v2.py: output 95461 bytes, sha256 8c2876a3235795811f799aa9a904bb559ab0662c5706e31fe5c5d7cc9287e5af, empty stderr, NO third OOM (memory.events oom_kill still 2; final capture byte-identical to attested S8 fence capture)"
+  ]},
+  {"step": "S9", "name": "clean supervised canary build", "status": "fail", "attempts": [
+    {"n": 1, "when_utc": "2026-08-23T18:41Z", "exit": 1, "cause": "invocation-context defect: container WORKDIR /workspace/arnold carries a stale arnold_pipelines regular package lacking megaplan/cloud/canary_sandbox.py; for `python -m`, cwd precedes PYTHONPATH, shadowing the wrapper's PYTHONPATH. No box state mutated."},
+    {"n": 2, "when_utc": "2026-08-23T18:42-18:56Z", "exit": 1, "cause": "genuine card/candidate failure: generation dependency install failed. See s9_failure root cause."}
+  ]},
+  {"step": "S10a", "name": "config/profile/manifest reads+attest", "status": "not_run_blocked_by_s9"},
+  {"step": "S10b", "name": "read-only plan surfaces probe", "status": "not_run_blocked_by_s9"},
+  {"step": "S10c", "name": "event dedupe fence pytest subset", "status": "not_run_blocked_by_s9"},
+  {"step": "S11", "name": "kill -9 mid-flow supervisor rescue", "status": "not_run_blocked_by_s9", "note": "Crash-injection requires a successful clean build root as its sibling; supervisor containment itself was independently observed working at S9 (process group proven gone after worker death)."},
+  {"step": "S12a", "name": "verify-only dirty expectation", "status": "not_run_blocked_by_s9"},
+  {"step": "S12b", "name": "standalone restore", "status": "not_run_blocked_by_s9"},
+  {"step": "S12c", "name": "verify-only clean both roots (rollback 0-durable-delta)", "status": "not_run_blocked_by_s9"},
+  {"step": "S13", "name": "post-rollback exact comparison + OOM-fence recheck (amended)", "status": "not_run_blocked_by_s9", "note": "Amended-comparison script staged at /root/t74-resume2/s13-amended-compare.sh (sha256 0bee9c896528d8a5fbc4b40cf00e3007bdf3d1ad1e459e2a2f5fc12b6eaca4a3) but never executed per stop-and-record constraint."},
+  {"step": "S14", "name": "closure protected-state + evidence pack", "status": "not_run_blocked_by_s9"}
+ ],
+ "overall_verdict": "FAIL",
+ "overall_note": "Canary did not complete end-to-end. Everything up to and including S8 passed with strong evidence (documented OOM history accepted exactly twice by the frozen amended comparator; no new OOM; epoch unchanged). The run halted honestly at S9 on a deterministic dependency-replay defect. No runtime mutation beyond disposable roots; container epoch untouched; oom_kill counter unchanged (byte-identical memory.events).",
+ "s9_failure": {
+  "phase_at_death": "runtime-create",
+  "worker_returncode": 2,
+  "supervisor_outcome": "failed_before_snapshot (exit_2); process group proven gone; nothing mutated, no rollback needed",
+  "error": "GenerationError: dependency install failed ... ERROR: Could not find a version that satisfies the requirement audioop-lts==0.2.2 (from versions: none)",
+  "root_cause": {
+   "chain": [
+    "Card block S9 pins --generation-build-strategy pip.",
+    "canary_sandbox._create_venv/install_sync with strategy=pip bypasses uv and replays uv.lock via frozen_requirements() as bare name==version pins, dropping environment markers.",
+    "discord.py declares Requires-Dist: audioop-lts ; python_version >= \"3.13\" (verified in candidate .venv METADATA line 49) and PyPI serves audioop-lts 0.1.0-0.2.2 all Requires-Python >=3.13.",
+    "Generation venv uses the frozen interpreter Python 3.11.11 (PY_SHA-pinned env), so pip rejects every version and install fails deterministically."
+   ],
+   "classification": "latent defect surfaced by the canary itself: pip-strategy lock replay is marker-blind; not transient infrastructure.",
+   "authorized_fix_paths_not_taken": [
+    "--generation-build-strategy uv would respect markers/lock, but that changes a value frozen in the card block — an amendment decision above this task's authority.",
+    "Editing candidate deps or helpers is forbidden (writes outside disposable roots; preserve-all-helpers clause)."
+   ]
+  },
+  "evidence_files": {
+   "supervisor_failure_report": "clean-build.stdout.json",
+   "worker_pip_failure_tail": "s9-worker-pip-failure-tail.log",
+   "final_fence": "final-memory-events.txt"
+  }
+ },
+ "deviations": [
+  "Container-side execs for wrapper steps must run with cwd outside /workspace/arnold: applied once via an exported docker() bash function pinning `docker exec -w /tmp` for S9 attempt 2 (attempt 1 ran unpatched and failed on the shadow). Staged scripts remained byte-for-byte unmodified. Any future wrapper-step execution needs the same shim.",
+  "Attestation shipped to the box is the committed JSON with only path strings remapped to container-local copies; all bound SHA-256 values verified equal to committed counterparts before use.",
+  "The ship + two S8 comparator runs + snapshot launch were performed by a prior leg of this resume between 18:12-18:18 UTC before this session took over; this session verified their outputs cryptographically instead of re-running them (comparator refuses overwrites by design).",
+  "Original card step13 (NORM + cmp -s triple compare incl. second full snapshot) superseded by amended comparator --phase S13 semantics per JUDG-OOM RULE_TEXT clauses 5-7; staged script documents this and additionally skips a post-rollback full snapshot because a third snapshot death would poison the S13 fence."
+ ],
+ "constraints_compliance": {
+  "no_writes_outside_disposable_roots": true,
+  "write_surface": ["container /tmp/arnold-t74-* (run dir, disposable)", "CLEAN_ROOT sandbox created by build itself", "host /tmp/t74-resume2.* temporaries", "host /root/t74-resume2/ staging (new tooling dir, same pattern as pre-existing /root/t74-amended-staging/)"],
+  "no_live_runtime_mutation_beyond_canary_scope": true,
+  "no_container_restart_or_host_reset": true,
+  "all_prior_helpers_preserved_byte_for_byte": true,
+  "stop_and_record_no_retry_loop": "step09 executed exactly twice: once unpatched (context defect found and fixed at invocation layer), once corrected; halted permanently on the genuine dependency failure.",
+  "fence_integrity": "oom_kill=2 throughout; final memory.events byte-identical (sha256 f56d65f3daa4fe72352ec2dd36c0126729441c3ac730e31dc89a34f2cd743c8c) to the S8-fence capture bound in the committed attestation."
+ },
+ "local_evidence_dir": "evidence/artifacts/t74-resume2-s9-halt/"
+}

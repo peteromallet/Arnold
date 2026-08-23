@@ -1,0 +1,7 @@
+{
+  "allowed": "resident discord --listener-only",
+  "busy": [],
+  "mode": "quiescence",
+  "ok": true,
+  "schema": "arnold.t7.4.live_snapshot.v1"
+}
