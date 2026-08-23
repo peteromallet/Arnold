@@ -641,12 +641,12 @@
    "status": "historical_complete"
  },
   {
-   "byte_length": 9528,
+   "byte_length": 15933,
    "path": "evidence/artifacts/t74-verdict.json",
-   "provenance": "T74RESUME2 resume of canary run t74-20260823T040812Z-3347570 on box arnold-agentbox-01 container megaplan-cloud-agent-resident-only: S1-S8 pass (amended comparator accepted_historical_exception twice; no new OOM; epoch unchanged), halted at S9 on marker-blind pip-strategy dependency replay (audioop-lts==0.2.2 requires-python >=3.13 vs frozen Python 3.11.11); S10-S14 not run per stop-and-record constraint.",
+   "provenance": "T74RESUME4 resume of canary run t74-20260823T040812Z-3347570 on box arnold-agentbox-01 container megaplan-cloud-agent-resident-only (S1-S8 carried; all frozen helper/script/uv-binary digests re-verified byte-identical at session start): orchestrator amendment 9d06fdfe21 executed as the SINGLE authorized step09 attempt — uv.toml (top-level link-mode = \"copy\", sha256 8a2864b8…) staged at container /tmp, the only card-compliant location because arnold-canary-build refuses non-empty roots (root_not_fresh) and the project root is created inside the supervised flow. Pre-attempt on-box probes proved ancestor-config discovery + strict schema (plain-project nlink 2->1). The attempt again reached phase=snapshot with runtime-create SUCCEEDED (generation 05b40a47… built past the audioop-lts wall) and died on take_snapshot hardlink_unsupported: bounded post-mortem bisect isolated the mechanism — any [tool.uv] table in pyproject.toml makes uv 0.12.5 treat the project as its own settings root and stop merging ancestor uv.toml files, and the candidate's committed pyproject.toml carries [tool.uv] (line 103), so the ancestor remedy was structurally neutralized for THIS candidate. Both card halt-prongs triggered (remedy ignored AND snapshot fails); halted honestly per card, S10-S14 not run, no further remedies improvised. Both deaths pre-mutation, epoch unchanged, oom_kill=2 throughout; ambient max counter drift 9766825->9847489 documented.",
    "receipt_id": "canary-rollback-t74-resume",
-   "sha256": "6713f4e0184c7b8913cfb4ac28e34ed0d54efeab80e400a73643c6d25d7e4979",
-   "status": "halted_s9_dependency_replay"
+   "sha256": "58f63d25185e459fc8ee62e59648d71ac3a3079c222bdce2f22cb0b6199a4cdf",
+   "status": "halted_s9_uvconfig_boundary_snapshot"
   }
  ],
  "candidate_install_receipts": [

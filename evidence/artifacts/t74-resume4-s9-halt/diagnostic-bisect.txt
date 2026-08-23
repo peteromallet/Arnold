@@ -1,0 +1,5 @@
+== bisect summary ==
+probe A/B/C (uvt74probe, sanitized env): baseline nlink=2; ancestor /tmp-level uv.toml -> nlink=1; project-root control nlink=1
+FINAL_CHECK nested depth under /tmp with /tmp/uv.toml: links=1
+bisect2 V_real (actual t74-clean worktree, scratch cache+venv): links=2  |  V_cold cffi: links=1
+bisect3: p1 no-[tool.uv] links=1 ; p2 comment-only-[tool.uv] links=2 ; p3 [tool.uv]+link-mode-copy links=1

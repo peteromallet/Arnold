@@ -1,0 +1,25 @@
+{
+  "mode": "build-supervised",
+  "note": "prepare stage died before taking the pre-mutation snapshot; nothing was mutated, so no rollback is needed.",
+  "outcome": "failed_before_snapshot (exit_2)",
+  "phase_at_death": "snapshot",
+  "recovery": {
+    "attempted": false,
+    "reason": "no prepared snapshot exists; restore would be a blind call \u2014 rerun arnold-canary-build with a fresh root"
+  },
+  "root": "/tmp/arnold-t74-20260823T040812Z-3347570-clean",
+  "schema": "arnold.megaplan.cloud.canary_sandbox.v1",
+  "stages": {
+    "prepare": {
+      "process_group": {
+        "group_proven_gone": true,
+        "pgid": 907534,
+        "sigkill_delivered": false
+      },
+      "returncode": 2,
+      "timed_out": false
+    }
+  },
+  "supervisor_anchor": "/tmp/arnold-t74-20260823T040812Z-3347570-clean.supervisor",
+  "worker_returncode": 2
+}

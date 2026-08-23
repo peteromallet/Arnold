@@ -1,0 +1,30 @@
+{
+  "ARNOLD_BASE_DIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/base",
+  "ARNOLD_BASE_REPO": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/src",
+  "ARNOLD_ORIGIN_URL": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/remote.git",
+  "ARNOLD_PROMOTION_JOURNAL": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/manifests/promotion-journal.jsonl",
+  "ARNOLD_RUNTIME_MANIFEST": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/manifests/runtime-manifest.json",
+  "ARNOLD_RUNTIME_MANIFEST_DIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/manifests",
+  "ARNOLD_RUNTIME_VENVS_DIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/base/runtime-venvs",
+  "ARNOLD_WORKSPACE_MARKERS": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/markers",
+  "HOME": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/home",
+  "PIP_CACHE_DIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/cache/pip",
+  "PYTHONDONTWRITEBYTECODE": "1",
+  "TMPDIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/tmp",
+  "UV_CACHE_DIR": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/cache/uv",
+  "XDG_CACHE_HOME": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/xdg/cache",
+  "XDG_CONFIG_HOME": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/xdg/config",
+  "XDG_DATA_HOME": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/xdg/data",
+  "XDG_STATE_HOME": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/xdg/state"
+}
+---WORKERLOG---
+arnold-canary-build: error [hardlink_unsupported]: /tmp/arnold-t74-20260823T040812Z-3347570-clean/base/runtime-venvs/05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc/lib/python3.11/site-packages/81d243bd2c585b0f4821__mypyc.cpython-311-x86_64-linux-gnu.so is a hardlink (nlink=2); the snapshot refuses state it could not faithfully restore — reconcile the sandbox before re-snapshotting
+---PHASEBYTES---
+
+---TAR---
+total 24
+drwxr-xr-x  2 root root  4096 Aug 23 20:44 .
+drwxr-xr-x 15 root root  4096 Aug 23 20:44 ..
+-rw-r--r--  1 root root 13864 Aug 23 20:44 state.tar.gz
+38e5dc5dab1fdf248d0fda82867a5cb5c8446c5bf4b37da94ba76a963fc15bd9  /tmp/arnold-t74-20260823T040812Z-3347570-clean/logs/worker.log
+c6d6758d9a65606233a9d3244613e961c7692dc82f11801eceb99123a35c7363  /tmp/arnold-t74-20260823T040812Z-3347570-clean/sandbox-env.json
