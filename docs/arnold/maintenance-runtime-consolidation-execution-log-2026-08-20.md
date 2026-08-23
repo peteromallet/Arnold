@@ -493,3 +493,14 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - S1-S8 PASS (S8 via accepted_historical_exception; full T0.0 snapshot completed via streaming v2, no third OOM). Fence byte-identical post-run (f56d65f3…, oom_kill=2). Committed 71a9e0b45a.
 - S9 FAIL deterministic: card pinned `--generation-build-strategy pip`; pip replay drops env markers → audioop-lts (>=3.13) unresolvable on 3.11.11. Supervisor containment proven (failed_before_snapshot, zero mutation).
 - Amendment (orchestrator card, not operator-frozen): step09 build strategy pip → uv for T74RESUME3; resume at S9 with same tooling. WORKDIR shadowing hazard fixed via docker() -w /tmp shim (no staged byte touched).
+
+### T74RESUME3 — honest halt at S9 attempt 2: uv strategy validated, hardlink-vs-snapshot wall found
+- S1–S8 carried PASS from T74RESUME2c records; all nine frozen/amended helper digests re-verified byte-identical at session start; staged S13 script digest re-matched (0bee9c89…).
+- S9 attempt 1 (19:27Z): staged wrapper passed frozen $CPATH unchanged → `FileNotFoundError 'uv'` at runtime-create (staging omission, invocation class). Attempt 2 (19:52Z) with disposable-path uv 0.12.5 (b65f23a4…) prepended to PATH: **uv sync --frozen installed the complete lock past the adjudicated audioop-lts marker wall** (generation venv `05b40a47…` built) — amendment 6b3eaaa7a6 mechanically confirmed.
+- New deterministic blocker: prepare died at phase=snapshot — take_snapshot refuses uv-hardlinked generation state (`hardlink_unsupported`, nlink=2 cache→venv). Fix requires candidate-code/card authority: UV_LINK_MODE=copy cannot cross the flow-env passthrough allowlist (PATH/LANG/LC_ALL only); /etc/uv config write is outside disposable roots. Halted per stop-and-record; S10–S14 not run.
+- Fence: epoch unchanged; oom=2 oom_kill=2 throughout; memory.events byte drift confined to ambient `max` counter (+157197 since resume2c capture) — counter-based fence restated as the invariant. Verdict updated to T74RESUME3 (manifest receipt canary-rollback-t74-resume, validator exit 0). Evidence: evidence/artifacts/t74-resume3-s9-halt/.
+
+### T74RESUME3 — S9 attempt 2 halt; uv.toml card amendment
+- pip-marker defect confirmed fixed under uv (lock installed past audioop-lts). New blocker: uv default hardlink mode → snapshot `hardlink_unsupported` fail-closed. Both attempts pre-mutation, supervisor group-proven.
+- Remedies above task authority rejected: UV_LINK_MODE flow-env plumbing = candidate-code change (invalidates receipted provenance); snapshot-rule amendment = weakens ratified contract.
+- Amendment (orchestrator card): pre-place `uv.toml` with `link-mode = "copy"` at the disposable sandbox project root before build (uv project config discovery; no candidate code touched, no contract change). One attempt; honest halt if blocked. Byte-drift of ambient `max` counter (9609628→9766825) documented as deviation; counter fence intact.
