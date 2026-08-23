@@ -71,6 +71,14 @@ PID_FILE = ".canary-pid"
 WORKER_SPEC_FILE = "worker-spec.json"
 PHASE_DONE = "done"
 PHASE_RECOVERED = "recovered-by-supervisor"
+PHASE_PREPARED = "prepared"
+# Supervised staging (G7.4-PRE-2 item 2): preparation and mutation run as
+# separately supervised worker stages so the supervisor can anchor the
+# snapshot manifest/tar digest in SUPERVISOR-owned state between them.
+STAGE_CONTEXT_FILE = "stage-context.json"
+SUPERVISOR_DIR_SUFFIX = ".supervisor"
+SNAPSHOT_ANCHOR_FILE = "snapshot-anchor.json"
+RESTORE_REPORT = "restore-report.json"
 # TEST-ONLY hooks (never set in production): the flow SIGKILLs itself after
 # writing the named phase (real uncatchable kill), or pauses there forever
 # so a test can deliver an EXTERNAL kill -9 mid-flow.
@@ -107,6 +115,16 @@ TUPLE_PATHS: tuple[str, ...] = (
     os.path.join("src", ".git", "worktrees"),
     os.path.join("src", ".git", "ORIG_HEAD"),
 )
+# Coverage invariant (G7.4-PRE-2 item 2): cutover rollback receipts
+# (``<manifest>.cutover-rollback.json``), pointer/slug lock files
+# (``<name>.lock``), retention siblings, and registry/ownership state (the
+# manifest ``owner`` field inside the JSON; runtime-root ownership markers
+# under the venv/candidate roots) co-locate UNDER these tuple roots by
+# construction — runtime_manifest writes receipts and locks NEXT TO the
+# pointer, never elsewhere. The canary flow never invokes ``cutover``, so
+# no receipt writer runs; if such state is present anyway, it is snapshotted,
+# restored and verified byte-exactly like every other tuple entry.
+
 # The redirect set from the reject receipt (finding 3): every location the
 # canary flow could plausibly write durably outside its root. Each entry is
 # forced under the sandbox root and audited for containment.
@@ -753,13 +771,35 @@ def _build_flow(
     slug: str,
     base_ref: str,
     generation_build_strategy: str | None,
+    stage: str = "all",
 ) -> dict[str, Any]:
-    """The promote-adjacent flow itself; *root* is already allocated/fresh."""
+    """The promote-adjacent flow itself; *root* is already allocated/fresh.
+
+    ``stage="all"``     unsupervised single-process run (prepare+mutate).
+    ``stage="prepare"`` supervised stage 1: layout, fixtures, pre-mutation
+                        snapshot; persists ``stage-context.json`` for stage
+                        2 and stops at phase ``prepared``.
+    ``stage="mutate"``  supervised stage 2: probe commit + promotion-adjacent
+                        mutations against the prepared baseline.
+
+    Splitting preparation from mutation (G7.4-PRE-2 item 2) is what lets the
+    supervisor anchor the snapshot digest OUTSIDE worker-controlled state
+    between the two stages.
+    """
 
     t0 = time.time()
-    source_repo = source_repo.resolve(strict=True)
-    if not (source_repo / ".git").exists():
-        raise CanaryError("source_repo_invalid", f"{source_repo} is not a git checkout")
+    root = Path(root)
+    ctx: dict[str, Any] = {}
+    if stage == "mutate":
+        ctx = json.loads((root / STAGE_CONTEXT_FILE).read_text(encoding="utf-8"))
+        source_repo = Path(ctx["source_repo"])
+        slug = ctx["slug"]
+        base_ref = ctx["base_ref"]
+        generation_build_strategy = ctx.get("generation_build_strategy") or None
+    else:
+        source_repo = source_repo.resolve(strict=True)
+        if not (source_repo / ".git").exists():
+            raise CanaryError("source_repo_invalid", f"{source_repo} is not a git checkout")
 
     # Sanitized environment FIRST (reject finding 1): no Git/Python
     # subprocess may run before this point. Everything below — rev-parse,
@@ -814,46 +854,91 @@ def _build_flow(
             kwargs["only_relpaths"] = spec_entry["tracked_relpaths"]
         before[spec_entry["name"]] = digest_tree(spec_entry["path"], **kwargs)
 
-    _phase(root, "disposable-remote")
-    remote = _make_disposable_remote(root, source_repo, flow_env)
-    _phase(root, "source-clone")
-    src = _clone_source(root, remote, base_ref, flow_env)
+    if stage == "mutate":
+        # Stage 2 reuses the prepared layout; heavy/side-effectful setup
+        # (remote, clone, runtime-create, journal append, fixtures) ran in
+        # stage 1 and MUST NOT run twice.
+        src = root / "src"
+        wrapper = Path(ctx["wrapper"])
+    else:
+        _phase(root, "disposable-remote")
+        remote = _make_disposable_remote(root, source_repo, flow_env)
+        _phase(root, "source-clone")
+        src = _clone_source(root, remote, base_ref, flow_env)
 
-    _phase(root, "runtime-create")
-    wrapper = src / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-runtime-create"
-    if not wrapper.is_file():
-        raise CanaryError(
-            "wrapper_missing", f"candidate runtime-create wrapper missing: {wrapper}"
-        )
-    proc = _run([str(wrapper), slug, base_ref], cwd=root, env=flow_env, check=False)
-    if proc.returncode != 0:
-        raise CanaryError(
-            "runtime_create_failed",
-            f"arnold-runtime-create failed (exit {proc.returncode}):\n{proc.stderr}",
-        )
+        _phase(root, "runtime-create")
+        wrapper = src / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-runtime-create"
+        if not wrapper.is_file():
+            raise CanaryError(
+                "wrapper_missing", f"candidate runtime-create wrapper missing: {wrapper}"
+            )
+        proc = _run([str(wrapper), slug, base_ref], cwd=root, env=flow_env, check=False)
+        if proc.returncode != 0:
+            raise CanaryError(
+                "runtime_create_failed",
+                f"arnold-runtime-create failed (exit {proc.returncode}):\n{proc.stderr}",
+            )
 
     manifest_dir = Path(spec["ARNOLD_RUNTIME_MANIFEST_DIR"])
     slug_manifest = manifest_dir / f"{slug}.json"
     pointer = Path(spec["ARNOLD_RUNTIME_MANIFEST"])
     worktree = Path(spec["ARNOLD_BASE_DIR"]) / "runtime-candidates" / slug
-    branch = _git(worktree, "branch", "--show-current", env=flow_env)
-    _append_jsonl(
-        manifest_dir / "creation-journal.jsonl",
-        {
-            "event": "canary_runtime_create",
-            "slug": slug,
-            "branch": branch,
-            "head": base_ref,
-            "manifest": str(slug_manifest),
-            "runtime_root": str(worktree),
-        },
-    )
-    _seed_selection_fixtures(root, spec, worktree, branch, base_ref)
+    if stage == "mutate":
+        branch = ctx["branch"]
+    else:
+        branch = _git(worktree, "branch", "--show-current", env=flow_env)
+        _append_jsonl(
+            manifest_dir / "creation-journal.jsonl",
+            {
+                "event": "canary_runtime_create",
+                "slug": slug,
+                "branch": branch,
+                "head": base_ref,
+                "manifest": str(slug_manifest),
+                "runtime_root": str(worktree),
+            },
+        )
+        _seed_selection_fixtures(root, spec, worktree, branch, base_ref)
 
-    # Pre-mutation snapshot: the prepared baseline the restore CLI (and the
-    # supervisor) reconstructs byte-exactly after any flow outcome.
-    _phase(root, "snapshot")
-    snapshot_info = take_snapshot(root)
+    if stage == "mutate":
+        # NEVER retake the snapshot here: the supervisor anchored the
+        # prepare-stage tar digest and gzip is not deterministic — a second
+        # tar would false-positive as tamper. Reuse the recorded info.
+        snapshot_info = ctx["snapshot"]
+    else:
+        # Pre-mutation snapshot: the prepared baseline the restore CLI (and
+        # the supervisor) reconstructs byte-exactly after any flow outcome.
+        _phase(root, "snapshot")
+        snapshot_info = take_snapshot(root)
+
+    if stage == "prepare":
+        # Hand stage 2 its full working context. The supervisor reads the
+        # snapshot manifest BETWEEN the stages and anchors its digest in
+        # supervisor-owned state outside this root before mutation starts.
+        (root / STAGE_CONTEXT_FILE).write_text(
+            json.dumps(
+                {
+                    "source_repo": str(source_repo),
+                    "head": head,
+                    "tree": tree,
+                    "base_ref": base_ref,
+                    "slug": slug,
+                    "wrapper": str(wrapper),
+                    "branch": branch,
+                    "spec": spec,
+                    "protected_roots": protected_roots,
+                    "before": before,
+                    "generation_build_strategy": generation_build_strategy or "",
+                    "snapshot": snapshot_info,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        _phase(root, PHASE_PREPARED)
+        return {"mode": "build-prepare", "root": str(root), "snapshot": snapshot_info}
 
     _phase(root, "probe-commit")
     (src / "canary-probe.txt").write_text(
@@ -985,8 +1070,58 @@ def _worker_main(spec_path: str) -> int:
         slug=cfg["slug"],
         base_ref=cfg.get("base_ref") or "HEAD",
         generation_build_strategy=cfg.get("generation_build_strategy") or None,
+        stage=cfg.get("stage", "all"),
     )
     return 0
+
+
+def _run_supervised_worker(
+    spec_path: Path,
+    log_path: Path,
+    worker_env: dict[str, str],
+    timeout: float,
+) -> tuple[int | None, bool]:
+    """Run ONE setsid'd worker stage; returns ``(returncode, timed_out)``.
+
+    The worker is its own process-group leader (start_new_session), so the
+    watchdog timeout SIGKILLs the whole group — git/pip children included.
+    """
+
+    module = "arnold_pipelines.megaplan.cloud.canary_sandbox"
+    worker_rc: int | None = None
+    timed_out = False
+    with open(log_path, "ab") as log_fh:
+        worker = subprocess.Popen(
+            [sys.executable, "-m", module, "_worker", str(spec_path)],
+            cwd=str(spec_path.parent),
+            env=worker_env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # setsid: worker leads its own pgroup
+        )
+        deadline = time.monotonic() + timeout
+        while True:
+            worker_rc = worker.poll()
+            if worker_rc is not None:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                try:
+                    os.killpg(worker.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                worker_rc = worker.wait(timeout=30)
+                break
+            time.sleep(0.25)
+    return worker_rc, timed_out
+
+
+def _outcome_label(worker_rc: int | None, timed_out: bool) -> str:
+    if timed_out:
+        return "supervisor_timeout_sigkill"
+    if isinstance(worker_rc, int) and worker_rc < 0:
+        return f"killed_by_signal_{-worker_rc}"
+    return f"exit_{worker_rc}"
 
 
 def _build_supervised(
@@ -999,74 +1134,160 @@ def _build_supervised(
     allow_non_tmp: bool,
     supervisor_timeout: float,
 ) -> dict[str, Any]:
-    """Deliverable 3/3: the flow under an EXTERNAL supervisor (finding 4).
+    """The flow under an EXTERNAL supervisor, split into two stages.
 
-    This process IS the supervisor; the flow runs in a worker that
-    ``start_new_session`` puts into its own session/process group (setsid).
-    In-worker ERR/EXIT handling cannot fire on SIGKILL or container death,
-    so rollback lives OUTSIDE the canary process: any worker death without
-    the done marker triggers :func:`restore` from the pre-mutation snapshot.
+    Stage ``prepare`` builds the layout + fixtures and takes the
+    pre-mutation snapshot, then exits. THIS process then records the
+    snapshot manifest/tar digests in supervisor-owned state OUTSIDE the
+    sandbox root (:func:`supervisor_dir`) — state the mutation-stage worker
+    is neither told about nor points at via its redirected environment.
+    Only then does stage ``mutate`` run. On any unclean mutate outcome the
+    anchor is re-verified against the on-disk snapshot BEFORE restore; a
+    coordinated tamper (tar bytes AND manifest bookkeeping edited together)
+    cannot pass both the anchored manifest digest and the anchored tar
+    digest, so rollback-denial is detected instead of silently obeyed.
 
-    If the container/host itself dies, the supervisor dies with it — the
-    durable recovery-on-restart path is then ``arnold-canary-restore
-    --root <root>``, which liveness-probes the recorded worker pid before
-    reconstructing (refuses while a canary might still be running).
+    Pre-snapshot death is handled explicitly: an unclean PREPARE stage has
+    NO baseline to restore, so restore is NOT attempted — the report says
+    so and the restart path is a fresh build. Container/host death kills
+    the supervisor too; recovery-on-restart remains ``arnold-canary-restore
+    --root <root>``, which liveness-probes the recorded pid and honours the
+    same anchor when present.
+
+    Honest scope note: supervisor and worker share a uid. The anchor
+    defends against corruption / rollback-denial by the flow's own write
+    surface (everything its environment points at), not against a
+    deliberately hostile process that guesses sibling paths.
     """
 
     root = _allocate_root(str(root) if root else None, allow_non_tmp)
     (root / "logs").mkdir(parents=True, exist_ok=True)
-    worker_spec = {
-        "source_repo": str(source_repo),
-        "root": str(root),
-        "slug": slug,
-        "base_ref": base_ref or "HEAD",
-        "generation_build_strategy": generation_build_strategy or "",
-    }
-    spec_path = root / WORKER_SPEC_FILE
-    spec_path.write_text(
-        json.dumps(worker_spec, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    module = "arnold_pipelines.megaplan.cloud.canary_sandbox"
-    # The worker runs with cwd=sandbox root, where THIS package does not
-    # exist — hand it the builder repo's import path explicitly. The env is
-    # SANITIZED (reject finding 1): allowlisted ambient passthrough plus the
-    # redirected spec only. Inherited PYTHONPATH/HOME/XDG/Git-config state is
-    # dropped here exactly as in every setup subprocess; ONLY the test-only
-    # crash/pause hooks are forwarded so failure-injection tests still work.
     builder_root = str(Path(__file__).resolve().parents[3])
+    # SANITIZED worker env (reject finding 1): allowlisted passthrough plus
+    # the redirected spec only; ONLY the test-only hooks are forwarded.
     worker_env = _flow_env(sandbox_env_spec(root), Path(builder_root))
     for hook in (TEST_CRASH_PHASE_ENV, TEST_PAUSE_PHASE_ENV):
         if hook in os.environ:
             worker_env[hook] = os.environ[hook]
-    worker_rc: int | None = None
-    timed_out = False
-    with open(root / "logs" / "worker.log", "ab") as log_fh:
-        worker = subprocess.Popen(
-            [sys.executable, "-m", module, "_worker", str(spec_path)],
-            cwd=str(root),
-            env=worker_env,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,  # setsid: worker leads its own pgroup
+
+    def spec_for(stage: str) -> Path:
+        spec_path = root / WORKER_SPEC_FILE
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "source_repo": str(source_repo),
+                    "root": str(root),
+                    "slug": slug,
+                    "base_ref": base_ref or "HEAD",
+                    "generation_build_strategy": generation_build_strategy or "",
+                    "stage": stage,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        deadline = time.monotonic() + supervisor_timeout
-        while True:
-            worker_rc = worker.poll()
-            if worker_rc is not None:
-                break
-            if time.monotonic() >= deadline:
-                timed_out = True
-                try:
-                    # The worker is its own process-group leader, so this
-                    # reaps the whole tree (git/pip children included).
-                    os.killpg(worker.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                worker_rc = worker.wait(timeout=30)
-                break
-            time.sleep(0.25)
+        return spec_path
+
+    log_path = root / "logs" / "worker.log"
+    stages: dict[str, Any] = {}
+
+    def finish(result: dict[str, Any], phase: str | None = None) -> dict[str, Any]:
+        result["stages"] = stages
+        result["supervisor_anchor"] = str(supervisor_dir(root))
+        (root / "report.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if phase:
+            _phase(root, phase)
+        return result
+
+    # ── stage 1: prepare ────────────────────────────────────────────────
+    prep_rc, prep_timed_out = _run_supervised_worker(
+        spec_for("prepare"), log_path, worker_env, supervisor_timeout
+    )
+    stages["prepare"] = {"returncode": prep_rc, "timed_out": prep_timed_out}
+
+    snap_dir = root / SNAPSHOT_DIR
+    manifest_path = snap_dir / SNAPSHOT_MANIFEST
+    tar_file = snap_dir / SNAPSHOT_TAR
+    prepared_clean = (
+        not prep_timed_out
+        and prep_rc == 0
+        and manifest_path.is_file()
+        and tar_file.is_file()
+    )
+    if not prepared_clean:
+        # EXPLICIT pre-snapshot death handling: there is no prepared
+        # baseline, so calling restore here would be blind — refuse loudly
+        # and leave the scene for a fresh build.
+        outcome = _outcome_label(prep_rc, prep_timed_out)
+        return finish(
+            {
+                "schema": SANDBOX_SCHEMA,
+                "mode": "build-supervised",
+                "root": str(root),
+                "outcome": f"failed_before_snapshot ({outcome})",
+                "worker_returncode": prep_rc,
+                "phase_at_death": (
+                    (root / PHASE_FILE).read_text().strip()
+                    if (root / PHASE_FILE).is_file()
+                    else ""
+                ),
+                "recovery": {
+                    "attempted": False,
+                    "reason": "no prepared snapshot exists; restore would be "
+                    "a blind call — rerun arnold-canary-build with a fresh root",
+                },
+                "note": "prepare stage died before taking the pre-mutation "
+                "snapshot; nothing was mutated, so no rollback is needed.",
+            },
+            phase="failed-before-snapshot",
+        )
+
+    data = load_snapshot(snap_dir)
+    actual_tar_sha = _sha256_file(tar_file)
+    if actual_tar_sha != data["tar_sha256"]:
+        return finish(
+            {
+                "schema": SANDBOX_SCHEMA,
+                "mode": "build-supervised",
+                "root": str(root),
+                "outcome": "snapshot_inconsistent_after_prepare",
+                "recovery": {
+                    "attempted": False,
+                    "reason": "snapshot manifest/tar disagree immediately "
+                    "after prepare; refusing to anchor untrusted bytes",
+                },
+            },
+            phase="failed-before-snapshot",
+        )
+    anchor_path = supervisor_dir(root) / SNAPSHOT_ANCHOR_FILE
+    anchor_path.parent.mkdir(parents=True, exist_ok=True)
+    anchor_path.write_text(
+        json.dumps(
+            {
+                "root": str(root),
+                "manifest_sha256": _sha256_file(manifest_path),
+                "tar_sha256": actual_tar_sha,
+                "entry_count": data.get("entry_count"),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "writer": "supervisor between prepare and mutate stages",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # ── stage 2: mutate ─────────────────────────────────────────────────
+    mut_rc, mut_timed_out = _run_supervised_worker(
+        spec_for("mutate"), log_path, worker_env, supervisor_timeout
+    )
+    stages["mutate"] = {"returncode": mut_rc, "timed_out": mut_timed_out}
 
     phase_at_death = ""
     phase_file = root / PHASE_FILE
@@ -1074,8 +1295,8 @@ def _build_supervised(
         phase_at_death = phase_file.read_text(encoding="utf-8").strip()
 
     if (
-        not timed_out
-        and worker_rc == 0
+        not mut_timed_out
+        and mut_rc == 0
         and phase_at_death == PHASE_DONE
         and (root / "report.json").is_file()
     ):
@@ -1083,7 +1304,8 @@ def _build_supervised(
         report["supervision"] = {
             "used": True,
             "outcome": "clean_exit",
-            "worker_returncode": worker_rc,
+            "worker_returncode": mut_rc,
+            "anchor": "verified-at-restore-time-if-used",
             "note": "flow completed under supervision; the pre-mutation "
             "snapshot is retained for arnold-canary-restore --verify-only",
         }
@@ -1091,40 +1313,61 @@ def _build_supervised(
             json.dumps(report, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        return report
+        return finish(report)
 
-    # Unclean death — signal (rc<0, e.g. -9), nonzero exit, or watchdog
-    # timeout SIGKILL. The supervisor rolls the selected state back NOW.
-    if timed_out:
-        outcome = "supervisor_timeout_sigkill"
-    elif worker_rc is not None and worker_rc < 0:
-        outcome = f"killed_by_signal_{-worker_rc}"
-    else:
-        outcome = f"exit_{worker_rc}"
+    # Unclean mutate outcome. Re-verify the anchor BEFORE trusting the
+    # snapshot: coordinated tar/manifest tamper is rollback-denial, not a
+    # baseline.
+    anchor = json.loads(anchor_path.read_text(encoding="utf-8"))
+    if (
+        _sha256_file(manifest_path) != anchor["manifest_sha256"]
+        or _sha256_file(tar_file) != anchor["tar_sha256"]
+    ):
+        result = finish(
+            {
+                "schema": SANDBOX_SCHEMA,
+                "mode": "build-supervised",
+                "root": str(root),
+                "outcome": "snapshot_anchor_mismatch",
+                "worker_returncode": mut_rc,
+                "phase_at_death": phase_at_death,
+                "liveness": liveness(root),
+                "recovery": {
+                    "attempted": False,
+                    "reason": "snapshot changed after the supervisor anchored "
+                    "it — refusing to restore untrusted bytes",
+                },
+            }
+        )
+        raise CanaryError(
+            "snapshot_anchor_mismatch",
+            "snapshot manifest/tar no longer match the supervisor's anchor; "
+            f"report at {root / 'report.json'}",
+        )
+
+    outcome = _outcome_label(mut_rc, mut_timed_out)
     recovery = restore(root)
     result: dict[str, Any] = {
         "schema": SANDBOX_SCHEMA,
         "mode": "build-supervised",
         "root": str(root),
         "outcome": outcome,
-        "worker_returncode": worker_rc,
+        "worker_returncode": mut_rc,
         "phase_at_death": phase_at_death,
         "liveness": liveness(root),
         "recovery": {
+            "attempted": True,
             "ok": recovery["ok"],
             "verified_entries": recovery["verified_entries"],
+            "extra_entries": recovery.get("extra_entries", []),
             "report": str(root / "snapshot" / RESTORE_REPORT),
         },
-        "note": "worker ran setsid'd under this supervisor; unclean death "
-        "triggered restore of the pre-mutation snapshot. Container/host "
-        "death kills the supervisor too — the restart path is "
-        "arnold-canary-restore --root <root> (liveness-checked).",
+        "note": "worker ran setsid'd under this supervisor in two stages; "
+        "unclean mutation triggered anchor-verified restore of the "
+        "pre-mutation snapshot. Container/host death kills the supervisor "
+        "too — the restart path is arnold-canary-restore --root <root>.",
     }
-    (root / "report.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    _phase(root, PHASE_RECOVERED)
-    return result
+    return finish(result, phase=PHASE_RECOVERED)
 
 
 # ── snapshot / restore ──────────────────────────────────────────────────────
@@ -1132,7 +1375,30 @@ def _build_supervised(
 SNAPSHOT_DIR = "snapshot"
 SNAPSHOT_TAR = "state.tar.gz"
 SNAPSHOT_MANIFEST = "snapshot.json"
-RESTORE_REPORT = "restore-report.json"
+
+
+def supervisor_dir(root: Path) -> Path:
+    """Supervisor-owned state OUTSIDE the sandbox root.
+
+    The flow worker is never told this path and its redirected environment
+    contains no reference to it, so the flow's write surface cannot reach
+    it. This is where the snapshot manifest/tar digest is ANCHORED between
+    the supervised prepare and mutate stages, and where restart recovery
+    looks for it. Honest scope note: supervisor and worker share a uid —
+    the anchor defends against corruption/rollback-denial by the flow's own
+    write surface, not against a hostile process that guesses sibling paths.
+    """
+
+    return Path(str(Path(root).resolve(strict=False)) + SUPERVISOR_DIR_SUFFIX)
+
+
+def read_snapshot_anchor(root: Path) -> dict[str, Any] | None:
+    """The supervisor's anchored snapshot digests, when present."""
+
+    anchor_path = supervisor_dir(root) / SNAPSHOT_ANCHOR_FILE
+    if not anchor_path.is_file():
+        return None
+    return json.loads(anchor_path.read_text(encoding="utf-8"))
 
 # Dimensions the restore VERIFIES vs. dimensions it explicitly does NOT
 # cover. Recorded verbatim in every snapshot.json and restore report.
@@ -1312,10 +1578,40 @@ def verify_against_entries(
                 mismatches.append(f"{e['path']}: bytes differ")
             if cur.get("mode") != e.get("mode"):
                 mismatches.append(f"{e['path']}: mode changed")
+        elif e["type"] == "dir":
+            if cur.get("mode") != e.get("mode"):
+                mismatches.append(f"{e['path']}: mode changed")
         elif e["type"] == "symlink":
             if cur.get("target") != e.get("target"):
                 mismatches.append(f"{e['path']}: symlink target changed")
     return mismatches
+
+
+def _extra_entries(root: Path, data: dict[str, Any]) -> list[str]:
+    """Current entries under BASELINE-PRESENT tuple roots that the snapshot
+    does not know about — unexpected additions (G7.4-PRE-2 item 2).
+
+    Only roots present at snapshot time are walked: a root absent from the
+    prepared baseline is handled by the coverage-absence check instead.
+    """
+
+    known = {e["path"] for e in data.get("entries", [])}
+    extras: list[str] = []
+    for rel, existed in sorted(data.get("coverage", {}).items()):
+        if not existed:
+            continue
+        base = Path(root) / rel
+        if not (base.is_dir() and not base.is_symlink()):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames.sort()
+            for name in sorted(dirnames) + sorted(filenames):
+                p = Path(dirpath) / name
+                if str(p) not in known:
+                    extras.append(
+                        f"{p}: extra entry not in the prepared baseline"
+                    )
+    return extras
 
 
 def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
@@ -1367,16 +1663,40 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             f"snapshot tar digest mismatch (expected {data['tar_sha256']}, "
             f"got {actual_tar_sha}) — refusing to restore untrusted bytes",
         )
+    # Supervisor anchor gate (G7.4-PRE-2 item 2): when the supervisor has
+    # anchored the snapshot OUTSIDE worker-controlled state, BOTH digests
+    # must still match — a coordinated tamper that edits tar bytes AND the
+    # manifest's bookkeeping together fails the anchored MANIFEST digest.
+    anchor = read_snapshot_anchor(root)
+    if anchor is not None:
+        anchored_problems: list[str] = []
+        if anchor.get("manifest_sha256") != _sha256_file(
+            snap_dir / SNAPSHOT_MANIFEST
+        ):
+            anchored_problems.append("manifest")
+        if anchor.get("tar_sha256") != actual_tar_sha:
+            anchored_problems.append("tar")
+        if anchored_problems:
+            raise CanaryError(
+                "snapshot_anchor_mismatch",
+                "snapshot " + " and ".join(anchored_problems)
+                + " no longer match the supervisor's anchor at "
+                f"{supervisor_dir(root) / SNAPSHOT_ANCHOR_FILE} — refusing "
+                "to trust tampered snapshot state",
+            )
 
-
+    extras = _extra_entries(root, data)
     if verify_only:
         mismatches = verify_against_entries(root, data["entries"])
+        mismatches.extend(extras)
         result = {
             "schema": SANDBOX_SCHEMA,
             "mode": "verify_only",
             "root": str(root),
             "ok": not mismatches,
             "mismatches": mismatches[:50],
+            "extra_entries": extras[:50],
+            "snapshot_anchor": "verified" if anchor is not None else "absent",
             "verified_entries": len(data["entries"]) - len(mismatches),
             "liveness": liv,
             "restart_recovery_detected": restart_recovery_detected,
@@ -1384,7 +1704,6 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             "not_covered_dimensions": list(NOT_COVERED_DIMENSIONS),
         }
         return result
-
     # Wipe the current state of every tuple path, then extract. Paths ABSENT
     # at snapshot time (coverage=false) are wiped too: byte-exactness vs the
     # prepared baseline means they must not exist after the restore.
@@ -1435,8 +1754,11 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
             except TypeError:  # python < 3.11.4 has no filter kwarg
                 tar.extract(m, path=root)
             extracted += 1
-
     mismatches = verify_against_entries(root, data["entries"])
+    # Tar-smuggled additions (members present in the tar but NOT in the
+    # manifest entries) surface here as unexpected post-restore entries.
+    extras = _extra_entries(root, data)
+    mismatches.extend(extras)
     for rel, existed in sorted(data["coverage"].items()):
         if not existed and ((root / rel).exists() or (root / rel).is_symlink()):
             mismatches.append(
@@ -1448,6 +1770,8 @@ def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
         "root": str(root),
         "ok": not mismatches,
         "mismatches": mismatches[:50],
+        "extra_entries": extras[:50],
+        "snapshot_anchor": "verified" if anchor is not None else "absent",
         "extracted_members": extracted,
         "verified_entries": len(data["entries"]) - len(mismatches),
         "liveness": liv,

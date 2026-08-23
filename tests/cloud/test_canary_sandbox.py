@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud.canary_sandbox import (
+    SNAPSHOT_ANCHOR_FILE,
     CanaryError,
     PHASE_FILE,
     PID_FILE,
@@ -36,8 +37,10 @@ from arnold_pipelines.megaplan.cloud.canary_sandbox import (
     build,
     containment_violations,
     liveness,
+    read_snapshot_anchor,
     restore,
     sandbox_env_spec,
+    supervisor_dir,
     take_snapshot,
 )
 
@@ -700,6 +703,247 @@ def test_restore_cli_wrapper_end_to_end(tmp_path: Path, source_repo: Path) -> No
     verdict = json.loads(proc.stdout)
     assert verdict["mode"] == "verify_only"
     assert verdict["ok"] is False  # post-flow state differs from baseline
+
+
+# ── snapshot/restore truthfulness (G7.4-PRE-2 item 2) ──
+
+
+def test_verify_only_flags_directory_mode_change(tmp_path: Path) -> None:
+    """RESTORED_DIMENSIONS claims mode verification for DIRECTORIES too."""
+
+    root = _fake_state_root(tmp_path)
+    (root / "manifests").chmod(0o700)
+    result = restore(root, verify_only=True)
+    assert result["ok"] is False
+    assert any(
+        "mode changed" in m and str(root / "manifests") in m
+        for m in result["mismatches"]
+    ), result["mismatches"]
+    # A real restore repairs the mode back to the snapshotted one.
+    fixed = restore(root)
+    assert fixed["ok"] is True, fixed["mismatches"]
+
+
+def test_verify_only_detects_unexpected_extra_entries(tmp_path: Path) -> None:
+    """Extra entries under baseline-present tuple roots are DETECTED by
+    --verify-only and REMOVED by a real restore (baseline-absent state)."""
+
+    root = _fake_state_root(tmp_path)
+    extra_file = root / "markers" / "extra-marker.json"
+    extra_file.write_text("{\"smuggled\": true}\n")
+    extra_dir = root / "manifests" / "unexpected-subdir"
+    extra_dir.mkdir()
+    (extra_dir / "junk.json").write_text("{}\n")
+
+    verdict = restore(root, verify_only=True)
+    assert verdict["ok"] is False
+    assert any("extra-marker.json" in m for m in verdict["mismatches"]), (
+        verdict["mismatches"]
+    )
+    assert any("unexpected-subdir" in m for m in verdict["mismatches"])
+
+    repaired = restore(root)
+    assert repaired["ok"] is True, repaired["mismatches"]
+    assert not extra_file.exists() and not extra_dir.exists()
+    after = restore(root, verify_only=True)
+    assert after["ok"] is True, after["mismatches"]
+
+
+def test_cutover_receipt_lock_and_registry_state_is_covered(tmp_path: Path) -> None:
+    """Coverage invariant: cutover rollback receipts (<manifest>.cutover-
+    rollback.json), pointer lock files (<name>.lock), and registry-shaped
+    state co-locate under the manifests tuple root by construction, so they
+    are snapshotted, restored and verified byte-exactly like every other
+    entry — documented in canary_sandbox.TUPLE_PATHS commentary."""
+
+    root = tmp_path / "fake-root"
+    manifests = root / "manifests"
+    manifests.mkdir(parents=True)
+    pointer = manifests / "runtime-manifest.json"
+    pointer.write_text('{"generation": 1, "owner": "canary-owner"}\n')
+    receipt = manifests / "runtime-manifest.json.cutover-rollback.json"
+    receipt.write_text('{"schema": "cutover.rollback.receipt", "pre_sha": "abc"}\n')
+    lock = manifests / "runtime-manifest.json.lock"
+    lock.write_text("")
+    registry = manifests / "registry.json"
+    registry.write_text('{"owners": {"canary": "owner-token"}}\n')
+    markers = root / "markers"
+    markers.mkdir()
+    (markers / "cloud-session-marker.json").write_text('{"fixture": true}\n')
+    take_snapshot(root)
+
+    # Drift exactly the kind of state a live cutover would touch.
+    receipt.write_text('{"schema": "cutover.rollback.receipt", "pre_sha": "TAMPERED"}\n')
+    lock.unlink()
+    registry.write_text('{"owners": {}}\n')
+
+    result = restore(root)
+    assert result["ok"] is True, result["mismatches"]
+    assert json.loads(receipt.read_text())["pre_sha"] == "abc"
+    assert lock.exists()
+    assert json.loads(registry.read_text())["owners"]["canary"] == "owner-token"
+
+
+def test_coordinated_tar_and_manifest_tamper_is_refused_via_anchor(
+    tmp_path: Path,
+) -> None:
+    """A tamper that edits tar bytes AND patches the manifest's recorded tar
+    digest together cannot pass: the supervisor's anchor holds the digest of
+    the MANIFEST ITSELF, which such a coordinated edit necessarily changes."""
+
+    root = _fake_state_root(tmp_path)
+    snap_dir = root / "snapshot"
+    manifest = snap_dir / "snapshot.json"
+    tar_path = snap_dir / "state.tar.gz"
+
+    def current_digests() -> dict:
+        import hashlib
+
+        return {
+            "root": str(root),
+            "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+            "tar_sha256": hashlib.sha256(tar_path.read_bytes()).hexdigest(),
+        }
+
+    # Happy path first: a faithful anchor lets restore proceed.
+    anchor_dir = supervisor_dir(root)
+    anchor_dir.mkdir(parents=True)
+    (anchor_dir / SNAPSHOT_ANCHOR_FILE).write_text(json.dumps(current_digests()))
+    ok_result = restore(root)
+    assert ok_result["ok"] is True
+    assert ok_result["snapshot_anchor"] == "verified"
+
+    # Coordinated tamper: flip tar bytes, then patch the manifest so its
+    # internal bookkeeping agrees with the new tar bytes.
+    blob = bytearray(tar_path.read_bytes())
+    blob[len(blob) // 2] ^= 0xFF
+    tar_path.write_bytes(bytes(blob))
+    import hashlib as _hl
+
+    data = json.loads(manifest.read_text())
+    data["tar_sha256"] = _hl.sha256(tar_path.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(data))
+
+    with pytest.raises(CanaryError) as excinfo:
+        restore(root)
+    assert excinfo.value.code == "snapshot_anchor_mismatch"
+
+
+def test_restore_without_anchor_reports_absent(tmp_path: Path) -> None:
+    root = _fake_state_root(tmp_path)
+    result = restore(root)
+    assert result["ok"] is True
+    assert result["snapshot_anchor"] == "absent"
+
+
+@pytest.mark.integration
+def test_supervised_stages_anchor_snapshot_and_restore_after_kill(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """Two-stage supervision: prepare anchors the snapshot OUTSIDE worker
+    state; an external kill -9 during mutation triggers an ANCHOR-VERIFIED
+    restore; prepare/mutate stages are individually visible in the report."""
+
+    root = tmp_path / "canary-root"
+    env = {
+        **os.environ,
+        "ARNOLD_CANARY_TEST_PAUSE_AT_PHASE": "promotion-adjacent-mutation",
+    }
+    supervisor = subprocess.Popen(
+        _canary_argv(
+            "build",
+            "--supervise",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+            "--supervisor-timeout",
+            "240",
+        ),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert _wait_for_phase(root, "promotion-adjacent-mutation"), (
+            (root / "logs" / "worker.log").read_text()[-4000:]
+            if (root / "logs" / "worker.log").is_file()
+            else "worker never reached the pause phase"
+        )
+        worker_pid = int((root / PID_FILE).read_text().strip())
+        os.kill(worker_pid, signal.SIGKILL)
+        out, _ = supervisor.communicate(timeout=240)
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.communicate()
+    assert supervisor.returncode == 0, out[-4000:]
+
+    report = json.loads((root / "report.json").read_text())
+    assert report["outcome"] == "killed_by_signal_9", report["outcome"]
+    # Staged run: prepare completed cleanly, mutate was killed mid-flow.
+    assert report["stages"]["prepare"]["returncode"] == 0
+    assert report["stages"]["mutate"]["returncode"] == -signal.SIGKILL
+    assert report["recovery"]["attempted"] is True
+    assert report["recovery"]["ok"] is True
+    # The anchor exists OUTSIDE the sandbox root...
+    anchor_path = supervisor_dir(root) / SNAPSHOT_ANCHOR_FILE
+    assert anchor_path.is_file()
+    anchored = read_snapshot_anchor(root)
+    assert anchored is not None and anchored["entry_count"] > 0
+    # ...and the independent verdict used it.
+    verdict = restore(root, verify_only=True)
+    assert verdict["ok"] is True, verdict["mismatches"]
+    assert verdict["snapshot_anchor"] == "verified"
+    pointer = json.loads((root / "manifests" / "runtime-manifest.json").read_text())
+    assert pointer["generation"] == 1
+
+
+
+@pytest.mark.integration
+def test_prepare_stage_failure_does_not_blindly_restore(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """Pre-snapshot death is handled EXPLICITLY: no baseline exists, so the
+    supervisor must NOT call restore — it reports failed_before_snapshot
+    with recovery.attempted=False instead of blindly restoring nothing."""
+
+    root = tmp_path / "canary-root"
+    env = {
+        **os.environ,
+        "ARNOLD_CANARY_TEST_CRASH_AFTER_PHASE": "disposable-remote",
+    }
+    supervisor = subprocess.Popen(
+        _canary_argv(
+            "build",
+            "--supervise",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+            "--supervisor-timeout",
+            "240",
+        ),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        out, _ = supervisor.communicate(timeout=240)
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.communicate()
+    assert supervisor.returncode == 0, out[-4000:]
+    report = json.loads((root / "report.json").read_text())
+    assert report["outcome"].startswith("failed_before_snapshot"), report["outcome"]
+    assert report["recovery"]["attempted"] is False
+    assert "no prepared snapshot" in report["recovery"]["reason"]
+    assert not (root / "snapshot" / "snapshot.json").exists()
 
 
 # ── supervision + crash recovery (deliverable 3) ────────────────────────────
