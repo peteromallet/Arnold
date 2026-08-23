@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# arnold-canary-build — DISPOSABLE canary builder (T7.4a deliverable 1)
+#
+# Builds a complete canary environment under ONE fresh temp root — source
+# checkout from a LOCAL disposable git remote the tool creates (never the
+# real origin), generation store, manifest/marker/lock/journal roots,
+# caches/temp/HOME/XDG all redirected — then runs the minimal
+# promote-adjacent flow INSIDE that root (arnold-runtime-create +
+# append_promotion + advance_generation against the disposable manifest).
+#
+# Assertion honesty: reports "no durable protected-state delta in named
+# paths" (before/after digests of the enumerated live protected roots);
+# NEVER claims zero writes.
+#
+# Usage: arnold-canary-build build --source-repo <repo> [--root <dir>]
+#            [--slug <slug>] [--base-ref <ref>] [--allow-non-tmp-root]
+#
+# Refuses to start when the ambient environment carries any protected
+# ARNOLD_* variable (live routing leak) and when any redirected path would
+# resolve outside the sandbox root (containment).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+exec python3 -m arnold_pipelines.megaplan.cloud.canary_sandbox build "$@"
