@@ -1,0 +1,5 @@
+normalized rendering of s8fix/s8fix-oomkilled-evidence.txt (raw preserved; ISO documented stamps added)
+container StartedAt: 2026-08-17T14:31:15.428579551Z
+docker inspect State: "OOMKilled": true
+documented death 1 (artifact ts): 2026-08-23 05:03:25 — snapshot attempt exit 137
+documented death 2 (artifact ts): 2026-08-23 05:18:01 — snapshot attempt exit 137

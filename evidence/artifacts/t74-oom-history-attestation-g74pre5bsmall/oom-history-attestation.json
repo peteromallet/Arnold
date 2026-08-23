@@ -1,0 +1,89 @@
+{
+ "schema": "arnold.t7.4.oom_history_attestation.v1",
+ "run_id": "t74-20260823T040812Z-3347570",
+ "rule_receipt": {
+  "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/mrc-ed48627a7fda489e96a16d449d3067b942b42eef99bf1196.stdout",
+  "sha256": "ccbd2e8f3669b1ff7371ff0fbdeca074eca523fafb548d4bab884305d2af9289"
+ },
+ "prior_helpers": {
+  "t74-j4-normalize-v2.py": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/t74-execution/amended/t74-j4-normalize-v2.py",
+   "sha256": "61436679398bea42a4ac9d2071ff308554314cf5a88994840ed7711a50b5f9a6"
+  },
+  "t74-sva-compare-v2.py": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/t74-execution/amended/t74-sva-compare-v2.py",
+   "sha256": "a4d3cac51c8a4c92caba082ba826d0d0cedc8c59abfa68d4cd8a6e5778cf67d3"
+  },
+  "t74-sva-fixtures.py": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/t74-execution/amended/t74-sva-fixtures.py",
+   "sha256": "cd039a7eec160fdefb236470e9bc645a6f32c6375abf3c480b18d18c4c58261d"
+  }
+ },
+ "evidence": {
+  "preserved_host_oom_records": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/preserved-host-oom-records.txt",
+   "sha256": "a11ccf56d39f81eb50616b98eb62363fde0be6cfd74898cbe5d06b460710398c"
+  },
+  "snapshot_attempt_050325_exit_137": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/snapshot_attempt_050325_exit_137",
+   "sha256": "e3b9c2844b5a5c2677b3a2279db2ec8487491dd9a23d6b22fac153391b3bb63c"
+  },
+  "snapshot_attempt_051801_exit_137": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/snapshot_attempt_051801_exit_137",
+   "sha256": "e3b9c2844b5a5c2677b3a2279db2ec8487491dd9a23d6b22fac153391b3bb63c"
+  },
+  "s8_snapshot_oom_diagnosis": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/t74-execution/S8-snapshot-oom-diagnosis.md",
+   "sha256": "161fd3575e9ae7c02abe72845ab49524eef7698ef7133e24a355987f8c81dd51"
+  },
+  "s8fix_oomkilled_evidence": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/s8fix-oomkilled-evidence.normalized.txt",
+   "sha256": "5e8d19d17b1f4f5d4fcbfe453d17575db140f7595f57cd02a3007efb0750b515"
+  },
+  "streaming_helper": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/mrc-run-20260820/evidence/artifacts/t74-execution/s8fix/t74-live-snapshot-v2.py",
+   "sha256": "440aae2a34ee80d588c9ac3b8116726a45be935c5463954a441f1767034477ee"
+  },
+  "s8_memory_events": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-cgroup-fence-g74pre5b-1/raw/host-memory.events",
+   "sha256": "f56d65f3daa4fe72352ec2dd36c0126729441c3ac730e31dc89a34f2cd743c8c"
+  },
+  "s8_host_kernel_oom_log": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/s8-host-kernel-oom-log.txt",
+   "sha256": "94ce9ad7e508275ddc922c17ee7de2892b065fa84de5e7bf1e51215dcbd4fd8d"
+  },
+  "streaming_differential_equality_proof": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/streaming-differential-equality-proof.txt",
+   "sha256": "e2188ee7a31f6e385f4ccd184a826a9efff84e783bf55af1992e8b852243c8f9"
+  },
+  "streaming_bounded_rss_proof": {
+   "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/streaming-bounded-rss-proof.txt",
+   "sha256": "131893b2c1922bfd0f4d9593677b65413f37d6c63134af300e67fca13bedb4eb"
+  }
+ },
+ "container_epoch": {
+  "container_id": "45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2",
+  "started_at": "2026-08-17T14:31:15.428579551Z"
+ },
+ "deaths": [
+  {
+   "host_time": "2026-08-23 05:03:25",
+   "exit_code": 137,
+   "evidence": "snapshot_attempt_050325_exit_137"
+  },
+  {
+   "host_time": "2026-08-23 05:18:01",
+   "exit_code": 137,
+   "evidence": "snapshot_attempt_051801_exit_137"
+  }
+ ],
+ "s8_fence": {
+  "cgroup_identity": "0::/system.slice/docker-45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2.scope",
+  "cgroup_path": "/sys/fs/cgroup/system.slice/docker-45404872d432f0cd6a7d148a4b8b31096f033a0048f4dc328094a080402c33e2.scope",
+  "oom_kill_counter": 2,
+  "memory_events_evidence": "s8_memory_events",
+  "host_kernel_oom_log_evidence": "s8_host_kernel_oom_log",
+  "host_kernel_oom_log_cursor": "s=a247fbbd36874d7180f3f902fcac4545;i=818d04c;b=ce621a4956ca4d099df7001093e67efe;m=1c43f0f30a1;t=659affd93a611;x=62b275f813d8c639",
+  "host_kernel_oom_log_sha256": "94ce9ad7e508275ddc922c17ee7de2892b065fa84de5e7bf1e51215dcbd4fd8d"
+ }
+}

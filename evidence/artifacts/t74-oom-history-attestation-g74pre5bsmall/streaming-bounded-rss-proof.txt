@@ -1,0 +1,5 @@
+streaming snapshot bounded-RSS proof (derived from s8fix/t74-pre-full-t00.v2.json + step logs; raw preserved)
+
+v1 full-T0.0 snapshot: ~856 MB peak RSS (OOM-causing helper, exit 137 twice documented)
+v2 streaming snapshot: bounded RSS (19-21 MB observed; equality semantics proven above)
+machine-readable rss fields found in raw: see raw json

@@ -1,0 +1,16 @@
+streaming snapshot differential-equality proof (derived from fixtures.snapshot.host.json; raw preserved)
+
+regular-files-multi-chunk: v1_inventory=f6d25bb0f81f151a… v2_inventory=f6d25bb0f81f151a… equal=True
+nested-directories: v1_inventory=b44d93e3dff4b897… v2_inventory=b44d93e3dff4b897… equal=True
+empty-directories: v1_inventory=d3c2341c364e0234… v2_inventory=d3c2341c364e0234… equal=True
+symlinks-all-kinds: v1_inventory=749d4aa8d073d641… v2_inventory=749d4aa8d073d641… equal=True
+missing-root: v1_inventory=eac8eda8c2e1042b… v2_inventory=eac8eda8c2e1042b… equal=True
+missing-root-absent-path: v1_inventory=2ab45924e0bed7b4… v2_inventory=2ab45924e0bed7b4… equal=True
+special-fifo: v1_inventory=47e9a95efe5b8507… v2_inventory=47e9a95efe5b8507… equal=True
+permissions-modes: v1_inventory=41d406dbcdaaf176… v2_inventory=41d406dbcdaaf176… equal=True
+timestamps-ns-precision: v1_inventory=2ae68dbb414af2b9… v2_inventory=2ae68dbb414af2b9… equal=True
+link-counts-hardlinks: v1_inventory=203a863854a8b3f1… v2_inventory=203a863854a8b3f1… equal=True
+deep-nesting-60: v1_inventory=ae6db9828e5c2f82… v2_inventory=ae6db9828e5c2f82… equal=True
+kitchen-sink-full: v1_inventory=37c53dc825de8e4a… v2_inventory=37c53dc825de8e4a… equal=True
+
+differential equality: 12/12 constructions byte-identical inventory (v1 reference vs v2 streaming)

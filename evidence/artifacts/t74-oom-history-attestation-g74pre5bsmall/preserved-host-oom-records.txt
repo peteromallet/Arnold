@@ -1,0 +1,6 @@
+preserved host OOM records — kernel dmesg lines captured at s8fix time
+(raw capture: s8fix/s8fix-oomkilled-evidence.txt; documented artifact timestamps per JUDG-OOM)
+documented death 1: 2026-08-23 05:03:25
+[Sun Aug 23 05:03:25 2026] Memory cgroup out of memory: Killed process 3370491 (python) total-vm:7904052kB, anon-rss:7761336kB, file-rss:9472kB, shmem-rss:0kB, UID:0 pgtables:15448kB oom_score_adj:0
+documented death 2: 2026-08-23 05:18:01
+[Sun Aug 23 05:18:01 2026] Memory cgroup out of memory: Killed process 3377211 (python) total-vm:7878912kB, anon-rss:7761396kB, file-rss:9472kB, shmem-rss:0kB, UID:0 pgtables:15396kB oom_score_adj:0
