@@ -292,6 +292,167 @@ def test_build_refuses_root_outside_system_tmp_dir(
     assert (root / "sandbox-env.json").exists()
 
 
+# ── end-to-end environment containment (reject finding 1) ───────────────────
+
+
+def _poisoned_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """A maximally hostile ambient environment + its tripwire dir.
+
+    - HOME, XDG_* and GIT_CONFIG_GLOBAL all carry git config poisoning the
+      commit author identity if ANY git subprocess inherits them;
+    - TMPDIR points at a directory that must receive zero writes;
+    - PYTHONPATH carries a sitecustomize that touches a per-pid tripwire in
+      EVERY python interpreter that inherits it.
+    """
+
+    poison = tmp_path / "poison"
+    home = poison / "home"
+    xdg = poison / "xdg"
+    pypath = poison / "pypath"
+    badtmp = poison / "badtmp"
+    for d in (home / ".config" / "git", xdg / "git", pypath, badtmp):
+        d.mkdir(parents=True)
+    (home / ".gitconfig").write_text(
+        "[user]\n\temail = poisoned-home@evil.invalid\n"
+    )
+    (xdg / "git" / "config").write_text(
+        "[user]\n\temail = poisoned-xdg@evil.invalid\n"
+    )
+    (poison / "global-gitconfig").write_text(
+        "[user]\n\temail = poisoned-global@evil.invalid\n"
+    )
+    (pypath / "sitecustomize.py").write_text(
+        "import os\n"
+        "d = os.environ.get('CANARY_TRIPWIRE_DIR', '')\n"
+        "if d:\n"
+        "    from pathlib import Path\n"
+        "    Path(d, 'ran-%d' % os.getpid()).touch()\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL")}
+    env.update(
+        {
+            "HOME": str(home),
+            "TMPDIR": str(badtmp),
+            "XDG_CONFIG_HOME": str(xdg),
+            "XDG_CACHE_HOME": str(xdg / "cache"),
+            "GIT_CONFIG_GLOBAL": str(poison / "global-gitconfig"),
+            "PYTHONPATH": str(pypath),
+            "CANARY_TRIPWIRE_DIR": str(poison),
+        }
+    )
+    return env, poison
+
+
+def _tripwire_pids(poison: Path) -> set[int]:
+    return {
+        int(p.name.split("-")[1]) for p in poison.glob("ran-*")
+    }
+
+
+def _probe_author_email(root: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root / "src"), "log", "-1", "--format=%ae"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+@pytest.mark.integration
+def test_poisoned_ambient_env_cannot_influence_setup_subprocesses(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """Poisoned HOME/TMPDIR/XDG/Git-config/PYTHONPATH cannot reach ANY setup
+    Git/Python subprocess — including through the installed wrapper, which
+    must REPLACE (never append) PYTHONPATH."""
+
+    env, poison = _poisoned_env(tmp_path)
+    root = tmp_path / "canary-root"
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-canary-build"
+    )
+    proc = subprocess.run(
+        [
+            str(wrapper),
+            # Poisoned TMPDIR legitimately disables ambient-tempdir
+            # validation of EXPLICIT roots (fail-closed); the operator
+            # override vouches for disposability while every SUBPROCESS
+            # containment property below stays fully asserted.
+            "--allow-non-tmp-root",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+        ],
+        cwd=tmp_path,  # outside any checkout: only PYTHONPATH imports the module
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert proc.returncode == 0, (proc.stdout + proc.stderr)[-4000:]
+    report = json.loads(proc.stdout)
+    assert report["path_audit"]["ok"] is True, report["path_audit"]["violations"]
+    assert report["protected_state"]["ok"] is True
+    # No python subprocess inherited the poisoned PYTHONPATH.
+    assert _tripwire_pids(poison) == set(), list(poison.glob("ran-*"))
+    # No ambient git config reached the probe commit.
+    assert _probe_author_email(root) == "canary@sandbox.invalid"
+    # Nothing was written into the poisoned TMPDIR.
+    assert list((poison / "badtmp").iterdir()) == []
+
+
+@pytest.mark.integration
+def test_poisoned_ambient_env_cannot_reach_supervised_worker(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """The supervisor builds the worker env from the sanitized allowlist:
+    the setsid'd worker (and every candidate-module child it spawns) runs
+    without the poisoned PYTHONPATH/HOME/Git-config state. Only the
+    supervisor interpreter itself may have fired the tripwire at startup —
+    it is launched by the test with the poisoned env by construction."""
+
+    env, poison = _poisoned_env(tmp_path)
+    root = tmp_path / "canary-root"
+    supervisor = subprocess.Popen(
+        _canary_argv(
+            "build",
+            "--supervise",
+            "--allow-non-tmp-root",
+            "--source-repo",
+            str(source_repo),
+            "--root",
+            str(root),
+        ),
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        out, _ = supervisor.communicate(timeout=600)
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.communicate()
+    assert supervisor.returncode == 0, out[-4000:]
+    report = json.loads(out)
+    assert report["supervision"]["outcome"] == "clean_exit", out[-4000:]
+    assert report["path_audit"]["ok"] is True
+    worker_pid = int((root / PID_FILE).read_text().strip())
+    fired = _tripwire_pids(poison)
+    assert worker_pid not in fired, (
+        f"worker pid {worker_pid} inherited the poisoned PYTHONPATH"
+    )
+    assert fired <= {supervisor.pid}, (
+        f"a non-supervisor subprocess fired the PYTHONPATH tripwire: {fired}"
+    )
+    assert _probe_author_email(root) == "canary@sandbox.invalid"
+
+
 # ── snapshot / restore (deliverable 2) ──────────────────────────────────────
 
 

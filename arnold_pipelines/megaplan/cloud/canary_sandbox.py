@@ -300,7 +300,9 @@ def digest_tree(
     }
 
 
-def default_protected_roots(source_repo: Path) -> list[dict[str, Any]]:
+def default_protected_roots(
+    source_repo: Path, env: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     """The NAMED live protected roots the delta assertion covers.
 
     These are the default (unredirected) resolutions of the protected state
@@ -315,6 +317,7 @@ def default_protected_roots(source_repo: Path) -> list[dict[str, Any]]:
             ["git", "-C", str(source_repo), "ls-files", "-z"],
             capture_output=True,
             check=False,
+            env=env,
         )
         if proc.returncode == 0:
             tracked = proc.stdout.decode()
@@ -418,8 +421,17 @@ def _run(
     return proc
 
 
-def _git(cwd: Path | None, *args: str, check: bool = True) -> str:
-    proc = _run(["git", "-C", str(cwd), *args] if cwd else ["git", *args], check=check)
+def _git(
+    cwd: Path | None,
+    *args: str,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> str:
+    proc = _run(
+        ["git", "-C", str(cwd), *args] if cwd else ["git", *args],
+        check=check,
+        env=env,
+    )
     return proc.stdout.strip()
 
 
@@ -428,8 +440,19 @@ def _git(cwd: Path | None, *args: str, check: bool = True) -> str:
 _FLOW_ENV_ALLOWLIST = frozenset(_ENV_PASSTHROUGH)
 
 
+def _sanitized_base_env() -> dict[str, str]:
+    """The ONLY ambient state any subprocess in this module may inherit.
+
+    Everything else — PYTHONPATH, HOME, XDG_*, GIT_*, proxy vars, ARNOLD_* —
+    is dropped so poisoned caller state cannot reach any git/python child
+    (reject finding 1). Callers layer the redirected spec on top.
+    """
+
+    return {k: v for k, v in os.environ.items() if k in _FLOW_ENV_ALLOWLIST}
+
+
 def _flow_env(spec: dict[str, str], src: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k in _FLOW_ENV_ALLOWLIST}
+    env = _sanitized_base_env()
     env.update(spec)
     env["PYTHONPATH"] = str(src)
     env["ARNOLD_GENERATION_PYTHON"] = sys.executable
@@ -438,6 +461,25 @@ def _flow_env(spec: dict[str, str], src: Path) -> dict[str, str]:
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
 
+
+def _system_temp_dir() -> Path:
+    """The OS default temp dir, deliberately IGNORING ambient TMPDIR.
+
+    A poisoned caller TMPDIR must not relocate implicit canary roots or
+    fool the disposability check (reject finding 1 applies to parent-side
+    decisions too). tempfile.gettempdir() cannot be used here: it honours
+    and then CACHES ambient TMPDIR, so the first poisoned caller would pin
+    the poison for the process lifetime.
+    """
+
+    for cand in ("/tmp", "/var/tmp", "/usr/tmp"):
+        p = Path(cand)
+        try:
+            if p.is_dir():
+                return p.resolve(strict=False)
+        except OSError:
+            continue
+    return Path("/tmp")
 
 def _allocate_root(explicit: str | None, allow_non_tmp: bool) -> Path:
     if explicit:
@@ -450,28 +492,40 @@ def _allocate_root(explicit: str | None, allow_non_tmp: bool) -> Path:
             )
         root.mkdir(parents=True, exist_ok=True)
     else:
-        root = Path(tempfile.mkdtemp(prefix="arnold-canary-"))
+        root = Path(
+            tempfile.mkdtemp(prefix="arnold-canary-", dir=str(_system_temp_dir()))
+        )
     resolved = root.resolve(strict=False)
-    tmp = Path(tempfile.gettempdir()).resolve(strict=False)
-    if not allow_non_tmp and not _is_under(resolved, tmp):
+    # Disposability reference points: the ambient temp dir (so test/CI
+    # roots under a caller-provided TMPDIR keep working) OR the true system
+    # default. A poisoned TMPDIR can neither relocate IMPLICIT roots (they
+    # are placed under _system_temp_dir()) nor force refusal of a genuinely
+    # disposable explicit root; it also cannot smuggle a root OUTSIDE both
+    # references past the check.
+    refs = {Path(tempfile.gettempdir()).resolve(strict=False), _system_temp_dir()}
+    if not allow_non_tmp and not any(_is_under(resolved, r) for r in refs):
         raise CanaryError(
             "root_not_disposable",
-            f"root {resolved} is not under the system temp dir ({tmp}) — "
+            f"root {resolved} is not under any system temp dir ({sorted(refs)}) — "
             "canary roots must be disposable (pass --allow-non-tmp-root to override)",
         )
     return resolved
 
-
-def _make_disposable_remote(root: Path, source_repo: Path) -> Path:
+def _make_disposable_remote(
+    root: Path, source_repo: Path, env: dict[str, str]
+) -> Path:
     remote = root / "remote.git"
     # --no-local for the same inode-cascade reason as _clone_source below.
-    _run(["git", "clone", "--bare", "--quiet", "--no-local", str(source_repo), str(remote)])
+    _run(
+        ["git", "clone", "--bare", "--quiet", "--no-local", str(source_repo), str(remote)],
+        env=env,
+    )
     # Sever the clone's back-reference to the real repo: after this, the
     # disposable remote has NO configured remote at all, so nothing in the
     # sandbox can accidentally fetch/push toward the real origin.
-    _git(remote, "remote", "remove", "origin", check=False)
-    _git(remote, "config", "gc.auto", "0")
-    leftovers = _git(remote, "remote", "-v", check=False)
+    _git(remote, "remote", "remove", "origin", check=False, env=env)
+    _git(remote, "config", "gc.auto", "0", env=env)
+    leftovers = _git(remote, "remote", "-v", check=False, env=env)
     if leftovers:
         raise CanaryError(
             "remote_not_severed",
@@ -480,7 +534,9 @@ def _make_disposable_remote(root: Path, source_repo: Path) -> Path:
     return remote
 
 
-def _clone_source(root: Path, remote: Path, base_sha: str) -> Path:
+def _clone_source(
+    root: Path, remote: Path, base_sha: str, env: dict[str, str]
+) -> Path:
     src = root / "src"
     # --no-local: a hardlinked local clone shares inodes with the source
     # object store, and destination-side git housekeeping (auto-gc after
@@ -488,15 +544,18 @@ def _clone_source(root: Path, remote: Path, base_sha: str) -> Path:
     # shared store holds many loose objects (observed on this host). A
     # --no-local clone copies objects into the sandbox; the real repo is
     # never touched again.
-    _run(["git", "clone", "--quiet", "--no-local", str(remote), str(src)])
-    _git(src, "config", "user.name", "arnold-canary")
-    _git(src, "config", "user.email", "canary@sandbox.invalid")
-    _git(src, "config", "commit.gpgsign", "false")
-    _git(src, "config", "tag.gpgsign", "false")
-    _git(src, "config", "gc.auto", "0")
-    _git(src, "config", "advice.detachedHead", "false")
-    origin = _git(src, "config", "--get", "remote.origin.url")
-    _git(src, "checkout", "--detach", base_sha)
+    _run(
+        ["git", "clone", "--quiet", "--no-local", str(remote), str(src)],
+        env=env,
+    )
+    _git(src, "config", "user.name", "arnold-canary", env=env)
+    _git(src, "config", "user.email", "canary@sandbox.invalid", env=env)
+    _git(src, "config", "commit.gpgsign", "false", env=env)
+    _git(src, "config", "tag.gpgsign", "false", env=env)
+    _git(src, "config", "gc.auto", "0", env=env)
+    _git(src, "config", "advice.detachedHead", "false", env=env)
+    origin = _git(src, "config", "--get", "remote.origin.url", env=env)
+    _git(src, "checkout", "--detach", base_sha, env=env)
     if Path(origin).resolve(strict=False) != remote.resolve(strict=False):
         raise CanaryError(
             "clone_origin_violation",
@@ -702,20 +761,24 @@ def _build_flow(
     if not (source_repo / ".git").exists():
         raise CanaryError("source_repo_invalid", f"{source_repo} is not a git checkout")
 
-    head = _git(source_repo, "rev-parse", "HEAD")
-    tree = _git(source_repo, "rev-parse", "HEAD^{tree}")
+    # Sanitized environment FIRST (reject finding 1): no Git/Python
+    # subprocess may run before this point. Everything below — rev-parse,
+    # remote creation, clone, candidate-module calls — inherits ONLY the
+    # redirected spec, never ambient HOME/TMPDIR/XDG/Git-config/PYTHONPATH.
+    root = Path(root)
+    spec = sandbox_env_spec(root)
+    flow_env = _flow_env(spec, root / "src")
+    if generation_build_strategy:
+        flow_env["ARNOLD_GENERATION_BUILD_STRATEGY"] = generation_build_strategy
+
+    head = _git(source_repo, "rev-parse", "HEAD", env=flow_env)
+    tree = _git(source_repo, "rev-parse", "HEAD^{tree}", env=flow_env)
     if base_ref in ("HEAD", ""):
         base_ref = head
 
     # Liveness record FIRST: any crash leaves a pid a supervisor or a
     # restart-time restore can probe before touching state.
-    root = Path(root)
     (root / PID_FILE).write_text(f"{os.getpid()}\n", encoding="utf-8")
-
-    spec = sandbox_env_spec(root)
-    flow_env = _flow_env(spec, root / "src")
-    if generation_build_strategy:
-        flow_env["ARNOLD_GENERATION_BUILD_STRATEGY"] = generation_build_strategy
 
     for sub in ("home", "tmp", "xdg/cache", "xdg/config", "xdg/data", "xdg/state",
                 "cache/pip", "cache/uv", "base", "manifests", "markers",
@@ -741,7 +804,7 @@ def _build_flow(
             + "\n".join(f"  - {v}" for v in violations),
         )
 
-    protected_roots = default_protected_roots(source_repo)
+    protected_roots = default_protected_roots(source_repo, env=flow_env)
     before: dict[str, Any] = {}
     for spec_entry in protected_roots:
         kwargs: dict[str, Any] = {}
@@ -752,9 +815,9 @@ def _build_flow(
         before[spec_entry["name"]] = digest_tree(spec_entry["path"], **kwargs)
 
     _phase(root, "disposable-remote")
-    remote = _make_disposable_remote(root, source_repo)
+    remote = _make_disposable_remote(root, source_repo, flow_env)
     _phase(root, "source-clone")
-    src = _clone_source(root, remote, base_ref)
+    src = _clone_source(root, remote, base_ref, flow_env)
 
     _phase(root, "runtime-create")
     wrapper = src / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-runtime-create"
@@ -773,7 +836,7 @@ def _build_flow(
     slug_manifest = manifest_dir / f"{slug}.json"
     pointer = Path(spec["ARNOLD_RUNTIME_MANIFEST"])
     worktree = Path(spec["ARNOLD_BASE_DIR"]) / "runtime-candidates" / slug
-    branch = _git(worktree, "branch", "--show-current")
+    branch = _git(worktree, "branch", "--show-current", env=flow_env)
     _append_jsonl(
         manifest_dir / "creation-journal.jsonl",
         {
@@ -796,10 +859,10 @@ def _build_flow(
     (src / "canary-probe.txt").write_text(
         f"canary probe at {time.time()}\n", encoding="utf-8"
     )
-    _git(src, "add", "canary-probe.txt")
-    _git(src, "commit", "-m", "canary: probe commit (scratch, not promoted code)")
-    probe_sha = _git(src, "rev-parse", "HEAD")
-    _git(src, "push", "origin", f"HEAD:refs/heads/canary/{slug}-probe")
+    _git(src, "add", "canary-probe.txt", env=flow_env)
+    _git(src, "commit", "-m", "canary: probe commit (scratch, not promoted code)", env=flow_env)
+    probe_sha = _git(src, "rev-parse", "HEAD", env=flow_env)
+    _git(src, "push", "origin", f"HEAD:refs/heads/canary/{slug}-probe", env=flow_env)
 
     _phase(root, "promotion-adjacent-mutation")
     promotion_record = {
@@ -967,13 +1030,16 @@ def _build_supervised(
 
     module = "arnold_pipelines.megaplan.cloud.canary_sandbox"
     # The worker runs with cwd=sandbox root, where THIS package does not
-    # exist — hand it the builder repo's import path explicitly.
+    # exist — hand it the builder repo's import path explicitly. The env is
+    # SANITIZED (reject finding 1): allowlisted ambient passthrough plus the
+    # redirected spec only. Inherited PYTHONPATH/HOME/XDG/Git-config state is
+    # dropped here exactly as in every setup subprocess; ONLY the test-only
+    # crash/pause hooks are forwarded so failure-injection tests still work.
     builder_root = str(Path(__file__).resolve().parents[3])
-    worker_env = dict(os.environ)
-    prior_path = worker_env.get("PYTHONPATH")
-    worker_env["PYTHONPATH"] = (
-        builder_root + (os.pathsep + prior_path if prior_path else "")
-    )
+    worker_env = _flow_env(sandbox_env_spec(root), Path(builder_root))
+    for hook in (TEST_CRASH_PHASE_ENV, TEST_PAUSE_PHASE_ENV):
+        if hook in os.environ:
+            worker_env[hook] = os.environ[hook]
     worker_rc: int | None = None
     timed_out = False
     with open(root / "logs" / "worker.log", "ab") as log_fh:

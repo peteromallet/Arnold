@@ -28,7 +28,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
-export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
+# REPLACE, never append: an inherited PYTHONPATH could shadow this module or
+# plant sitecustomize in every python subprocess of the flow (reject finding 1).
+export PYTHONPATH="$REPO_ROOT"
 
 exec python3 -m arnold_pipelines.megaplan.cloud.canary_sandbox build "$@"
