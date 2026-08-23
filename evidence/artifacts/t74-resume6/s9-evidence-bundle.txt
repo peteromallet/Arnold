@@ -1,0 +1,202 @@
+{
+  "liveness": {
+    "alive": false,
+    "caveat": "an 'alive' verdict blocks restore only when the recorded PGID+start identity ALSO match (definitely our old worker) or when no identity was recorded (fail-closed); a live pid with mismatched identity is PID reuse and must not wedge recovery forever",
+    "current_identity": null,
+    "heartbeat_age_seconds": 17.098,
+    "identity_match": null,
+    "phase": "promotion-adjacent-mutation",
+    "pid": 927232,
+    "recorded_identity": {
+      "lstart": "Sun Aug 23 22:37:45 2026",
+      "pgid": 927232,
+      "pid": 927232
+    }
+  },
+  "mode": "build-supervised",
+  "note": "worker ran setsid'd under this supervisor in two stages; unclean mutation triggered anchor-verified restore of the pre-mutation snapshot. Container/host death kills the supervisor too \u2014 the restart path is arnold-canary-restore --root <root>.",
+  "outcome": "exit_2",
+  "phase_at_death": "promotion-adjacent-mutation",
+  "recovery": {
+    "attempted": true,
+    "extra_entries": [],
+    "ok": true,
+    "report": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/snapshot/restore-report.json",
+    "verified_entries": 16140
+  },
+  "root": "/tmp/arnold-t74-20260823T040812Z-3347570-clean",
+  "schema": "arnold.megaplan.cloud.canary_sandbox.v1",
+  "stages": {
+    "mutate": {
+      "process_group": {
+        "group_proven_gone": true,
+        "pgid": 927232,
+        "sigkill_delivered": false
+      },
+      "returncode": 2,
+      "timed_out": false
+    },
+    "prepare": {
+      "process_group": null,
+      "returncode": 0,
+      "timed_out": false
+    }
+  },
+  "supervisor_anchor": "/tmp/arnold-t74-20260823T040812Z-3347570-clean.supervisor",
+  "worker_returncode": 2
+}
+---8<---FILE:clean-build.stdout.uv.r6.json
+{
+  "liveness": {
+    "alive": false,
+    "caveat": "an 'alive' verdict blocks restore only when the recorded PGID+start identity ALSO match (definitely our old worker) or when no identity was recorded (fail-closed); a live pid with mismatched identity is PID reuse and must not wedge recovery forever",
+    "current_identity": null,
+    "heartbeat_age_seconds": 17.098,
+    "identity_match": null,
+    "phase": "promotion-adjacent-mutation",
+    "pid": 927232,
+    "recorded_identity": {
+      "lstart": "Sun Aug 23 22:37:45 2026",
+      "pgid": 927232,
+      "pid": 927232
+    }
+  },
+  "mode": "build-supervised",
+  "note": "worker ran setsid'd under this supervisor in two stages; unclean mutation triggered anchor-verified restore of the pre-mutation snapshot. Container/host death kills the supervisor too \u2014 the restart path is arnold-canary-restore --root <root>.",
+  "outcome": "exit_2",
+  "phase_at_death": "promotion-adjacent-mutation",
+  "recovery": {
+    "attempted": true,
+    "extra_entries": [],
+    "ok": true,
+    "report": "/tmp/arnold-t74-20260823T040812Z-3347570-clean/snapshot/restore-report.json",
+    "verified_entries": 16140
+  },
+  "root": "/tmp/arnold-t74-20260823T040812Z-3347570-clean",
+  "schema": "arnold.megaplan.cloud.canary_sandbox.v1",
+  "stages": {
+    "mutate": {
+      "process_group": {
+        "group_proven_gone": true,
+        "pgid": 927232,
+        "sigkill_delivered": false
+      },
+      "returncode": 2,
+      "timed_out": false
+    },
+    "prepare": {
+      "process_group": null,
+      "returncode": 0,
+      "timed_out": false
+    }
+  },
+  "supervisor_anchor": "/tmp/arnold-t74-20260823T040812Z-3347570-clean.supervisor",
+  "worker_returncode": 2
+}
+---8<---FILE:clean-build-report.uv.r6.json
+{
+  "workers": [
+    {
+      "identity": {
+        "lstart": "Sun Aug 23 22:22:44 2026",
+        "pgid": 924639,
+        "pid": 924639
+      },
+      "pid": 924639,
+      "recorded_at": "2026-08-23T22:22:45Z",
+      "stage": "prepare"
+    },
+    {
+      "identity": {
+        "lstart": "Sun Aug 23 22:37:45 2026",
+        "pgid": 927232,
+        "pid": 927232
+      },
+      "pid": 927232,
+      "recorded_at": "2026-08-23T22:37:46Z",
+      "stage": "mutate"
+    }
+  ]
+}
+---8<---FILE:clean-supervisor-process-identities.uv.r6.json
+{
+  "created_at": "2026-08-23T22:37:46Z",
+  "entry_count": 16140,
+  "manifest_sha256": "89baf1f7ed1426494bde7b5b20f56696734f6d3026ea3dcd079ed3fa24b0d1ad",
+  "root": "/tmp/arnold-t74-20260823T040812Z-3347570-clean",
+  "tar_sha256": "d07badd774edfe6a29b83b8a26ff0fb5c44e63fb28465d5e07abbef5813cabe9",
+  "writer": "supervisor between prepare and mutate stages"
+}
+---8<---FILE:clean-snapshot-anchor.uv.r6.json
+WORKERLOG: arnold-canary-build: error [command_failed]: /workspace/runtime-candidates/astrid-first/.venv/bin/python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest advance_generation /tmp/arnold-t74-20260823T040812Z-3347570-clean/manifests/t74-clean.json e57c4f3d47e015b95c1ec31899fde873486d2ca8 --reason canary advance_generation for t74-clean (disposable root /tmp/arnold-t74-20260823T040812Z-3347570-clean) failed (exit 2):
+WORKERLOG: error: advance_generation refused: dependency-generation proof is bound to frozen_spec_sha256 '05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc' but the new commit's frozen spec digest is '440afcff56d3eb74f0f27dda6f0a4e3892729d021d8a68e9c2f296de270fcf32'; rebuild or select the matching content-addressed generation before advancing
+{
+  "coverage": {
+    "base/runtime-candidates": true,
+    "base/runtime-venvs": true,
+    "chain": true,
+    "journals": true,
+    "manifests": true,
+    "markers": true,
+    "remote.git": true,
+    "src/.git/HEAD": true,
+    "src/.git/ORIG_HEAD": false,
+    "src/.git/index": true,
+    "src/.git/logs": true,
+    "src/.git/refs": true,
+    "src/.git/worktrees": true
+  },
+  "extra_entries": [],
+  "extracted_members": 16140,
+  "liveness": {
+    "alive": false,
+    "caveat": "an 'alive' verdict blocks restore only when the recorded PGID+start identity ALSO match (definitely our old worker) or when no identity was recorded (fail-closed); a live pid with mismatched identity is PID reuse and must not wedge recovery forever",
+    "current_identity": null,
+    "heartbeat_age_seconds": 3.485,
+    "identity_match": null,
+    "phase": "promotion-adjacent-mutation",
+    "pid": 927232,
+    "recorded_identity": {
+      "lstart": "Sun Aug 23 22:37:45 2026",
+      "pgid": 927232,
+      "pid": 927232
+    }
+  },
+  "mismatches": [],
+  "mode": "restore",
+  "not_covered_dimensions": [
+    "xattrs",
+    "ACLs",
+    "uid/gid ownership",
+    "atime/mtime timestamps",
+    "hardlink identity: a hardlinked FILE at snapshot time is refused loudly rather than restored wrongly; symlinks are preserved as such",
+    "FIFO/socket/device nodes: recorded and existence-checked only, no content semantics"
+  ],
+  "ok": true,
+  "restart_recovery_detected": true,
+  "restored_dimensions": [
+    "existence",
+    "object type (file/dir/symlink)",
+    "file bytes (SHA-256)",
+    "symlink target",
+    "mode (permission bits)"
+  ],
+  "root": "/tmp/arnold-t74-20260823T040812Z-3347570-clean",
+  "schema": "arnold.megaplan.cloud.canary_sandbox.v1",
+  "snapshot_anchor": "verified",
+  "verified_entries": 16140,
+  "wiped_paths": [
+    "manifests",
+    "markers",
+    "chain",
+    "journals",
+    "base/runtime-venvs",
+    "base/runtime-candidates",
+    "remote.git",
+    "src/.git/HEAD",
+    "src/.git/index",
+    "src/.git/refs",
+    "src/.git/logs",
+    "src/.git/worktrees"
+  ]
+}

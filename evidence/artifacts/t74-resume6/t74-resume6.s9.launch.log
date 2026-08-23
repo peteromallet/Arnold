@@ -1,0 +1,32 @@
+/tmp/arnold-t74-20260823T040812Z-3347570/env.sh: line 13: warning: setlocale: LC_CTYPE: cannot change locale (UTF-8)
+Traceback (most recent call last):
+  File "/tmp/arnold-t74-20260823T040812Z-3347570/t74-assert.py", line 290, in <module>
+    clean(sys.argv[2])
+  File "/tmp/arnold-t74-20260823T040812Z-3347570/t74-assert.py", line 72, in clean
+    assert report["candidate"]["source_head"] == HEAD
+           ~~~~~~^^^^^^^^^^^^^
+KeyError: 'candidate'
+S9-ASSERT-NONZERO arc=1; build CLI structured outcome:
+{
+ "outcome": "exit_2",
+ "phase_at_death": "promotion-adjacent-mutation",
+ "mode": "build-supervised",
+ "note": "worker ran setsid'd under this supervisor in two stages; unclean mutation triggered anchor-verified restore of the pre-mutation snapshot. Container/host death kills the supervisor too \u2014 the restart path is arnold-canary-restore --root <root>.",
+ "stages": {
+  "mutate": {
+   "process_group": {
+    "group_proven_gone": true,
+    "pgid": 927232,
+    "sigkill_delivered": false
+   },
+   "returncode": 2,
+   "timed_out": false
+  },
+  "prepare": {
+   "process_group": null,
+   "returncode": 0,
+   "timed_out": false
+  }
+ },
+ "supervision": null
+}

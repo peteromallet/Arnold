@@ -1,0 +1,40 @@
+== dead-state capture T74RESUME6 S9 halt ==
+captured_at_utc: 2026-08-23T23:05Z
+launch_ts: 2026-08-23T22:22:44Z (nohup pid 4186224)
+build_cli_exit: 0 (structured failure reported in stdout/report.json)
+assert_exit: 1 (KeyError 'candidate' on failure-schema report; structured
+outcome recorded per T74RESUME6 card amendment — not masked)
+phase_file: recovered-by-supervisor
+outcome: exit_2 (worker returncode 2; mutate stage; sigkill_delivered false;
+timed_out false; prepare returncode 0)
+phase_at_death: promotion-adjacent-mutation
+recovery: attempted=true ok=true extra_entries=[] extracted_members=16140
+(anchor-verified restore of pre-mutation snapshot by supervisor)
+
+Key digests:
+89baf1f7ed1426494bde7b5b20f56696734f6d3026ea3dcd079ed3fa24b0d1ad  snapshot manifest_sha256 (anchor, 16140 entries)
+d07badd774edfe6a29b83b8a26ff0fb5c44e63fb28465d5e07abbef5813cabe9  snapshot tar_sha256 (anchor)
+3f85f5255294c9bd77b2f1d302ff74aeaa57295d3df38056a293a5f93a9e3e06  venv_digest (generation 05b40a47…)
+
+Generation proof (.generation.json, restored tree):
+{"created": "2026-08-23T22:36:15+00:00",
+ "frozen_spec_sha256": "05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc",
+ "id": "05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc",
+ "interpreter_path": ".../base/runtime-venvs/05b40a47.../bin/python",
+ "venv_digest": "3f85f5255294c9bd77b2f1d302ff74aeaa57295d3df38056a293a5f93a9e3e06"}
+
+Worker log (verbatim, CLEAN_ROOT/logs/worker.log):
+arnold-canary-build: error [command_failed]: /workspace/runtime-candidates/astrid-first/.venv/bin/python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest advance_generation /tmp/arnold-t74-20260823T040812Z-3347570-clean/manifests/t74-clean.json e57c4f3d47e015b95c1ec31899fde873486d2ca8 --reason canary advance_generation for t74-clean (disposable root /tmp/arnold-t74-20260823T040812Z-3347570-clean) failed (exit 2):
+error: advance_generation refused: dependency-generation proof is bound to frozen_spec_sha256 '05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc' but the new commit's frozen spec digest is '440afcff56d3eb74f0f27dda6f0a4e3892729d021d8a68e9c2f296de270fcf32'; rebuild or select the matching content-addressed generation before advancing
+
+Remedy D mechanics attestation (this attempt's real generation tree):
+GEN 05b40a47e3e6b501327899f3624703a660549e080d7c14d8764b7e6c35d79ebc
+files=7992 nlink_gt_1=0  (copy mode effective; hardlink wall stays gone)
+
+Fence at halt: epoch unchanged (container 45404872…c33e2, StartedAt
+2026-08-17T14:31:15.428579551Z); memory.events oom=2 oom_kill=2 throughout;
+ambient 'max' counter drifted 9926860 (session start) -> 9950836 -> 9994245
+-> 10040015 -> 10094416 -> 10097926 (halt read). Counter-based fence is the
+invariant; byte drift confined to ambient 'max'.
+CLEAN_ROOT debris left in place as halt evidence (prestate of prior resume5
+debris digest-captured in t74resume6-debris-prestate.sha256 before removal).
