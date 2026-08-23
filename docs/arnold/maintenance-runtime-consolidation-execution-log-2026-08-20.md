@@ -488,3 +488,8 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - T7.3 dual-candidate install: both candidates @ ca89314eec, separate roots, receipts t73-*.json; divergences recorded (container PYTHONPATH shadows candidates; candidate-B stash 66c45951 preserved).
 - G7.4-pre (Sol mrc-2bf46765): **REJECT** of proposed canary contract. Requirements before T7.4: (1) disposable builder CLI fully rooted under /tmp; (2) standalone restore CLI covering complete selected-state tuple OR proven invariant; (3) externally-supervised crash recovery; (4) weakened honestly-named "no durable protected-state delta" assertion + full env redirection list; (5) exact T7.3 receipt paths/digests/interpreter; (6) full T0.0 snapshot inventory + J4 normalization; (7) restored T7.4 acceptance coverage or explicit amendment.
 - Next: T7.4a [XHARD] builds the disposable builder/restore CLIs per those requirements; then revised G7.4-pre → T7.4 execution → G7.4-post.
+
+### T74RESUME2c — honest halt at S9; orchestrator card amendment
+- S1-S8 PASS (S8 via accepted_historical_exception; full T0.0 snapshot completed via streaming v2, no third OOM). Fence byte-identical post-run (f56d65f3…, oom_kill=2). Committed 71a9e0b45a.
+- S9 FAIL deterministic: card pinned `--generation-build-strategy pip`; pip replay drops env markers → audioop-lts (>=3.13) unresolvable on 3.11.11. Supervisor containment proven (failed_before_snapshot, zero mutation).
+- Amendment (orchestrator card, not operator-frozen): step09 build strategy pip → uv for T74RESUME3; resume at S9 with same tooling. WORKDIR shadowing hazard fixed via docker() -w /tmp shim (no staged byte touched).
