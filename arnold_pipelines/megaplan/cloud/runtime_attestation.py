@@ -1421,7 +1421,18 @@ def _require_standalone_operational_dir(state: Path, name: str, *, create: bool)
         return
     if not create:
         raise CliError(RUNTIME_ATTESTATION_ERROR, f"resident {name} directory is unavailable")
-    (state / name).mkdir(mode=0o700)
+    try:
+        (state / name).mkdir(mode=0o700)
+    except FileExistsError:
+        # Concurrent-issuer create race: the winner may be legitimate or
+        # hostile. Re-inspect so a symlink, non-directory, or permissive
+        # occupant fails closed instead of being adopted or repaired.
+        if not _inspect_standalone_operational_dir(state, name):
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                f"resident {name} directory is unavailable",
+            ) from None
+        return
     (state / name).chmod(0o700)
 
 

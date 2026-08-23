@@ -569,10 +569,29 @@ def _packaged_omp_agent_path(name: str) -> Path:
     return Path(__file__).resolve().parent / "agents" / f"{name}.md"
 
 
-def _agent_frontmatter_name(text: str) -> str | None:
-    if not text.startswith("---"):
+_FRONTMATTER_DELIMITER = re.compile(r"^---[ \t]*\r?(?:\n|$)", re.MULTILINE)
+
+
+def _split_frontmatter(text: str) -> tuple[str, str] | None:
+    """Split a leading YAML frontmatter block into (frontmatter, body).
+
+    Delimiters must be whole lines, so a ``---`` inside a quoted scalar stays
+    content. Returns None when there is no well-formed frontmatter block.
+    """
+    opening = _FRONTMATTER_DELIMITER.match(text)
+    if opening is None:
         return None
-    _head, frontmatter, _body = text.split("---", 2)
+    close = _FRONTMATTER_DELIMITER.search(text, opening.end())
+    if close is None:
+        return None
+    return text[opening.end() : close.start()], text[close.end() :]
+
+
+def _agent_frontmatter_name(text: str) -> str | None:
+    split = _split_frontmatter(text)
+    if split is None:
+        return None
+    frontmatter, _body = split
     for line in frontmatter.splitlines():
         stripped = line.strip()
         if stripped.startswith("name:"):
@@ -612,7 +631,10 @@ def _rewrite_agent_frontmatter(
 ) -> str:
     if name is None and description is None:
         return text
-    _head, frontmatter, body = text.split("---", 2)
+    split = _split_frontmatter(text)
+    if split is None:
+        raise ValueError("agent file has no YAML frontmatter to rewrite")
+    frontmatter, body = split
     lines = frontmatter.splitlines(keepends=True)
     found_description = False
     rewritten: list[str] = []
@@ -636,7 +658,7 @@ def _rewrite_agent_frontmatter(
         rewritten.append(line)
     if description is not None and not found_description:
         rewritten.append(f"description: {_frontmatter_scalar(description)}\n")
-    return "---" + "".join(rewritten) + "---" + body
+    return "---\n" + "".join(rewritten) + "---\n" + body
 
 
 def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:

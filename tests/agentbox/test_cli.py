@@ -272,6 +272,79 @@ def test_cli_install_omp_agent_rejects_block_scalar_description(
         )
 
 
+def test_cli_install_omp_agent_rewrites_description_containing_document_marker(
+    tmp_path, monkeypatch
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    source = tmp_path / "arnold.md"
+    source.write_text(
+        '---\nname: arnold\ndescription: "stale --- value"\n---\nbody line\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "agents"
+    monkeypatch.setattr(cli_module, "_packaged_omp_agent_path", lambda name: source)
+
+    result = main(
+        [
+            "install-omp-agent",
+            "arnold",
+            "--description",
+            "fresh --- value",
+            "--target",
+            str(target),
+        ]
+    )
+
+    assert result == 0
+    installed = (target / "arnold.md").read_text(encoding="utf-8")
+    assert installed == (
+        '---\nname: arnold\ndescription: "fresh --- value"\n---\nbody line\n'
+    )
+    assert cli_module._agent_frontmatter_name(installed) == "arnold"
+
+
+def test_cli_agent_frontmatter_name_reads_past_marker_inside_description() -> None:
+    text = '---\ndescription: "a --- b"\nname: op\n---\nbody\n'
+
+    assert cli_module._agent_frontmatter_name(text) == "op"
+
+
+def test_cli_install_omp_agent_rejects_malformed_frontmatter_opener(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    source = tmp_path / "arnold.md"
+    source.write_text("---oops\nno closing delimiter\n", encoding="utf-8")
+    target = tmp_path / "agents"
+    monkeypatch.setattr(cli_module, "_packaged_omp_agent_path", lambda name: source)
+
+    result = main(["install-omp-agent", "arnold", "--target", str(target)])
+
+    assert result == 1
+    assert not target.exists()
+    assert (
+        capsys.readouterr().err
+        == "agentbox: frontmatter name mismatch: None != 'arnold'\n"
+    )
+
+
+def test_cli_new_resident_description_with_document_marker_stays_valid(
+    tmp_path, monkeypatch
+) -> None:
+    _write_cli_config(tmp_path, monkeypatch)
+    repo = tmp_path / "resident-repo"
+    repo.mkdir()
+    description = "handles --- markers"
+
+    result = main(
+        ["new-resident", "marker", "--repo", str(repo), "--description", description]
+    )
+
+    assert result == 0
+    agent = (repo / ".omp" / "agents" / "marker.md").read_text(encoding="utf-8")
+    assert f"description: {json.dumps(description, ensure_ascii=False)}\n" in agent
+    assert cli_module._agent_frontmatter_name(agent) == "marker"
+
 def test_cli_install_omp_agent_rejects_unknown_name(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
     (tmp_path / "agentbox.yaml").write_text(

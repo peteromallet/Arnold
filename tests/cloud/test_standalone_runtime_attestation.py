@@ -747,6 +747,74 @@ def test_standalone_publication_rejects_unsafe_reused_directory_at_0755(
     assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
     assert paths["pointer"].read_bytes() == pointer_before
 
+
+def test_standalone_concurrent_publication_dir_race_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    """Two concurrent issuers on fresh custody state both succeed.
+
+    The create race for ``seeds``/``receipts``/``status`` must resolve
+    idempotently (the FileExistsError loser re-inspects intact custody),
+    never surface as an unexpected publication failure, and leave every
+    operational directory at ``0700``.
+    """
+    import threading
+
+    root = tmp_path / "race-root"
+    root.mkdir()
+    attestation.standalone_runtime_launch_dir(root)  # 0700 chain, no ops dirs yet
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(2)
+
+    def issuer() -> None:
+        barrier.wait()
+        try:
+            attestation.standalone_dispatch_paths(
+                root, head="a" * 40, seed_sha256="b" * 64
+            )
+        except BaseException as exc:  # noqa: BLE001 - test collects both sides
+            errors.append(exc)
+
+    threads = [threading.Thread(target=issuer) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    state = root / ".megaplan" / "resident" / "runtime-launch"
+    for name in ("seeds", "receipts", "status"):
+        assert stat.S_IMODE((state / name).stat().st_mode) == 0o700
+
+
+def test_standalone_dir_create_race_never_adopts_permissive_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A permissive occupant that appears between inspect and create fails closed."""
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    unsafe = state / "seeds"
+    unsafe.mkdir(mode=0o755)
+    real_inspect = attestation._inspect_standalone_operational_dir
+
+    def absent_then_real(candidate_state: Path, name: str) -> bool:
+        # First inspection reports absence (as if the winner had not yet
+        # landed); the re-inspection inside the race handler sees reality.
+        monkeypatch.setattr(
+            attestation,
+            "_inspect_standalone_operational_dir",
+            real_inspect,
+        )
+        return False
+
+    monkeypatch.setattr(
+        attestation, "_inspect_standalone_operational_dir", absent_then_real
+    )
+    with pytest.raises(CliError) as excinfo:
+        attestation._require_standalone_operational_dir(state, "seeds", create=True)
+    assert excinfo.value.code == attestation.RUNTIME_ATTESTATION_ERROR
+    assert stat.S_IMODE(unsafe.stat().st_mode) == 0o755  # never repaired
+
 def test_standalone_publication_rejects_unsafe_mode_reuse_without_advancing_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

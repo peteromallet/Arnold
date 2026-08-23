@@ -132,7 +132,11 @@ exclude = [
 [tool.hatch.build.targets.wheel]
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
-    "py.typed",
+    "agentbox/py.typed",
+    "arnold/py.typed",
+    "arnold/*/py.typed",
+    "arnold_pipelines/py.typed",
+    "arnold_pipelines/megaplan/py.typed",
     "arnold_pipelines/**/pipeline_ids.json",
     "arnold_pipelines/megaplan/SKILL.md",
     "arnold_pipelines/megaplan/skills/superfixer-debug/SKILL.md",

@@ -182,14 +182,19 @@ PACKAGE_TREES = ("agentbox", "arnold", "arnold_pipelines")
 # content from megaplan/data/babysit_skill.md instead.
 WHEEL_INTENTIONAL_GAPS = frozenset(
     {
+        # Superseded skill dropped by [tool.hatch.build.targets.wheel].exclude;
+        # runtime skill installs read megaplan/data/babysit_skill.md instead.
         "arnold_pipelines/megaplan/skills/babysit/SKILL.md",
+        # Dead legacy tree globally excluded from both artifacts; its lone
+        # non-Python file has no runtime importer and ships in neither.
+        "arnold/pipelines/evidence_pack/py.typed",
     }
 )
 #
 # Sdist: dead legacy arnold/pipelines/** is globally excluded and has no
-# runtime importer. The wheel still carries one stray py.typed marker from
-# that tree because the broad "py.typed" artifact re-include overrides
-# exclusion.
+# runtime importer, so its lone non-Python file (the evidence_pack py.typed
+# marker) never ships. The wheel's py.typed artifacts are scoped to the live
+# packages, so the dead tree's marker ships in neither artifact.
 SDIST_INTENTIONAL_GAPS = frozenset(
     {
         "arnold/pipelines/evidence_pack/py.typed",
