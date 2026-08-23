@@ -18,8 +18,8 @@ from typing import Any
 
 INTEGRATION_WORKTREE = Path(__file__).resolve().parents[1]
 LAUNCHERS = {
-    "gpt-5.6-luna": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-luna"),
-    "gpt-5.6-sol": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py", "codex:gpt-5.6-sol"),
+    "gpt-5.6-luna": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "openrouter/openai/gpt-5.6-luna"),
+    "gpt-5.6-sol": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "openrouter/openai/gpt-5.6-sol"),
     "grok-4.6": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "grok-4.6"),
     "ox-alpha": (INTEGRATION_WORKTREE / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py", "openrouter/stealth/ox-alpha"),
 }
