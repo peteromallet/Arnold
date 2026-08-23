@@ -481,3 +481,10 @@ Routing: plan doc amendment executed by routed subagents (Luna brief-prep -> Lun
 - Canonical post-repair rerun of all nine shards at that head; aggregate rebuilt from raw stdout after agent death — aggregate context receipt `mrc-f23f052e7`, verdict receipt `mrc-0aa3ac7a`. Verdict **inventory_match**: 196/196 inventoried failures registered across shards 1/4/5/6/7/8/9 (7/1/3/5/41/28/111), zero unexpected failures.
 - Anomaly: 34 inventory nodes green at gold head post-repair; shard3 exited 0 vs expected 1 because all five inline-known conformance-suite nodes passed — recorded as exit_mismatch reflecting repaired inventory, not drift, under the stated verdict rule.
 - Evidence committed: `artifacts/shards_run_gold.json` (sha256 `117c45bc…`) alongside `artifacts/shards-gold-5bf1912a73/` (nine stdout + runner.log captures, results.ndjson, tainted-attempt-1-missing-basetemp-parent quarantine); manifest gains a top-level `gold_run` record (schema additionalProperties) and refreshed notes.refreshed_at_utc; canonical validator exit 0.
+
+## G7.4-pre REJECT + T7.4a build authorization
+
+- Gold nine-shard run @ 5bf1912a73: verdict inventory_match (196/196 registered, 0 unexpected); evidence committed ca89314eec; pushed e28cfe7fce..ca89314eec.
+- T7.3 dual-candidate install: both candidates @ ca89314eec, separate roots, receipts t73-*.json; divergences recorded (container PYTHONPATH shadows candidates; candidate-B stash 66c45951 preserved).
+- G7.4-pre (Sol mrc-2bf46765): **REJECT** of proposed canary contract. Requirements before T7.4: (1) disposable builder CLI fully rooted under /tmp; (2) standalone restore CLI covering complete selected-state tuple OR proven invariant; (3) externally-supervised crash recovery; (4) weakened honestly-named "no durable protected-state delta" assertion + full env redirection list; (5) exact T7.3 receipt paths/digests/interpreter; (6) full T0.0 snapshot inventory + J4 normalization; (7) restored T7.4 acceptance coverage or explicit amendment.
+- Next: T7.4a [XHARD] builds the disposable builder/restore CLIs per those requirements; then revised G7.4-pre → T7.4 execution → G7.4-post.
