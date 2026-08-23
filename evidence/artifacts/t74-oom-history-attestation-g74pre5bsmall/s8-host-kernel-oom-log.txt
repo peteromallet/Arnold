@@ -14,3 +14,6 @@ cursor_first: s=a247fbbd36874d7180f3f902fcac4545;i=818cfe8;b=ce621a4956ca4d099df
 cursor_last: s=a247fbbd36874d7180f3f902fcac4545;i=818d04c;b=ce621a4956ca4d099df7001093e67efe;m=1c43f0f30a1;t=659affd93a611;x=62b275f813d8c639
 
 no target-scope kernel OOM entries after death 2 (latest cursor == death-2 last cursor)
+fence manifest binding:
+source fence: /Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-cgroup-fence-g74pre5b-1/fence.json sha256 3c703d8a1c295e89b61bd219b1150f7413c41ca4dfd02e7df5fff307aee291b2
+s8_memory_events evidence digest equals this fence's memory_events_raw_sha256; s8_fence identity/path/counter are taken from this fence verbatim.

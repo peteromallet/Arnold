@@ -50,7 +50,7 @@
   },
   "s8_host_kernel_oom_log": {
    "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/s8-host-kernel-oom-log.txt",
-   "sha256": "94ce9ad7e508275ddc922c17ee7de2892b065fa84de5e7bf1e51215dcbd4fd8d"
+   "sha256": "bd5097105a74c4545c343bf010605c62c273976b27d92a87d0427172a670cc6b"
   },
   "streaming_differential_equality_proof": {
    "path": "/Users/peteromalley/Documents/.megaplan-worktrees/runtime-convergence-execution/evidence/artifacts/t74-oom-history-attestation-g74pre5bsmall/streaming-differential-equality-proof.txt",
@@ -84,6 +84,6 @@
   "memory_events_evidence": "s8_memory_events",
   "host_kernel_oom_log_evidence": "s8_host_kernel_oom_log",
   "host_kernel_oom_log_cursor": "s=a247fbbd36874d7180f3f902fcac4545;i=818d04c;b=ce621a4956ca4d099df7001093e67efe;m=1c43f0f30a1;t=659affd93a611;x=62b275f813d8c639",
-  "host_kernel_oom_log_sha256": "94ce9ad7e508275ddc922c17ee7de2892b065fa84de5e7bf1e51215dcbd4fd8d"
+  "host_kernel_oom_log_sha256": "bd5097105a74c4545c343bf010605c62c273976b27d92a87d0427172a670cc6b"
  }
 }
