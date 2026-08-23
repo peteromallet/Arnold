@@ -1,4 +1,4 @@
-"""Focused tests for the disposable canary builder (T7.4a deliverable 1).
+"""Focused tests for the disposable canary builder/restore CLIs (T7.4a).
 
 The builder is exercised against a REAL candidate tree (git archive of this
 repo at HEAD) whose frozen dependency spec is overridden to a zero-dependency
@@ -11,12 +11,15 @@ pair so the generation build stays hermetic/offline — proving:
 - the promote-adjacent flow (runtime-create -> append_promotion ->
   advance_generation) mutates ONLY the disposable manifest/pointer/store;
 - the protected-state assertion uses the honest wording and covers the named
-  live roots without a durable delta.
+  live roots without a durable delta;
+- the restore CLI reconstructs the complete selected-state tuple byte-exactly
+  after clean completion and refuses tampered/relocated snapshots;
+- special-node tar members are refused and baseline-absent state is removed.
 """
 
 from __future__ import annotations
-
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -27,7 +30,9 @@ from arnold_pipelines.megaplan.cloud.canary_sandbox import (
     REDIRECTED_ENV_VARS,
     build,
     containment_violations,
+    restore,
     sandbox_env_spec,
+    take_snapshot,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -43,10 +48,11 @@ def _git(cwd: Path | None, *args: str) -> str:
     return proc.stdout.strip()
 
 
-@pytest.fixture
-def source_repo(tmp_path: Path) -> Path:
+@pytest.fixture(scope="module")
+def source_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """REAL candidate tree + zero-dep frozen spec: hermetic canary source."""
 
+    tmp_path = tmp_path_factory.mktemp("canary-src")
     repo = tmp_path / "candidate-src"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -277,3 +283,252 @@ def test_build_refuses_root_outside_system_tmp_dir(
         tmp_path, source_repo, root=tmp_path / "allowed-root", allow_non_tmp=True
     )
     assert (root / "sandbox-env.json").exists()
+
+
+# ── snapshot / restore (deliverable 2) ──────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def built_root(tmp_path_factory: pytest.TempPathFactory, source_repo: Path) -> Path:
+    """One full build shared by the restore tests (post-flow, gen-2 state)."""
+
+    base = tmp_path_factory.mktemp("canary-restore")
+    root = base / "canary-root"
+    build(
+        source_repo=source_repo,
+        root=root,
+        slug="canary",
+        base_ref="HEAD",
+        generation_build_strategy=None,
+        allow_non_tmp=False,
+    )
+    return root
+
+
+@pytest.fixture(scope="module")
+def restore_root(
+    tmp_path_factory: pytest.TempPathFactory, source_repo: Path
+) -> Path:
+    """Dedicated full build for the in-place clean-completion restore test.
+
+    Restore is deliberately in-place-only (relocation is refused: worktree
+    admin embeds absolute paths), so this test needs its own root to mutate
+    and reconstruct without disturbing ``built_root`` consumers.
+    """
+
+    base = tmp_path_factory.mktemp("canary-restore-clean")
+    root = base / "canary-root"
+    build(
+        source_repo=source_repo,
+        root=root,
+        slug="canary",
+        base_ref="HEAD",
+        generation_build_strategy=None,
+        allow_non_tmp=False,
+    )
+    return root
+
+
+
+@pytest.mark.integration
+def test_snapshot_covers_complete_selected_state_tuple(built_root: Path) -> None:
+    manifest = json.loads(
+        (built_root / "snapshot" / "snapshot.json").read_text()
+    )
+    assert manifest["schema"] == "arnold.megaplan.cloud.canary_snapshot.v1"
+    # Every tuple path that exists at snapshot time is covered; the source
+    # worktrees dir exists because runtime-create ran before the snapshot.
+    coverage = manifest["coverage"]
+    for rel in (
+        "manifests",
+        "markers",
+        "chain",
+        "journals",
+        "base/runtime-venvs",
+        "base/runtime-candidates",
+        "remote.git",
+        "src/.git/HEAD",
+        "src/.git/index",
+        "src/.git/refs",
+        "src/.git/logs",
+        "src/.git/worktrees",
+    ):
+        assert coverage.get(rel) is True, f"tuple element not covered: {rel}"
+
+    paths = {e["path"] for e in manifest["entries"]}
+    root_str = str(built_root)
+    for required in (
+        "manifests/runtime-manifest.json",  # pointer
+        "manifests/canary.json",  # per-slug manifest
+        "manifests/promotion-journal.jsonl",
+        "manifests/creation-journal.jsonl",
+        "markers/cloud-session-marker.json",  # marker identity
+        "chain/chain-state.json",  # runtime binding / engine_root
+        "chain/rebind-store.json",
+        "journals/delivery-journal.jsonl",
+    ):
+        assert f"{root_str}/{required}" in paths, f"missing entry: {required}"
+    # generation store + build lock + worktree admin are in the entries
+    assert any(p.endswith("/.build.lock") for p in paths)
+    assert any("/src/.git/worktrees/" in p for p in paths)
+    assert any("/remote.git/refs/heads/" in p for p in paths)
+    assert manifest["restored_dimensions"]
+    assert "xattrs" in manifest["not_covered_dimensions"]
+
+
+@pytest.mark.integration
+def test_restore_reconstructs_byte_exact_after_clean_completion(
+    restore_root: Path,
+) -> None:
+    # In-place restore: the snapshot refuses relocation (worktree admin
+    # embeds absolute paths), so the post-flow drift happens in THIS root
+    # and the restore reconstructs the prepared baseline here.
+    root = restore_root
+
+    # Pre-state: the flow advanced to generation 2.
+    pointer = json.loads(
+        (root / "manifests" / "runtime-manifest.json").read_text()
+    )
+    assert pointer["generation"] == 2
+    # verify_only detects the post-flow divergence from the baseline.
+    verdict = restore(root, verify_only=True)
+    assert verdict["ok"] is False
+    assert any("bytes differ" in m for m in verdict["mismatches"])
+
+    result = restore(root)
+    assert result["ok"] is True, result["mismatches"]
+
+    # Semantic reconstruction: back at the prepared baseline (gen 1).
+    pointer_after = json.loads(
+        (root / "manifests" / "runtime-manifest.json").read_text()
+    )
+    slug_after = json.loads((root / "manifests" / "canary.json").read_text())
+    assert pointer_after["generation"] == 1
+    assert slug_after["generation"] == 1
+    # Retention sibling is GONE (baseline had none) and journals are baseline.
+    assert not list((root / "manifests").glob("runtime-manifest.json.previous-*.json"))
+    assert (root / "manifests" / "promotion-journal.jsonl").read_text() == ""
+    # Creation journal line survives (it predates the snapshot).
+    assert len((root / "manifests" / "creation-journal.jsonl").read_text().splitlines()) == 1
+    # Generation store proof intact and bound to the restored manifest.
+    venvs = list((root / "base" / "runtime-venvs").glob("*/.generation.json"))
+    assert venvs, "generation proof missing after restore"
+    proof = json.loads(venvs[0].read_text())
+    assert slug_after["epic"]["dependency_generation"]["id"] == proof["id"]
+    # Marker + chain binding fixtures byte-present.
+    marker = json.loads((root / "markers" / "cloud-session-marker.json").read_text())
+    chain = json.loads((root / "chain" / "chain-state.json").read_text())
+    assert marker["active_runtime_identity"]["runtime_root"] == str(
+        root / "base" / "runtime-candidates" / "canary"
+    )
+    assert chain["metadata"]["execution_environment"]["engine_root"] == str(
+        root / "base" / "runtime-candidates" / "canary"
+    )
+    # The restored worktree is a functioning git worktree again.
+    head = _git(root / "base" / "runtime-candidates" / "canary", "rev-parse", "HEAD")
+    assert head == slug_after["epic"]["expected_head"]
+
+
+def _fake_state_root(tmp_path: Path) -> Path:
+    """Minimal state tuple + snapshot WITHOUT a full flow build (fast).
+
+    Refusal-path tests only need a valid snapshot manifest + tar; the
+    end-to-end byte-exactness proof lives in the full-build tests above.
+    """
+
+    root = tmp_path / "fake-root"
+    manifests = root / "manifests"
+    manifests.mkdir(parents=True)
+    (manifests / "runtime-manifest.json").write_text('{"generation": 1}\n')
+    markers = root / "markers"
+    markers.mkdir()
+    (markers / "cloud-session-marker.json").write_text('{"fixture": true}\n')
+    take_snapshot(root)
+    return root
+
+
+def test_restore_refuses_tampered_snapshot_tar(tmp_path: Path) -> None:
+    root = _fake_state_root(tmp_path)
+    tar_path = root / "snapshot" / "state.tar.gz"
+    blob = bytearray(tar_path.read_bytes())
+    blob[len(blob) // 2] ^= 0xFF
+    tar_path.write_bytes(bytes(blob))
+    with pytest.raises(CanaryError) as excinfo:
+        restore(root)
+    assert excinfo.value.code == "snapshot_digest_mismatch"
+
+
+def test_restore_refuses_relocation_to_another_root(tmp_path: Path) -> None:
+    import shutil
+
+    root = _fake_state_root(tmp_path)
+    elsewhere = shutil.copytree(root, tmp_path / "elsewhere", symlinks=True)
+    with pytest.raises(CanaryError) as excinfo:
+        restore(elsewhere)
+    assert excinfo.value.code == "relocation_refused"
+
+
+def test_restore_removes_state_absent_from_prepared_baseline(
+    tmp_path: Path,
+) -> None:
+    """Post-snapshot drift (retention sibling) must NOT survive a restore."""
+
+    root = _fake_state_root(tmp_path)
+    drift = root / "manifests" / "runtime-manifest.json.previous-0.json"
+    drift.write_text('{"generation": 0}\n')
+    result = restore(root)
+    assert result["ok"] is True, result["mismatches"]
+    assert not drift.exists()
+    assert "manifests" in result["wiped_paths"]
+
+
+def test_restore_refuses_special_node_tar_member(tmp_path: Path) -> None:
+    """A crafted snapshot smuggling a FIFO member is refused, not extracted."""
+
+    import hashlib
+    import tarfile as tarfile_mod
+
+    root = _fake_state_root(tmp_path)
+    snap_dir = root / "snapshot"
+    tar_path = snap_dir / "state.tar.gz"
+    with tarfile_mod.open(tar_path, "r:gz") as src:
+        members = src.getmembers()
+        payloads = {
+            m.name: (src.extractfile(m).read() if m.isfile() else None)
+            for m in members
+        }
+    smuggle = tarfile_mod.TarInfo("manifests/fifo")
+    smuggle.type = tarfile_mod.FIFOTYPE
+    with tarfile_mod.open(tar_path, "w:gz", format=tarfile_mod.PAX_FORMAT) as dst:
+        for m in members:
+            if m.isfile():
+                import io
+
+                dst.addfile(m, io.BytesIO(payloads[m.name]))
+            else:
+                dst.addfile(m)
+        dst.addfile(smuggle)
+    manifest = json.loads((snap_dir / "snapshot.json").read_text())
+    manifest["tar_sha256"] = hashlib.sha256(tar_path.read_bytes()).hexdigest()
+    (snap_dir / "snapshot.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(CanaryError) as excinfo:
+        restore(root)
+    assert excinfo.value.code == "special_node_unsupported"
+    assert not (root / "manifests" / "fifo").exists()
+
+
+def test_restore_cli_wrapper_end_to_end(tmp_path: Path, source_repo: Path) -> None:
+    """The installed surface: wrapper -> module restore subcommand."""
+    wrapper = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-canary-restore"
+    root, _ = do_build(tmp_path, source_repo)
+    proc = subprocess.run(
+        [str(wrapper), "--root", str(root), "--verify-only"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    verdict = json.loads(proc.stdout)
+    assert verdict["mode"] == "verify_only"
+    assert verdict["ok"] is False  # post-flow state differs from baseline

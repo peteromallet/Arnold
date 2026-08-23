@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# arnold-canary-restore — standalone selected-state restore (T7.4a 2/3)
+#
+# Restores the COMPLETE selected-state tuple from a snapshot taken by
+# arnold-canary-build BEFORE the promote-adjacent mutation:
+#   manifest pointer + retention siblings + pointer lock, per-slug manifests,
+#   marker runtime identity, chain runtime binding/engine_root fixture,
+#   rebind store, delivery journal, creation/promotion journals,
+#   content-addressed generation store incl. build locks and proofs,
+#   runtime-root checkout state (epic worktrees), disposable remote refs,
+#   and the source-side git mutation surfaces (refs/logs/worktrees/index).
+#
+# Verified byte-exact reconstruction: existence, object type, file bytes
+# (SHA-256), symlink target, mode. Explicitly NOT covered (documented in
+# every snapshot.json and restore report): xattrs, ACLs, uid/gid ownership,
+# timestamps, hardlink identity, FIFO/socket/device node contents.
+#
+# Usage:
+#   arnold-canary-restore restore --root <sandbox-root> [--verify-only]
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+exec python3 -m arnold_pipelines.megaplan.cloud.canary_sandbox restore "$@"

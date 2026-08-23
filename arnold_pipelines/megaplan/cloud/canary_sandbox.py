@@ -42,13 +42,45 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 SANDBOX_SCHEMA = "arnold.megaplan.cloud.canary_sandbox.v1"
+SNAPSHOT_SCHEMA = "arnold.megaplan.cloud.canary_snapshot.v1"
 
+# The COMPLETE selected-state tuple (reject receipt finding 2), relative to
+# the sandbox root. The pre-mutation snapshot covers exactly these paths;
+# restore reconstructs exactly these paths and verifies byte-exactness.
+TUPLE_PATHS: tuple[str, ...] = (
+    # manifest pointer + retention siblings + pointer lock + per-slug
+    # manifests + promotion/creation journals + creation lock
+    "manifests",
+    # marker runtime identity (cloud-session marker fixture)
+    "markers",
+    # chain runtime binding / metadata.execution_environment.engine_root
+    # fixture + rebind store fixture
+    "chain",
+    # delivery journal
+    "journals",
+    # content-addressed dependency-generation store incl. .build.lock proofs
+    os.path.join("base", "runtime-venvs"),
+    # runtime-root checkout state (epic worktrees, incl. their .git files)
+    os.path.join("base", "runtime-candidates"),
+    # disposable remote refs/objects (creation + probe branch pushes)
+    "remote.git",
+    # source-side git mutation surfaces (worktree admin, refs, reflogs);
+    # objects are excluded — remote.git retains authoritative copies and
+    # git never rewrites existing object bytes in place.
+    os.path.join("src", ".git", "HEAD"),
+    os.path.join("src", ".git", "index"),
+    os.path.join("src", ".git", "refs"),
+    os.path.join("src", ".git", "logs"),
+    os.path.join("src", ".git", "worktrees"),
+    os.path.join("src", ".git", "ORIG_HEAD"),
+)
 # The redirect set from the reject receipt (finding 3): every location the
 # canary flow could plausibly write durably outside its root. Each entry is
 # forced under the sandbox root and audited for containment.
@@ -636,10 +668,10 @@ def build(
     )
     _seed_selection_fixtures(root, spec, worktree, branch, base_ref)
 
-    # Pre-mutation snapshot support lands with the restore surface
-    # (deliverable 2/3); until then the report records honestly that no
-    # snapshot was taken.
-    snapshot_info: dict[str, Any] = {"taken": False}
+    # Pre-mutation snapshot: the prepared baseline the restore CLI (and the
+    # supervisor) reconstructs byte-exactly after any flow outcome.
+    _phase(root, "snapshot")
+    snapshot_info = take_snapshot(root)
 
     _phase(root, "probe-commit")
     (src / "canary-probe.txt").write_text(
@@ -762,6 +794,322 @@ def build(
     return report
 
 
+# ── snapshot / restore ──────────────────────────────────────────────────────
+
+SNAPSHOT_DIR = "snapshot"
+SNAPSHOT_TAR = "state.tar.gz"
+SNAPSHOT_MANIFEST = "snapshot.json"
+RESTORE_REPORT = "restore-report.json"
+
+# Dimensions the restore VERIFIES vs. dimensions it explicitly does NOT
+# cover. Recorded verbatim in every snapshot.json and restore report.
+RESTORED_DIMENSIONS = (
+    "existence",
+    "object type (file/dir/symlink)",
+    "file bytes (SHA-256)",
+    "symlink target",
+    "mode (permission bits)",
+)
+NOT_COVERED_DIMENSIONS = (
+    "xattrs",
+    "ACLs",
+    "uid/gid ownership",
+    "atime/mtime timestamps",
+    "hardlink identity: a hardlinked FILE at snapshot time is refused "
+    "loudly rather than restored wrongly; symlinks are preserved as such",
+    "FIFO/socket/device nodes: recorded and existence-checked only, no "
+    "content semantics",
+)
+
+
+def _entry_for(path: Path) -> dict[str, Any]:
+    import stat as stat_mod
+
+    st = path.lstat()
+    mode = stat_mod.S_IMODE(st.st_mode)
+    entry: dict[str, Any] = {
+        "path": str(path),
+        "mode": mode,
+        "size": st.st_size,
+    }
+    if stat_mod.S_ISLNK(st.st_mode):
+        entry["type"] = "symlink"
+        entry["target"] = os.readlink(path)
+    elif stat_mod.S_ISDIR(st.st_mode):
+        entry["type"] = "dir"
+    elif stat_mod.S_ISREG(st.st_mode):
+        entry["type"] = "file"
+        if st.st_nlink > 1:
+            raise CanaryError(
+                "hardlink_unsupported",
+                f"{path} is a hardlink (nlink={st.st_nlink}); the snapshot "
+                "refuses state it could not faithfully restore — reconcile "
+                "the sandbox before re-snapshotting",
+            )
+        entry["sha256"] = _sha256_file(path)
+    else:
+        entry["type"] = "special"
+    return entry
+
+
+def take_snapshot(root: Path) -> dict[str, Any]:
+    """Snapshot the selected-state tuple under *root* before mutation.
+
+    Produces ``<root>/snapshot/state.tar.gz`` plus ``snapshot.json`` whose
+    per-entry SHA-256 records make restore a VERIFIED reconstruction rather
+    than a blind untar. A covered path that is itself a file (e.g.
+    ``src/.git/HEAD``) or symlink is snapshotted as its own entry.
+    """
+
+    root = Path(root).resolve(strict=False)
+    snap_dir = root / SNAPSHOT_DIR
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    tar_path = snap_dir / SNAPSHOT_TAR
+
+    entries: list[dict[str, Any]] = []
+    coverage: dict[str, bool] = {}
+    with tarfile.open(tar_path, "w:gz", format=tarfile.PAX_FORMAT) as tar:
+        for rel in TUPLE_PATHS:
+            base = root / rel
+            exists = base.exists() or base.is_symlink()
+            coverage[rel] = exists
+            if not exists:
+                continue
+            # The covered path itself (file/symlink/dir), then children.
+            entries.append(_entry_for(base))
+            arcname = rel
+            info = tar.gettarinfo(str(base), arcname=arcname)
+            if info.isfile():
+                with open(base, "rb") as fh:
+                    tar.addfile(info, fh)
+            else:
+                tar.addfile(info)
+            if base.is_dir() and not base.is_symlink():
+                for dirpath, dirnames, filenames in os.walk(base):
+                    dirnames.sort()
+                    for name in sorted(dirnames) + sorted(filenames):
+                        p = Path(dirpath) / name
+                        entries.append(_entry_for(p))
+                        minfo = tar.gettarinfo(
+                            str(p), arcname=str(p.relative_to(root))
+                        )
+                        if minfo.isfile():
+                            with open(p, "rb") as fh:
+                                tar.addfile(minfo, fh)
+                        elif minfo.isdir() or minfo.issym():
+                            tar.addfile(minfo)
+                        # special nodes: recorded, never archived
+
+    manifest = {
+        "schema": SNAPSHOT_SCHEMA,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "root": str(root),
+        "coverage": coverage,
+        "entries": entries,
+        "entry_count": len(entries),
+        "tar": SNAPSHOT_TAR,
+        "tar_sha256": _sha256_file(tar_path),
+        "restored_dimensions": list(RESTORED_DIMENSIONS),
+        "not_covered_dimensions": list(NOT_COVERED_DIMENSIONS),
+        "note": "restore is verified byte-exact for the listed dimensions "
+        "over the enumerated tuple paths; relocation to another root is "
+        "refused because worktree admin embeds absolute paths. Symlink "
+        "TARGETS are preserved verbatim and may legitimately point outside "
+        "the root (e.g. a venv interpreter link to the host interpreter); "
+        "only member PATHS are containment-audited.",
+    }
+    tmp = snap_dir / (SNAPSHOT_MANIFEST + ".tmp")
+    tmp.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(tmp, snap_dir / SNAPSHOT_MANIFEST)
+    return {
+        "taken": True,
+        "dir": str(snap_dir),
+        "manifest": str(snap_dir / SNAPSHOT_MANIFEST),
+        "tar_sha256": manifest["tar_sha256"],
+        "entry_count": len(entries),
+        "coverage": coverage,
+    }
+
+
+def load_snapshot(snapshot_dir: Path) -> dict[str, Any]:
+    """Load + validate a snapshot manifest."""
+
+    manifest_path = Path(snapshot_dir) / SNAPSHOT_MANIFEST
+    if not manifest_path.is_file():
+        raise CanaryError(
+            "snapshot_missing", f"no snapshot manifest at {manifest_path}"
+        )
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if data.get("schema") != SNAPSHOT_SCHEMA:
+        raise CanaryError(
+            "snapshot_schema_unknown",
+            f"snapshot schema {data.get('schema')!r} is not {SNAPSHOT_SCHEMA}",
+        )
+    return data
+
+
+def verify_against_entries(
+    root: Path, entries: list[dict[str, Any]]
+) -> list[str]:
+    """Check current disk state against snapshot entries; return mismatches."""
+
+    mismatches: list[str] = []
+    for e in entries:
+        p = Path(e["path"])
+        if not p.exists() and not p.is_symlink():
+            mismatches.append(f"{e['path']}: missing")
+            continue
+        try:
+            cur = _entry_for(p)
+        except CanaryError:
+            cur = None
+            mismatches.append(f"{e['path']}: became a hardlink (uncovered)")
+        except OSError as exc:
+            cur = None
+            mismatches.append(f"{e['path']}: unreadable ({exc})")
+        if cur is None:
+            continue
+        if cur["type"] != e["type"]:
+            mismatches.append(f"{e['path']}: type {e['type']} -> {cur['type']}")
+            continue
+        if e["type"] == "file":
+            if cur.get("sha256") != e.get("sha256"):
+                mismatches.append(f"{e['path']}: bytes differ")
+            if cur.get("mode") != e.get("mode"):
+                mismatches.append(f"{e['path']}: mode changed")
+        elif e["type"] == "symlink":
+            if cur.get("target") != e.get("target"):
+                mismatches.append(f"{e['path']}: symlink target changed")
+    return mismatches
+
+
+def restore(root: Path, *, verify_only: bool = False) -> dict[str, Any]:
+    """Restore the complete selected-state tuple from the builder's snapshot.
+
+    Refuses relocation to a different root, verifies the tar digest against
+    the snapshot manifest, wipes the current state of each covered tuple
+    path, extracts with a traversal-safe member filter, then verifies EVERY
+    entry (existence, type, bytes, symlink target, mode). Raises
+    :class:`CanaryError` on any verification failure.
+    """
+
+    root = Path(root).expanduser().resolve(strict=False)
+    snap_dir = root / SNAPSHOT_DIR
+    data = load_snapshot(snap_dir)
+    if Path(data["root"]).resolve(strict=False) != root:
+        raise CanaryError(
+            "relocation_refused",
+            f"snapshot was taken at root {data['root']}; restoring into "
+            f"{root} is refused (worktree admin embeds absolute paths)",
+        )
+    tar_path = snap_dir / data["tar"]
+    actual_tar_sha = _sha256_file(tar_path)
+    if actual_tar_sha != data["tar_sha256"]:
+        raise CanaryError(
+            "snapshot_digest_mismatch",
+            f"snapshot tar digest mismatch (expected {data['tar_sha256']}, "
+            f"got {actual_tar_sha}) — refusing to restore untrusted bytes",
+        )
+
+    if verify_only:
+        mismatches = verify_against_entries(root, data["entries"])
+        result = {
+            "schema": SANDBOX_SCHEMA,
+            "mode": "verify_only",
+            "root": str(root),
+            "ok": not mismatches,
+            "mismatches": mismatches[:50],
+            "verified_entries": len(data["entries"]) - len(mismatches),
+            "restored_dimensions": list(RESTORED_DIMENSIONS),
+            "not_covered_dimensions": list(NOT_COVERED_DIMENSIONS),
+        }
+        return result
+
+    # Wipe the current state of every tuple path, then extract. Paths ABSENT
+    # at snapshot time (coverage=false) are wiped too: byte-exactness vs the
+    # prepared baseline means they must not exist after the restore.
+    wiped: list[str] = []
+    for rel in TUPLE_PATHS:
+        target = root / rel
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            target.unlink()
+            wiped.append(rel)
+        elif target.is_dir():
+            shutil.rmtree(target)
+            wiped.append(rel)
+
+    def _covered(name: str) -> bool:
+        for rel in data["coverage"]:
+            if name == rel or name.startswith(rel.rstrip("/") + "/"):
+                return True
+        return False
+
+    extracted = 0
+    with tarfile.open(tar_path, "r:gz") as tar:
+        members = tar.getmembers()
+        for m in members:
+            parts = Path(m.name).parts
+            if m.name.startswith("/") or ".." in parts:
+                raise CanaryError(
+                    "unsafe_member", f"refusing unsafe tar member {m.name!r}"
+                )
+            if not _covered(m.name):
+                raise CanaryError(
+                    "member_outside_coverage",
+                    f"tar member {m.name!r} is outside declared coverage — "
+                    "snapshot integrity violated",
+                )
+            if not (m.isfile() or m.isdir() or m.issym()):
+                raise CanaryError(
+                    "special_node_unsupported",
+                    f"tar member {m.name!r} is neither a file, directory nor "
+                    "symlink — the snapshot never archives special nodes",
+                )
+        for m in members:
+            # filter=None: symlink targets are preserved VERBATIM, including
+            # targets outside the root (a venv interpreter link pointing at
+            # the host interpreter is legitimate sandbox state). Traversal
+            # safety is enforced by the explicit member audit above.
+            try:
+                tar.extract(m, path=root, filter=None)
+            except TypeError:  # python < 3.11.4 has no filter kwarg
+                tar.extract(m, path=root)
+            extracted += 1
+
+    mismatches = verify_against_entries(root, data["entries"])
+    for rel, existed in sorted(data["coverage"].items()):
+        if not existed and ((root / rel).exists() or (root / rel).is_symlink()):
+            mismatches.append(
+                f"{rel}: absent from the prepared baseline but present after restore"
+            )
+    result = {
+        "schema": SANDBOX_SCHEMA,
+        "mode": "restore",
+        "root": str(root),
+        "ok": not mismatches,
+        "mismatches": mismatches[:50],
+        "extracted_members": extracted,
+        "verified_entries": len(data["entries"]) - len(mismatches),
+        "wiped_paths": wiped,
+        "coverage": data["coverage"],
+        "restored_dimensions": list(RESTORED_DIMENSIONS),
+        "not_covered_dimensions": list(NOT_COVERED_DIMENSIONS),
+    }
+    tmp = snap_dir / (RESTORE_REPORT + ".tmp")
+    tmp.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(tmp, snap_dir / RESTORE_REPORT)
+    if mismatches:
+        raise CanaryError(
+            "restore_not_byte_exact",
+            "restore verification FAILED:\n"
+            + "\n".join(f"  - {m}" for m in mismatches[:20]),
+        )
+    return result
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -771,13 +1119,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    build_p = sub.add_parser("build", help="build the disposable canary and run the flow")
+    build_p = sub.add_parser(
+        "build", help="build the disposable canary and run the flow"
+    )
     build_p.add_argument("--source-repo", required=True, type=Path)
     build_p.add_argument("--root", default="", help="fresh root (default: new mkdtemp)")
     build_p.add_argument("--slug", default="canary")
     build_p.add_argument("--base-ref", default="HEAD")
     build_p.add_argument("--generation-build-strategy", default="")
     build_p.add_argument("--allow-non-tmp-root", action="store_true")
+
+    restore_p = sub.add_parser(
+        "restore",
+        help="restore the complete selected-state tuple from the snapshot",
+    )
+    restore_p.add_argument(
+        "--root", required=True, type=Path, help="sandbox root to restore into"
+    )
+    restore_p.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="verify current state against the snapshot WITHOUT modifying it",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -792,8 +1155,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0
+        if args.command == "restore":
+            result = restore(args.root, verify_only=args.verify_only)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
     except CanaryError as exc:
-        print(f"arnold-canary-build: error [{exc.code}]: {exc.message}", file=sys.stderr)
+        prog = "arnold-canary-restore" if args.command == "restore" else "arnold-canary-build"
+        print(f"{prog}: error [{exc.code}]: {exc.message}", file=sys.stderr)
         return 2
     return 0
 
