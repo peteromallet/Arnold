@@ -1,0 +1,71 @@
+{
+  "task": "T7.3 dual-candidate install/provenance proof",
+  "candidate": "astrid-first",
+  "candidate_dir": "/workspace/runtime-candidates/astrid-first",
+  "container": "megaplan-cloud-agent-resident-only @ ssh root@159.69.51.216 (docker exec non-interactive)",
+  "source_sha": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+  "source_tree_sha": "a349f5c7e3f28e3446cbd338f4f96792b3a94b51",
+  "source_provenance": {
+    "project_repo": "/workspace/megaplan-maintenance/Arnold",
+    "fetch_command": "git fetch origin fixer/runtime-convergence-r",
+    "fetched_tip": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+    "tip_matches_target": true,
+    "active_checkout_untouched": true,
+    "note": "same verified successor SHA as arnold-4a830c6ac9a0 receipt; commit subject at SHA: 'evidence(mrc): canonical gold nine-shard run — inventory_match at 5bf1912a73' (delta vs reviewed code SHA is evidence/docs only)"
+  },
+  "pre_install_state": {
+    "branch": "fixer/astrid-first-20260814",
+    "head": "2a02231272b72ee8613debc13c3a9578708c6397",
+    "dirty_entries": 0
+  },
+  "stash": {
+    "taken": false,
+    "reason": "working tree clean; no clobber risk"
+  },
+  "post_install_git_state": {
+    "head": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+    "detached": true,
+    "branch_ref_preserved": "fixer/astrid-first-20260814 still at 2a02231272b72ee8613debc13c3a9578708c6397",
+    "dirty_entries": 0
+  },
+  "spec_manifest_digest": {
+    "file": "pyproject.toml @ ca89314ee",
+    "sha256": "89da3755acbeadc4ad3844b7f2312be1cc030724aa2b500396000be474779b7b"
+  },
+  "package_identity": {
+    "name": "arnold",
+    "version": "0.23.0",
+    "pip_show_location": "/workspace/runtime-candidates/astrid-first/.venv/lib/python3.11/site-packages",
+    "editable_project_location": "/workspace/runtime-candidates/astrid-first",
+    "dist_info": "/workspace/runtime-candidates/astrid-first/.venv/lib/python3.11/site-packages/arnold-0.23.0.dist-info",
+    "metadata_sha256": "cf5d6224953e7f9c98ffd4a3b8fc65caf8f0dfc47e12c9ca65f262e77027b609",
+    "direct_url_json": "{\"dir_info\": {\"editable\": true}, \"url\": \"file:///workspace/runtime-candidates/astrid-first\"}"
+  },
+  "venv": {
+    "path": "/workspace/runtime-candidates/astrid-first/.venv",
+    "created_this_task": true,
+    "python_version": "3.11.11",
+    "interpreter_resolved": "/root/.pyenv/versions/3.11.11/bin/python3.11",
+    "interpreter_sha256": "2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5",
+    "pyvenv_cfg": "home = /root/.pyenv/versions/3.11.11/bin; version = 3.11.11; include-system-site-packages = false"
+  },
+  "install": [
+    {"command": "/root/.pyenv/versions/3.11.11/bin/python -m venv .venv", "exit_code": 0},
+    {"command": "./.venv/bin/pip install -e .", "exit_code": 0, "log_in_container": "/tmp/t73-astrid-pip.log"}
+  ],
+  "separation": {
+    "project_state_root": "/workspace/runtime-candidates/astrid-first/.venv",
+    "shares_venv_with_other_candidate": false,
+    "cross_writes": "none; all writes confined to candidate dir + /tmp scratch + additive git objects/FETCH_HEAD in parent repo /workspace/arnold-ref (.git)"
+  },
+  "smoke": {
+    "command": "cd /workspace/runtime-candidates/astrid-first && env -u PYTHONPATH .venv/bin/python -c \"import arnold, importlib.metadata as m, sys; print('python=', sys.version.split()[0]); print('version=', m.version('arnold')); print('module_file=', arnold.__file__)\"",
+    "stdout": [
+      "python= 3.11.11",
+      "version= 0.23.0",
+      "module_file= /workspace/runtime-candidates/astrid-first/arnold/__init__.py"
+    ],
+    "resolves_to_own_tree": true
+  },
+  "timestamp_utc": "2026-08-22T23:26:32Z"
+}

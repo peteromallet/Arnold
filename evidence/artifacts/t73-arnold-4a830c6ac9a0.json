@@ -1,0 +1,81 @@
+{
+  "task": "T7.3 dual-candidate install/provenance proof",
+  "candidate": "arnold-4a830c6ac9a0",
+  "candidate_dir": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+  "container": "megaplan-cloud-agent-resident-only @ ssh root@159.69.51.216 (docker exec non-interactive)",
+  "source_sha": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+  "source_tree_sha": "a349f5c7e3f28e3446cbd338f4f96792b3a94b51",
+  "source_provenance": {
+    "project_repo": "/workspace/megaplan-maintenance/Arnold",
+    "fetch_command": "git fetch origin fixer/runtime-convergence-r",
+    "fetched_tip": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+    "tip_matches_target": true,
+    "active_checkout_untouched": true,
+    "note": "same verified successor SHA as astrid-first receipt"
+  },
+  "pre_install_state": {
+    "branch": "fixer/megaplan-maintenance-20260813-47671addc195-c",
+    "head": "be709be7db51f8355e13d1a2fca2e5eb7ee3abf9",
+    "dirty_entries": 19
+  },
+  "stash": {
+    "taken": true,
+    "message": "T7.3 pre-install stash 2026-08-23",
+    "stash_commit": "66c45951d7a906cab80b23e6f35881d103415459",
+    "reason": "12 tracked dirty files overlapped paths changed by target SHA; stash prevents clobber, remains recoverable on branch ...47671addc195-c",
+    "residual_untracked_left_in_place": ".megaplan/fixer-sessions/summaries/subagent-20260820-102451-521149b6.md"
+  },
+  "post_install_git_state": {
+    "head": "ca89314eec17f9ff3d801f7720d395d6322fb2a7",
+    "detached": true,
+    "branch_ref_preserved": "fixer/megaplan-maintenance-20260813-47671addc195-c still at be709be7db51f8355e13d1a2fca2e5eb7ee3abf9",
+    "dirty_entries": 1
+  },
+  "spec_manifest_digest": {
+    "file": "pyproject.toml @ ca89314ee",
+    "sha256": "89da3755acbeadc4ad3844b7f2312be1cc030724aa2b500396000be474779b7b"
+  },
+  "package_identity": {
+    "name": "arnold",
+    "version": "0.23.0",
+    "pip_show_location": "/workspace/runtime-candidates/arnold-4a830c6ac9a0/.venv/lib/python3.11/site-packages",
+    "editable_project_location": "/workspace/runtime-candidates/arnold-4a830c6ac9a0",
+    "dist_info": "/workspace/runtime-candidates/arnold-4a830c6ac9a0/.venv/lib/python3.11/site-packages/arnold-0.23.0.dist-info",
+    "metadata_sha256": "cf5d6224953e7f9c98ffd4a3b8fc65caf8f0dfc47e12c9ca65f262e77027b609",
+    "direct_url_json": "{\"dir_info\": {\"editable\": true}, \"url\": \"file:///workspace/runtime-candidates/arnold-4a830c6ac9a0\"}"
+  },
+  "venv": {
+    "path": "/workspace/runtime-candidates/arnold-4a830c6ac9a0/.venv",
+    "created_this_task": false,
+    "python_version": "3.11.11",
+    "interpreter_resolved": "/workspace/runtime-candidates/arnold-4a830c6ac9a0/.venv/bin/python",
+    "interpreter_resolved_note": "bin/python is a regular file in this pre-existing venv, not a symlink; byte-identical to base interpreter (same sha256)",
+    "interpreter_sha256": "2575448bc13e2a87f48b65eeaa6d72de75e250616340b377a8989a80317a0ec5",
+    "include_system_site_packages": "not rechecked this task (pre-existing venv)"
+  },
+  "install": [
+    {"command": "./.venv/bin/pip install -e .", "exit_code": 0, "log_in_container": "/tmp/t73-arnold-pip.log"}
+  ],
+  "separation": {
+    "project_state_root": "/workspace/runtime-candidates/arnold-4a830c6ac9a0/.venv",
+    "shares_venv_with_other_candidate": false,
+    "cross_writes": "none; all writes confined to candidate dir + /tmp scratch + additive git objects/FETCH_HEAD in parent repo /workspace/arnold (.git); remote-tracking ref origin/fixer/runtime-convergence-r force-updated a610c220da -> ca89314eec by fetch"
+  },
+  "smoke": {
+    "command": "cd /workspace/runtime-candidates/arnold-4a830c6ac9a0 && env -u PYTHONPATH .venv/bin/python -c \"import arnold, importlib.metadata as m, sys; print('python=', sys.version.split()[0]); print('version=', m.version('arnold')); print('module_file=', arnold.__file__)\"",
+    "stdout": [
+      "python= 3.11.11",
+      "version= 0.23.0",
+      "module_file= /workspace/runtime-candidates/arnold-4a830c6ac9a0/arnold/__init__.py"
+    ],
+    "resolves_to_own_tree": true
+  },
+  "cross_link_check": {
+    "description": "each venv launched from the OTHER candidate's cwd still resolves arnold to the cwd's own candidate tree (editable links are per-directory and independent)",
+    "results": [
+      "B venv from A cwd -> /workspace/runtime-candidates/astrid-first/arnold/__init__.py",
+      "A venv from B cwd -> /workspace/runtime-candidates/arnold-4a830c6ac9a0/arnold/__init__.py"
+    ]
+  },
+  "timestamp_utc": "2026-08-22T23:26:32Z"
+}
