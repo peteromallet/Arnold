@@ -3,8 +3,10 @@ from __future__ import annotations
 import ast
 import configparser
 import importlib
+import pytest
 import subprocess
 import sys
+import tarfile
 import tomllib
 import venv
 from pathlib import Path
@@ -80,10 +82,16 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
         "agentbox/worktrees.py",
         "agentbox/py.typed",
     }
+    expected_resident_templates = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (AGENTBOX_ROOT / "templates" / "resident").iterdir()
+        if path.is_file()
+    }
 
     with ZipFile(wheel) as archive:
         names = set(archive.namelist())
         assert expected_package_files <= names
+        assert expected_resident_templates <= names
         entry_points_name = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
         entry_points = configparser.ConfigParser()
         entry_points.read_string(archive.read(entry_points_name).decode())
@@ -93,7 +101,28 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
     venv.create(venv_dir, with_pip=True)
     python = venv_dir / "bin" / "python"
     subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            str(wheel),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "PyYAML",
+            "pydantic",
+            "python-ulid",
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -107,8 +136,142 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
         "import agentbox\n"
         "assert agentbox.__name__ == 'agentbox'\n"
     )
-    result = subprocess.run([str(python), "-c", probe], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [str(python), "-c", probe],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
+
+    generated_repo = tmp_path / "installed-resident"
+    generated_repo.mkdir()
+    generation = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "agentbox",
+            "new-resident",
+            "demo2",
+            "--repo",
+            str(generated_repo),
+        ],
+        cwd=generated_repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert generation.returncode == 0, generation.stderr
+    assert {
+        generated_repo / ".omp" / "agents" / "demo2.md",
+        generated_repo / ".agentbox" / "resident_profile.py",
+        generated_repo / ".agentbox" / "resident.env.example",
+        generated_repo / ".agentbox" / "run-resident",
+        generated_repo / ".agentbox" / "demo2-resident.service",
+    } <= {path for path in generated_repo.rglob("*") if path.is_file()}
+    assert (generated_repo / ".agentbox" / "run-resident").stat().st_mode & 0o111
+
+
+PACKAGE_TREES = ("agentbox", "arnold", "arnold_pipelines")
+
+# Tracked data files deliberately absent from built artifacts.
+#
+# Wheel: the superseded babysit skill is dropped by
+# [tool.hatch.build.targets.wheel].exclude; runtime skill installs source its
+# content from megaplan/data/babysit_skill.md instead.
+WHEEL_INTENTIONAL_GAPS = frozenset(
+    {
+        # Superseded skill dropped by [tool.hatch.build.targets.wheel].exclude;
+        # runtime skill installs read megaplan/data/babysit_skill.md instead.
+        "arnold_pipelines/megaplan/skills/babysit/SKILL.md",
+        # Dead legacy tree globally excluded from both artifacts; its lone
+        # non-Python file has no runtime importer and ships in neither.
+        "arnold/pipelines/evidence_pack/py.typed",
+    }
+)
+#
+# Sdist: dead legacy arnold/pipelines/** is globally excluded and has no
+# runtime importer, so its lone non-Python file (the evidence_pack py.typed
+# marker) never ships. The wheel's py.typed artifacts are scoped to the live
+# packages, so the dead tree's marker ships in neither artifact.
+SDIST_INTENTIONAL_GAPS = frozenset(
+    {
+        "arnold/pipelines/evidence_pack/py.typed",
+    }
+)
+
+
+def _tracked_package_data_files() -> set[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "--", *PACKAGE_TREES],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return {line for line in result.stdout.splitlines() if line and not line.endswith(".py")}
+
+
+def test_wheel_ships_every_tracked_runtime_data_file(tmp_path: Path) -> None:
+    wheel_dir = tmp_path / "wheels"
+    wheel_dir.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "-w",
+            str(wheel_dir),
+            str(REPO_ROOT),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    (wheel,) = wheel_dir.glob("*.whl")
+    with ZipFile(wheel) as archive:
+        shipped = set(archive.namelist())
+
+    missing = _tracked_package_data_files() - shipped - WHEEL_INTENTIONAL_GAPS
+    assert not missing, f"data files missing from wheel: {sorted(missing)}"
+
+
+def test_sdist_ships_every_tracked_runtime_data_file(tmp_path: Path) -> None:
+    if importlib.util.find_spec("build") is None or importlib.util.find_spec("hatchling") is None:
+        pytest.skip("the 'build' and 'hatchling' packages are required to construct the sdist")
+    dist_dir = tmp_path / "sdist"
+    dist_dir.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--sdist",
+            "--no-isolation",
+            "--outdir",
+            str(dist_dir),
+            str(REPO_ROOT),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    (archive_path,) = dist_dir.glob("*.tar.gz")
+    prefix = f"{archive_path.name.removesuffix('.tar.gz')}/"
+    with tarfile.open(archive_path) as archive:
+        shipped = {
+            name.removeprefix(prefix)
+            for name in archive.getnames()
+            if name.startswith(prefix)
+        }
+
+    missing = _tracked_package_data_files() - shipped - SDIST_INTENTIONAL_GAPS
+    assert not missing, f"data files missing from sdist: {sorted(missing)}"
 
 
 def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces() -> None:
@@ -126,6 +289,12 @@ def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surface
         "resident_profile.py": {
             "arnold_pipelines.megaplan.resident.reply_chain",
             "arnold_pipelines.megaplan.resident.timezone",
+        },
+        "services.py": {
+            "arnold_pipelines.megaplan.cloud.runtime_manifest",
+        },
+        "cleanup.py": {
+            "arnold_pipelines.megaplan.cloud.runtime_references",
         },
     }
 

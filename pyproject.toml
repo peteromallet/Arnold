@@ -28,10 +28,10 @@ dependencies = [
     # supported `python -m pytest` workflow.  They run in the same editable
     # Arnold interpreter, so the base install must include its test runner.
     "pytest>=8.0",
-    # --- omp/agent backend (core) ------------------------------------------
-    # The omp/agent runtime backs prep research, critique, fanout, and the
+    # --- Hermes/agent backend (core) ---------------------------------------
+    # The hermes/agent runtime backs prep research, critique, fanout, and the
     # agentic phases. It is NOT optional: the canonical prep models route to
-    # `omp:deepseek/...` for every run, so a chain that does prep WILL import
+    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
     # this backend. Historically these lived in the `[agent]` optional extra
     # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
     # silently ignore `default-extras`, producing a fresh install that imports
@@ -83,7 +83,10 @@ dependencies = [
 ]
 
 [project.scripts]
-arnold = "arnold.cli:main"
+# `arnold` is the conversational agent (omp named-agent runner); the
+# workflow/operator tooling moved to `megaplan`.
+arnold = "agentbox.arnold_agent:main"
+megaplan = "arnold.cli:main"
 agentbox = "agentbox.cli:main"
 
 [project.optional-dependencies]
@@ -101,7 +104,7 @@ dev = [
 ]
 
 [tool.uv]
-# The omp/agent backend's packages are now core [project].dependencies, so a
+# The hermes/agent backend's packages are now core [project].dependencies, so a
 # plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
 # longer rely on `default-extras` (some uv versions silently ignore it, which is
 # what produced the confusing mid-prep `agent_deps_missing` failures).
@@ -129,21 +132,39 @@ exclude = [
 [tool.hatch.build.targets.wheel]
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
-    "py.typed",
-    "arnold/pipelines/evidence_pack/SKILL.md",
-    "arnold/pipelines/evidence_pack/pipeline_ids.json",
+    "agentbox/py.typed",
+    "arnold/py.typed",
+    "arnold/*/py.typed",
+    "arnold_pipelines/py.typed",
+    "arnold_pipelines/megaplan/py.typed",
     "arnold_pipelines/**/pipeline_ids.json",
-    "arnold_pipelines/**/SKILL.md",
+    "arnold_pipelines/megaplan/SKILL.md",
+    "arnold_pipelines/megaplan/skills/superfixer-debug/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan/SKILL.md",
+    "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-bakeoff/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-cloud/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-epic/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-observe/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-prep/SKILL.md",
+    "arnold_pipelines/megaplan/skills/megaplan-tickets/SKILL.md",
+    "arnold_pipelines/megaplan/skills/cleanup-loose-branches/SKILL.md",
+    "arnold_pipelines/megaplan/skills/fix-the-fixer/SKILL.md",
+    "arnold_pipelines/megaplan/skills/babysitting-principles/SKILL.md",
+    "arnold_pipelines/megaplan/skills/babysitter/SKILL.md",
+    "arnold_pipelines/megaplan/planning/skills/planning/SKILL.md",
+    "arnold_pipelines/pipelines/**/SKILL.md",
+    "arnold_pipelines/_template/**/SKILL.md",
+    "arnold_pipelines/evidence_pack/SKILL.md",
     "arnold_pipelines/**/*.pypeline",
     "arnold_pipelines/megaplan/skills/**/*.py",
     "arnold_pipelines/megaplan/skills/fix-the-fixer/references/*.md",
     "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "arnold_pipelines/megaplan/strategy/CONTRACT.md",
     "arnold_pipelines/megaplan/strategy/TEMPLATE.md",
-    "arnold_pipelines/megaplan/skills/fix-the-fixer/references/*.md",
-    "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "agentbox/systemd/*.service",
     "agentbox/agents/*.md",
+    "agentbox/templates/resident/*",
 ]
 exclude = [
     "**/__pycache__/**",
@@ -153,6 +174,7 @@ exclude = [
     "arnold_pipelines/megaplan/agent/pyproject.toml",
     "docs/archive/**",
     "tests/archive/**",
+    "arnold_pipelines/megaplan/skills/babysit/**",
     ".megaplan/**",
 ]
 

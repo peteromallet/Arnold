@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import json
@@ -227,12 +228,32 @@ def build_parser() -> argparse.ArgumentParser:
         "install-omp-agent",
         help="Install a packaged omp agent definition into ~/.omp/agent/agents.",
     )
-    install_parser.add_argument("name", help="Agent name (e.g. 'arnold').")
+    install_parser.add_argument(
+        "template_name",
+        help="Packaged source agent name (e.g. 'arnold').",
+    )
+    install_parser.add_argument(
+        "--name",
+        dest="output_name",
+        help="Override the installed filename and frontmatter name.",
+    )
+    install_parser.add_argument(
+        "--description",
+        help="Override the installed frontmatter description.",
+    )
     install_parser.add_argument(
         "--target",
         help="Target agents directory (default ~/.omp/agent/agents).",
     )
     install_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+    resident_parser = subparsers.add_parser(
+        "new-resident",
+        help="Create a five-file Discord resident scaffold in another repository.",
+    )
+    resident_parser.add_argument("name", help="Resident name.")
+    resident_parser.add_argument("--repo", required=True, help="Target repository root.")
+    resident_parser.add_argument("--description", help="Resident prompt description.")
+    resident_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
     return parser
 
@@ -290,6 +311,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _version(json_output=json_output)
         if args.command == "install-omp-agent":
             return _install_omp_agent(args, json_output=json_output)
+        if args.command == "new-resident":
+            return _new_resident(args, json_output=json_output)
     except (AgentBoxConfigError, AgentBoxOperationError, CredentialBackendError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
@@ -546,10 +569,29 @@ def _packaged_omp_agent_path(name: str) -> Path:
     return Path(__file__).resolve().parent / "agents" / f"{name}.md"
 
 
-def _agent_frontmatter_name(text: str) -> str | None:
-    if not text.startswith("---"):
+_FRONTMATTER_DELIMITER = re.compile(r"^---[ \t]*\r?(?:\n|$)", re.MULTILINE)
+
+
+def _split_frontmatter(text: str) -> tuple[str, str] | None:
+    """Split a leading YAML frontmatter block into (frontmatter, body).
+
+    Delimiters must be whole lines, so a ``---`` inside a quoted scalar stays
+    content. Returns None when there is no well-formed frontmatter block.
+    """
+    opening = _FRONTMATTER_DELIMITER.match(text)
+    if opening is None:
         return None
-    _head, frontmatter, _body = text.split("---", 2)
+    close = _FRONTMATTER_DELIMITER.search(text, opening.end())
+    if close is None:
+        return None
+    return text[opening.end() : close.start()], text[close.end() :]
+
+
+def _agent_frontmatter_name(text: str) -> str | None:
+    split = _split_frontmatter(text)
+    if split is None:
+        return None
+    frontmatter, _body = split
     for line in frontmatter.splitlines():
         stripped = line.strip()
         if stripped.startswith("name:"):
@@ -558,30 +600,138 @@ def _agent_frontmatter_name(text: str) -> str | None:
     return None
 
 
+_AGENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _valid_agent_name(name: str) -> bool:
+    return name not in {".", ".."} and bool(_AGENT_NAME_PATTERN.fullmatch(name))
+
+
+def _frontmatter_scalar(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+_YAML_AMBIGUOUS_PLAIN_NAMES = frozenset(
+    {"y", "n", "yes", "no", "true", "false", "on", "off", "null", "none"}
+)
+
+
+def _frontmatter_name_scalar(name: str) -> str:
+    """Render an agent name as a frontmatter scalar a YAML parser reads back verbatim."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", name) and name.lower() not in _YAML_AMBIGUOUS_PLAIN_NAMES:
+        return name
+    return _frontmatter_scalar(name)
+
+
+def _rewrite_agent_frontmatter(
+    text: str,
+    *,
+    name: str | None,
+    description: str | None,
+) -> str:
+    if name is None and description is None:
+        return text
+    split = _split_frontmatter(text)
+    if split is None:
+        raise ValueError("agent file has no YAML frontmatter to rewrite")
+    frontmatter, body = split
+    lines = frontmatter.splitlines(keepends=True)
+    found_description = False
+    rewritten: list[str] = []
+    for index, line in enumerate(lines):
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+        key, separator, source_value = content.partition(":")
+        if separator and key.strip() == "name" and name is not None:
+            line = f"name: {_frontmatter_name_scalar(name)}{newline}"
+        elif separator and key.strip() == "description" and description is not None:
+            if source_value.strip().startswith((">", "|")) or (
+                index + 1 < len(lines)
+                and lines[index + 1].strip()
+                and lines[index + 1][0].isspace()
+            ):
+                raise ValueError(
+                    "description override requires a single-line frontmatter scalar"
+                )
+            line = f"description: {_frontmatter_scalar(description)}{newline}"
+            found_description = True
+        rewritten.append(line)
+    if description is not None and not found_description:
+        rewritten.append(f"description: {_frontmatter_scalar(description)}\n")
+    return "---\n" + "".join(rewritten) + "---\n" + body
+
+
 def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
-    name = args.name
-    source = _packaged_omp_agent_path(name)
+    template_name = args.template_name
+    output_name = args.output_name if args.output_name is not None else template_name
+    for label, name in (("template", template_name), ("output", output_name)):
+        if not _valid_agent_name(name):
+            return _diagnostic(
+                f"invalid {label} agent name {name!r}; use only ASCII letters, numbers, '.', '_' and '-'",
+                json_output=json_output,
+            )
+    source = _packaged_omp_agent_path(template_name)
     if not source.is_file():
         return _diagnostic(
-            f"no packaged omp agent named {name!r} (expected {source})",
+            f"no packaged omp agent named {template_name!r} (expected {source})",
             json_output=json_output,
         )
-    text = source.read_text(encoding="utf-8")
+    source_bytes = source.read_bytes()
+    text = source_bytes.decode("utf-8")
     parsed_name = _agent_frontmatter_name(text)
-    if parsed_name != name:
+    if parsed_name != template_name:
         return _diagnostic(
-            f"frontmatter name mismatch: {parsed_name!r} != {name!r}",
+            f"frontmatter name mismatch: {parsed_name!r} != {template_name!r}",
             json_output=json_output,
         )
-    target_dir = Path(args.target) if args.target else Path.home() / ".omp" / "agent" / "agents"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{name}.md"
-    tmp = target.with_name(f".{name}.md.tmp-{uuid4().hex[:8]}")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, target)
+    installed_text = _rewrite_agent_frontmatter(
+        text,
+        name=output_name if args.output_name is not None else None,
+        description=args.description,
+    )
+    if _agent_frontmatter_name(installed_text) != output_name:
+        return _diagnostic(
+            f"installed frontmatter name mismatch: {_agent_frontmatter_name(installed_text)!r} != {output_name!r}",
+            json_output=json_output,
+        )
+    if args.target is not None and not args.target.strip():
+        return _diagnostic(
+            f"invalid target directory {args.target!r}; omit --target for the default",
+            json_output=json_output,
+        )
+    target_dir = Path(args.target).expanduser() if args.target else Path.home() / ".omp" / "agent" / "agents"
+    if target_dir.exists() and not target_dir.is_dir():
+        return _diagnostic(
+            f"target is not a directory: {target_dir}",
+            json_output=json_output,
+        )
+    target = target_dir / f"{output_name}.md"
+    if target.exists():
+        return _diagnostic(
+            f"target already exists: {target}",
+            json_output=json_output,
+        )
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{output_name}.md.tmp-{uuid4().hex[:8]}")
+        try:
+            tmp.write_bytes(installed_text.encode("utf-8"))
+            os.link(tmp, target, follow_symlinks=False)
+        except FileExistsError:
+            return _diagnostic(
+                f"target already exists: {target}",
+                json_output=json_output,
+            )
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        return _diagnostic(
+            f"failed to install omp agent: {exc}",
+            json_output=json_output,
+        )
     _emit(
         {
-            "agent": name,
+            "agent": output_name,
             "source": str(source),
             "target": str(target),
             "installed": True,
@@ -589,6 +739,149 @@ def _install_omp_agent(args: argparse.Namespace, *, json_output: bool) -> int:
         json_output=json_output,
     )
     return 0
+
+
+def _resident_template_path(name: str) -> Path:
+    return Path(__file__).resolve().parent / "templates" / "resident" / name
+
+
+def _resident_pascal_name(name: str) -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", name) if part]
+    result = "".join(part[:1].upper() + part[1:] for part in parts)
+    if not result or not result[0].isalpha():
+        result = f"Resident{result}"
+    return result
+
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
+
+
+def _render_resident_template(path: Path, replacements: dict[str, str]) -> str:
+    rendered = path.read_text(encoding="utf-8")
+    return _PLACEHOLDER_PATTERN.sub(
+        lambda match: replacements.get(match.group(1), match.group(0)),
+        rendered,
+    )
+
+
+def _prune_empty_dirs(start: Path, stop: Path) -> None:
+    """Remove `start` and its ancestors inside `stop` while they are empty."""
+    directory = start
+    while directory != stop and directory.is_relative_to(stop):
+        try:
+            directory.rmdir()
+        except OSError:
+            return
+        directory = directory.parent
+
+
+def _new_resident(args: argparse.Namespace, *, json_output: bool) -> int:
+    name = args.name
+    if not _valid_agent_name(name):
+        return _diagnostic(
+            f"invalid resident name {name!r}; use only ASCII letters, numbers, '.', '_' and '-'",
+            json_output=json_output,
+        )
+
+    if not args.repo.strip():
+        return _diagnostic(
+            f"invalid repository directory {args.repo!r}",
+            json_output=json_output,
+        )
+    repo = Path(args.repo).expanduser().resolve()
+    if not repo.is_dir():
+        if repo.exists() or repo.is_symlink():
+            return _diagnostic(f"repository is not a directory: {repo}", json_output=json_output)
+        return _diagnostic(
+            f"repository directory does not exist: {repo}", json_output=json_output
+        )
+
+    description = (
+        args.description if args.description is not None else f"Resident operator ({name})"
+    )
+    pascal_name = _resident_pascal_name(name)
+    replacements = {
+        "NAME": name,
+        "NAME_SCALAR": _frontmatter_name_scalar(name),
+        "PASCAL_NAME": pascal_name,
+        "DESCRIPTION": _frontmatter_scalar(description),
+        "REPO": str(repo),
+    }
+    destinations = [
+        repo / ".omp" / "agents" / f"{name}.md",
+        repo / ".agentbox" / "resident_profile.py",
+        repo / ".agentbox" / "resident.env.example",
+        repo / ".agentbox" / "run-resident",
+        repo / ".agentbox" / f"{name}-resident.service",
+    ]
+    template_names = (
+        "agent.md.tmpl",
+        "resident_profile.py.tmpl",
+        "resident.env.example.tmpl",
+        "run-resident.tmpl",
+        "service.tmpl",
+    )
+
+    rendered = [
+        (destination, _render_resident_template(_resident_template_path(template), replacements))
+        for destination, template in zip(destinations, template_names)
+    ]
+    # Frontmatter name follows the same YAML-safe scalar convention as
+    # install-omp-agent (quoted when a parser would misread it).
+    agent_destination, agent_text = rendered[0]
+    rendered[0] = (
+        agent_destination,
+        _rewrite_agent_frontmatter(agent_text, name=name, description=None),
+    )
+    collisions = [path for path in destinations if path.exists() or path.is_symlink()]
+    if collisions:
+        return _diagnostic(
+            f"resident destination already exists: {collisions[0]}",
+            json_output=json_output,
+        )
+
+    temporary: list[Path] = []
+    created: list[Path] = []
+    try:
+        for destination, content in rendered:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = destination.with_name(
+                f".{destination.name}.tmp-{uuid4().hex}"
+            )
+            temporary.append(temporary_path)
+            temporary_path.write_text(content, encoding="utf-8")
+            if destination.name == "run-resident":
+                temporary_path.chmod(0o755)
+        for temporary_path, destination in zip(temporary, destinations):
+            os.link(temporary_path, destination, follow_symlinks=False)
+            created.append(destination)
+    except OSError as exc:
+        for temporary_path in temporary:
+            temporary_path.unlink(missing_ok=True)
+        for destination in created:
+            destination.unlink(missing_ok=True)
+        for destination in destinations:
+            _prune_empty_dirs(destination.parent, repo)
+        return _diagnostic(
+            f"failed to create resident scaffold: {exc}",
+            json_output=json_output,
+        )
+    finally:
+        for temporary_path in temporary:
+            temporary_path.unlink(missing_ok=True)
+
+    _emit(
+        {
+            "name": name,
+            "repo": str(repo),
+            "files": [str(path) for path in destinations],
+            "created": True,
+        },
+        json_output=json_output,
+    )
+    return 0
+
+
 
 
 def _guardian(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
@@ -787,3 +1080,7 @@ def _new_operation_id(kind: str) -> str:
 
 
 __all__ = ["build_parser", "main"]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
