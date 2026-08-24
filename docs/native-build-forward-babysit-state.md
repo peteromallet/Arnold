@@ -70,3 +70,20 @@ to the new HEAD (script pattern: /tmp/fix-heads2.py on the box).
   3 = park with ticket, keep driving the rest.
 - MRC candidate 04c3857d74 is promotion-ready (SOL-3); promotion is the
   operator's decision — do not promote.
+
+## Diagnostic update (2026-08-24 ~23:15Z) — narrowed
+- Driver-side attestation PASSES with correct identity: ran the exact
+  `runtime_provenance` command from the arnold-chain trace under the seed env —
+  `ok: true`, import_root = runtime worktree, rev = 461ae31c83.
+- The failure is at the WORKER dispatch adopt-or-refuse
+  (runtime_attestation.py:1754): the worker's own live identity has
+  import_root = the OLD live tree. Suspect path: the plan-phase worker is the
+  Shannon tmux/Claude session; its bash tool calls re-resolve imports under the
+  container's baked PYTHONPATH (old live tree).
+- Candidate engine fix (next fire): add a guarded re-export in the container's
+  /root/.bashrc — `if [ -n "$MEGAPLAN_ENGINE_ROOT" ]; then export
+  PYTHONPATH="$MEGAPLAN_ENGINE_ROOT:$PYTHONPATH"; fi` (megaplan_engine_env sets
+  MEGAPLAN_ENGINE_ROOT for manifest-pinned children only; live epics unaffected
+  as they never set it), OR scrub PYTHONPATH in the worker-spawn env in the
+  chain driver. Then clear the blocked plan dir + relaunch (relaunch5.sh
+  pattern: reset chain driver state too).
