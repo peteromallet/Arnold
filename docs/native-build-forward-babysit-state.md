@@ -87,3 +87,15 @@ to the new HEAD (script pattern: /tmp/fix-heads2.py on the box).
   as they never set it), OR scrub PYTHONPATH in the worker-spawn env in the
   chain driver. Then clear the blocked plan dir + relaunch (relaunch5.sh
   pattern: reset chain driver state too).
+
+## PROFILE SWITCHED (2026-08-24 ~23:20Z)
+- Chain launched and verified running (P0 plan phase via omp worker, partnered-5).
+- Profile switched to `native-ox-alpha` per operator directive: active plan
+  p0-mrc-closeout-intake-and-20260824-2312 overridden (override set-profile,
+  "Profile unchanged at native-ox-alpha" = already effective) + chain.yaml all
+  22 milestones now `profile: native-ox-alpha`.
+- The in-flight plan-phase step completes on deepseek-v4-pro (started pre-switch);
+  every subsequent worker dispatch routes `omp:stealth/ox-alpha`.
+- Hourly check-in: verify worker liveness + state advance; on stall, diagnose per
+  the blocker section; the container-PYTHONPATH poisoning is mitigated by the
+  /root/.bashrc MEGAPLAN_ENGINE_ROOT guard (present in every login shell).
