@@ -1,0 +1,40 @@
+# `native-ox-alpha` — partnered-5 shape with EVERY slot routed to ox-alpha
+# via OpenRouter (provider `stealth` in omp models.yml). Operator directive
+# 2026-08-24: the native build-forward epic launches on partnered-5, then
+# switches to this profile once the chain is up and running. No fallback
+# chains — every phase leads and ends on ox-alpha.
+[profiles.native-ox-alpha]
+adaptive_critique = true
+plan                  = "omp:openrouter/stealth/ox-alpha"
+prep                  = "omp:openrouter/stealth/ox-alpha"
+critique              = "omp:openrouter/stealth/ox-alpha"
+critique_evaluator    = "omp:openrouter/stealth/ox-alpha"
+revise                = "omp:openrouter/stealth/ox-alpha"
+gate                  = "omp:openrouter/stealth/ox-alpha"
+finalize              = "omp:openrouter/stealth/ox-alpha"
+execute               = "omp:openrouter/stealth/ox-alpha"
+feedback              = "omp:openrouter/stealth/ox-alpha"
+loop_plan             = "omp:openrouter/stealth/ox-alpha"
+loop_execute          = "omp:openrouter/stealth/ox-alpha"
+review                = "omp:openrouter/stealth/ox-alpha"
+tiebreaker_researcher = "omp:openrouter/stealth/ox-alpha"
+tiebreaker_challenger = "omp:openrouter/stealth/ox-alpha"
+
+[profiles.native-ox-alpha.tier_models.execute]
+1 = "omp:openrouter/stealth/ox-alpha"
+2 = "omp:openrouter/stealth/ox-alpha"
+3 = "omp:openrouter/stealth/ox-alpha"
+4 = "omp:openrouter/stealth/ox-alpha"
+5 = "omp:openrouter/stealth/ox-alpha"
+6 = "omp:openrouter/stealth/ox-alpha"
+7 = "omp:openrouter/stealth/ox-alpha"
+8 = "omp:openrouter/stealth/ox-alpha"
+9 = "omp:openrouter/stealth/ox-alpha"
+10 = "omp:openrouter/stealth/ox-alpha"
+
+[profiles.native-ox-alpha.tier_models.critique]
+1 = "omp:openrouter/stealth/ox-alpha"
+2 = "omp:openrouter/stealth/ox-alpha"
+3 = "omp:openrouter/stealth/ox-alpha"
+4 = "omp:openrouter/stealth/ox-alpha"
+5 = "omp:openrouter/stealth/ox-alpha"
