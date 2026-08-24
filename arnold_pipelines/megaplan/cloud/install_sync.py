@@ -575,15 +575,38 @@ def _build_generation(
     interpreter = generation_interpreter(gen_dir)
     if use_uv:
         # uv installs EXACTLY the uv.lock pins into the ACTIVE venv and
-        # never the project itself (--no-install-project).
-        env = dict(os.environ)
-        env["VIRTUAL_ENV"] = str(gen_dir)
-        uv_proc = _run(
-            ["uv", "sync", "--frozen", "--no-install-project", "--active"],
-            cwd=project,
-            runner=runner,
-            env=env,
-        )
+        # never the project itself (--no-install-project).  Run it against
+        # a STAGED copy of the frozen spec + directory sources: uv builds
+        # local directory sources with their PEP 517 backend IN PLACE, and
+        # backends like setuptools write ``*.egg-info``/``build/`` into the
+        # source root — AFTER the spec digest was computed.  That dirtied
+        # the attested checkout and shifted its content address, so every
+        # later ``advance_generation`` verification of the SAME commit
+        # refused the just-built proof (T74RESUME6 wall).  Same invariant
+        # as the pip staging below: generation creation cannot mutate the
+        # hashed inputs of the checkout it was addressed from.
+        with tempfile.TemporaryDirectory(prefix="arnold-generation-uvsync-") as tmp:
+            staged = Path(tmp) / "project"
+            staged.mkdir()
+            shutil.copy2(project / "pyproject.toml", staged / "pyproject.toml")
+            shutil.copy2(lock_path, staged / "uv.lock")
+            for optional in (".python-version", "uv.toml"):
+                if (project / optional).is_file():
+                    shutil.copy2(project / optional, staged / optional)
+            for source_path, source_root in _frozen_path_source_roots(project, lock_text):
+                destination = staged / source_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                # dirs_exist_ok merges the (not yet seen) nested-path-source
+                # corner; contents are byte-identical copies either way.
+                shutil.copytree(source_root, destination, dirs_exist_ok=True)
+            env = dict(os.environ)
+            env["VIRTUAL_ENV"] = str(gen_dir)
+            uv_proc = _run(
+                ["uv", "sync", "--frozen", "--no-install-project", "--active"],
+                cwd=staged,
+                runner=runner,
+                env=env,
+            )
         if uv_proc.returncode != 0:
             raise GenerationError(
                 f"uv sync failed for generation {gen_dir}: "
@@ -687,6 +710,28 @@ def ensure_dependency_generation(
             python_executable=python_executable,
             runner=runner,
         )
+        # T74GENFIX defense-in-depth: the build must not change the inputs
+        # the content address was computed over.  A strategy that writes
+        # build artifacts into *project* would leave a proof whose address
+        # no longer matches any later verification of the SAME commit
+        # (observed as the T74RESUME6 advance_generation refusal).  Roll
+        # back this call's own partially-built generation and fail loudly.
+        try:
+            post_build_digest = frozen_spec_sha256(project)
+        except GenerationError as exc:
+            shutil.rmtree(gen_dir, ignore_errors=True)
+            raise GenerationError(
+                f"generation build left {project} unhashable; rolled back "
+                f"{gen_dir}: {exc}"
+            ) from exc
+        if post_build_digest != spec_digest:
+            shutil.rmtree(gen_dir, ignore_errors=True)
+            raise GenerationError(
+                f"generation build dirtied the attested checkout {project} "
+                f"(spec digest moved {spec_digest} -> {post_build_digest}); "
+                f"rolled back {gen_dir} — a build must never mutate the "
+                "hashed inputs of its own content address"
+            )
         return json.loads(
             (gen_dir / ".generation.json").read_text(encoding="utf-8")
         )
