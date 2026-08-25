@@ -1473,7 +1473,10 @@ _REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _carried_north_star_actions(plan_dir: Path) -> list[dict[str, Any]]:
+def _carried_north_star_actions(
+    plan_dir: Path,
+    state: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Read the normalized North Star actions the revise worker will see.
 
     Mirrors the revise prompt reader: prefer ``gate_carry.json`` and fall back
@@ -1488,7 +1491,7 @@ def _carried_north_star_actions(plan_dir: Path) -> list[dict[str, Any]]:
         read_carried_north_star_actions,
     )
 
-    return read_carried_north_star_actions(plan_dir)
+    return read_carried_north_star_actions(plan_dir, state=state)
 
 
 def _revise_north_star_halt_actions(
@@ -1509,6 +1512,11 @@ def _revise_north_star_halt_actions(
         action_type = action.get("action_type")
         category = action.get("category")
         if action_type == "add_human_halt":
+            # A matching source=user disposition is re-applied by the
+            # handler-owned carry reader.  Do not turn an already-settled
+            # human gate back into the same pre-worker failure on revise.
+            if action.get("resolved") is True:
+                continue
             halt.append(dict(action))
             continue
         if action_type not in _REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES:
@@ -1798,7 +1806,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         # record_step_failure path before spending a worker run when a carried
         # action requires a human, is unmappable, or is a dangerous-category
         # blocker with no concrete target.
-        carried_ns_actions = _carried_north_star_actions(plan_dir)
+        carried_ns_actions = _carried_north_star_actions(plan_dir, state)
         ns_halt_actions = _revise_north_star_halt_actions(carried_ns_actions)
         if ns_halt_actions:
             _raise_north_star_revise_halt(

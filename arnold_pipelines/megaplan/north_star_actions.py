@@ -760,11 +760,21 @@ def _reapply_carried_settlements(
     for action in normalized:
         aid = action.get("id")
         record = settled_by_id.get(aid) if isinstance(aid, str) else None
-        if record is not None and record.get("resolved") is True:
+        disposition = (
+            record.get("operator_disposition")
+            if isinstance(record, Mapping)
+            else None
+        )
+        is_canonical_disposition = (
+            isinstance(disposition, Mapping)
+            and disposition.get("source") == "user"
+            and disposition.get("question_id") == action.get("question_id")
+            and disposition.get("decision") in OPERATOR_DISPOSITION_DECISIONS
+        )
+        if record is not None and record.get("resolved") is True and is_canonical_disposition:
             annotated = dict(action)
             annotated["resolved"] = True
             annotated["status"] = "resolved"
-            disposition = record.get("operator_disposition")
             if isinstance(disposition, Mapping):
                 annotated["operator_disposition"] = dict(disposition)
             result.append(annotated)
@@ -773,7 +783,38 @@ def _reapply_carried_settlements(
     return result
 
 
-def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
+def _reapply_state_settlements(
+    state: Mapping[str, Any] | None,
+    actions: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply current handler-owned dispositions to carried actions.
+
+    A valid operator disposition may be added after the gate carry was written
+    and before a same-cursor revise resume.  The plan state is authoritative
+    for that late settlement; worker-owned action fields remain ignored.
+    """
+    if not isinstance(state, Mapping):
+        return [dict(action) for action in actions]
+
+    result: list[dict[str, Any]] = []
+    for action in actions:
+        disposition = operator_disposition_for_action(state, action)
+        if disposition is None:
+            result.append(dict(action))
+            continue
+        annotated = dict(action)
+        annotated["resolved"] = True
+        annotated["status"] = "resolved"
+        annotated["operator_disposition"] = disposition
+        result.append(annotated)
+    return result
+
+
+def read_carried_north_star_actions(
+    plan_dir: Any,
+    *,
+    state: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Read the normalized North Star actions carried from the gate step.
 
     Prefers ``gate_carry.json`` (the normalized carry artifact) and falls
@@ -811,7 +852,8 @@ def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
                     "gate_carry.json north_star_actions must be a list"
                 )
             normalized = normalize_north_star_actions(carry["north_star_actions"])
-            return _reapply_carried_settlements(carry, normalized)
+            carried = _reapply_carried_settlements(carry, normalized)
+            return _reapply_state_settlements(state, carried)
         raise NorthStarActionValidationError("gate_carry.json must contain an object")
 
     gate_path = plan_dir / "gate.json"
