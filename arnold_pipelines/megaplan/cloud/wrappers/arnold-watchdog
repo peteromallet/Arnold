@@ -1536,6 +1536,21 @@ if current not in {
         sys.exit(1)
 active = state.get("active_step")
 if active and isinstance(active, dict) and active.get("phase"):
+    # Node-aware liveness (2026-08-25): a recorded active_step with a phase
+    # is NOT proof of a live worker - a silently killed worker leaves the
+    # stale step in state.json (the 1747 revise death). Check the pid.
+    _wpid = str(active.get("worker_pid") or "").strip()
+    _worker_dead = False
+    if _wpid.isdigit():
+        try:
+            os.kill(int(_wpid), 0)
+        except OSError:
+            _worker_dead = True
+            print("stale active_step: worker pid " + _wpid + " is dead - treating as parked", file=sys.stderr)
+    if not _worker_dead:
+        sys.exit(1)  # a worker is genuinely live; not parked
+    # worker dead: fall through to the parked-stall dispatch
+if active and isinstance(active, dict) and active.get("phase"):
     # Repeated-error-fingerprint stall (2026-08-25): a live worker stuck in a
     # deterministic retry loop (same error fingerprint >= 3 in the recent
     # event window, no progress event after the newest error) is a stall the
