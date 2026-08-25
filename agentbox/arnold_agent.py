@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -67,13 +68,47 @@ def _find_launcher() -> Path | None:
 _BRANDED_OMP = Path.home() / "Documents" / "oh-my-pi" / "packages" / "coding-agent" / "dist" / "omp"
 
 
+def _resolve_omp_bin(env=None) -> str | None:
+    """Resolve which ``omp`` binary a launch would use.
+
+    Preference mirrors _select_omp_bin: an explicit OMP_BIN override wins,
+    then the branded build (unless ARNOLD_STOCK_OMP=1), then PATH. Returns
+    None when nothing resolves; callers decide what that means for them.
+    """
+    target = os.environ if env is None else env
+    override = target.get("OMP_BIN")
+    if override:
+        return override
+    if target.get("ARNOLD_STOCK_OMP") != "1" and _BRANDED_OMP.is_file():
+        return str(_BRANDED_OMP)
+    return shutil.which("omp")
+
+
+def _omp_supports_onboard(omp_bin: str) -> bool:
+    """Probe whether this omp build ships the ``onboard`` subcommand.
+
+    Exit 0/2 from ``omp onboard --help`` counts as supported (argparse uses 2
+    for unknown commands, so anything else — or any spawn failure/timeouts —
+    means the build predates onboarding and the caller should fall back).
+    """
+    try:
+        proc = subprocess.run(
+            [omp_bin, "onboard", "--help"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode in (0, 2)
+
+
 def _select_omp_bin(env=None) -> None:
     """Point the agent launcher at the branded build when it exists."""
     target = os.environ if env is None else env
-    if target.get("ARNOLD_STOCK_OMP") == "1":
-        return
-    if _BRANDED_OMP.is_file():
-        target.setdefault("OMP_BIN", str(_BRANDED_OMP))
+    resolved = _resolve_omp_bin(target)
+    if resolved and target.get("ARNOLD_STOCK_OMP") != "1":
+        target.setdefault("OMP_BIN", resolved)
 
 # omp flags that consume a following value token.
 _VALUE_FLAGS = frozenset({"-r", "--resume", "--session-dir", "--profile"})
@@ -143,6 +178,16 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        # Prefer the native `omp onboard` experience when an omp binary
+        # resolves (same preference as _select_omp_bin) and this build ships
+        # the subcommand. Hand the terminal over wholesale via execvp; if the
+        # exec itself fails, drop to the Python flow rather than dying.
+        omp_bin = _resolve_omp_bin()
+        if omp_bin is not None and _omp_supports_onboard(omp_bin):
+            try:
+                os.execvp(omp_bin, [omp_bin, "onboard"])
+            except OSError:
+                pass  # fall through to the Python flow below
         from agentbox.onboarding.flow import run_flow
 
         return run_flow().exit_code

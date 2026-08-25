@@ -6,6 +6,9 @@ import os
 
 from pathlib import Path
 
+import pytest
+
+
 
 from agentbox import arnold_agent
 
@@ -223,3 +226,61 @@ def test_select_omp_bin_stock_opt_out(monkeypatch, tmp_path) -> None:
     arnold_agent._select_omp_bin()
 
     assert "OMP_BIN" not in os.environ
+
+
+def _script_bin(path, exit_code: int = 0):
+    """Tiny executable stub that just exits with *exit_code*."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_resolve_omp_bin_override_wins_over_branded(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", _script_bin(tmp_path / "branded-omp"))
+    env = {"OMP_BIN": "/custom/omp"}
+
+    assert arnold_agent._resolve_omp_bin(env) == "/custom/omp"
+
+
+def test_resolve_omp_bin_prefers_branded_over_path(monkeypatch, tmp_path) -> None:
+    branded = _script_bin(tmp_path / "branded-omp")
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    monkeypatch.setattr(arnold_agent.shutil, "which", lambda name: "/path/omp")
+
+    assert arnold_agent._resolve_omp_bin({}) == str(branded)
+
+
+def test_resolve_omp_bin_stock_opt_out_skips_branded(
+    monkeypatch, tmp_path
+) -> None:
+    branded = _script_bin(tmp_path / "branded-omp")
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    monkeypatch.setattr(arnold_agent.shutil, "which", lambda name: "/path/omp")
+
+    assert arnold_agent._resolve_omp_bin({"ARNOLD_STOCK_OMP": "1"}) == "/path/omp"
+
+
+def test_resolve_omp_bin_nothing_resolves(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", tmp_path / "missing")
+    monkeypatch.setattr(arnold_agent.shutil, "which", lambda name: None)
+
+    assert arnold_agent._resolve_omp_bin({}) is None
+
+
+@pytest.mark.parametrize("exit_code, supported", [(0, True), (2, True), (1, False)])
+def test_omp_supports_onboard_exit_codes(
+    tmp_path, exit_code, supported
+) -> None:
+    bin_ = _script_bin(tmp_path / "omp", exit_code=exit_code)
+
+    assert arnold_agent._omp_supports_onboard(str(bin_)) is supported
+
+
+def test_omp_supports_onboard_unexecutable_bin_is_unsupported(
+    tmp_path,
+) -> None:
+    bin_ = tmp_path / "omp"
+    bin_.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")  # not executable
+
+    assert arnold_agent._omp_supports_onboard(str(bin_)) is False

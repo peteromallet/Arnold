@@ -634,3 +634,187 @@ def test_agentbox_doctor_without_flag_never_touches_flow(
 
     # Pre-existing behavior: plain doctor runs its health checks (exit free).
     agentbox_cli_main(["doctor"])
+
+
+# ---------------------------------------------------------------------------
+# B3 — arnold --onboard prefers native `omp onboard`, falls back to the flow
+# ---------------------------------------------------------------------------
+
+
+class _OnboardExecSentinel(Exception):
+    """Raised by the fake execvp so main() stops without replacing us."""
+
+
+def _script_bin(path: Path, exit_code: int) -> Path:
+    """A tiny executable whose only job is to exit with *exit_code*."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _onboard_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, branded_exit: int | None
+) -> Path | None:
+    """Neutral env + optional branded omp stub; returns the branded path."""
+    monkeypatch.delenv("OMP_BIN", raising=False)
+    monkeypatch.delenv("ARNOLD_STOCK_OMP", raising=False)
+    if branded_exit is None:
+        branded = tmp_path / "no" / "such" / "omp"
+    else:
+        branded = _script_bin(tmp_path / "dist" / "omp", branded_exit)
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    return branded
+
+
+def test_onboard_execs_native_omp_when_branded_bin_supported(
+    monkeypatch, tmp_path
+) -> None:
+    branded = _onboard_env(monkeypatch, tmp_path, branded_exit=0)
+    recorded: list[list[str]] = []
+
+    def fake_execvp(file: str, argv: list[str]) -> None:
+        recorded.append([file, *argv])
+        raise _OnboardExecSentinel
+
+    monkeypatch.setattr(arnold_agent.os, "execvp", fake_execvp)
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: (_ for _ in ()).throw(
+            AssertionError("python flow must not run when omp onboard exists")
+        ),
+    )
+
+    with pytest.raises(_OnboardExecSentinel):
+        arnold_agent.main(["--onboard"])
+
+    assert recorded == [[str(branded), str(branded), "onboard"]]
+
+
+def test_onboard_prefers_omp_bin_override_over_branded(
+    monkeypatch, tmp_path
+) -> None:
+    _onboard_env(monkeypatch, tmp_path, branded_exit=0)
+    override = _script_bin(tmp_path / "custom" / "omp", 0)
+    monkeypatch.setenv("OMP_BIN", str(override))
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(
+        arnold_agent.os,
+        "execvp",
+        lambda file, argv: (recorded.append([file, *argv]), (_ for _ in ()).throw(_OnboardExecSentinel)),
+    )
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("flow must not run")),
+    )
+
+    with pytest.raises(_OnboardExecSentinel):
+        arnold_agent.main(["--onboard"])
+
+    assert recorded[0][0] == str(override)
+
+
+def test_onboard_execvp_oserror_falls_back_to_python_flow(
+    monkeypatch, tmp_path
+) -> None:
+    """execvp itself raising OSError drops to the Python flow (no stray 127)."""
+    _onboard_env(monkeypatch, tmp_path, branded_exit=0)
+    monkeypatch.setattr(
+        arnold_agent.os, "execvp", lambda file, argv: (_ for _ in ()).throw(OSError)
+    )
+    flow_calls: list[dict] = []
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: flow_calls.append(kw) or FlowResult(0),
+    )
+
+    assert arnold_agent.main(["--onboard"]) == 0
+    assert len(flow_calls) == 1
+
+
+def test_onboard_probe_unsupported_falls_back_to_python_flow(
+    monkeypatch, tmp_path
+) -> None:
+    # Exit 1 from `omp onboard --help`: this build predates onboarding.
+    _onboard_env(monkeypatch, tmp_path, branded_exit=1)
+    flow_calls: list[dict] = []
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: flow_calls.append(kw) or FlowResult(0),
+    )
+
+    assert arnold_agent.main(["--onboard"]) == 0
+    assert len(flow_calls) == 1
+
+
+def test_onboard_probe_spawn_failure_falls_back_to_python_flow(
+    monkeypatch, tmp_path
+) -> None:
+    # Resolves as a file but is not executable -> PermissionError -> fallback.
+    branded = tmp_path / "dist" / "omp"
+    branded.parent.mkdir(parents=True)
+    branded.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")  # mode 0644
+    monkeypatch.delenv("OMP_BIN", raising=False)
+    monkeypatch.setattr(arnold_agent, "_BRANDED_OMP", branded)
+    flow_calls: list[dict] = []
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: flow_calls.append(kw) or FlowResult(3),
+    )
+
+    assert arnold_agent.main(["--onboard"]) == 3
+    assert len(flow_calls) == 1
+
+
+def test_onboard_no_bin_at_all_falls_back_to_python_flow(
+    monkeypatch, tmp_path
+) -> None:
+    _onboard_env(monkeypatch, tmp_path, branded_exit=None)
+    monkeypatch.setattr(arnold_agent.shutil, "which", lambda name: None)
+    flow_calls: list[dict] = []
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: flow_calls.append(kw) or FlowResult(0),
+    )
+
+    assert arnold_agent.main(["--onboard"]) == 0
+    assert len(flow_calls) == 1
+
+
+def test_onboard_non_tty_still_skips_first_run_offer_and_probe(
+    monkeypatch, tmp_path
+) -> None:
+    """Headless --onboard goes straight to the probe/exec path; and a plain
+    headless launch never even probes for `omp onboard` (guards upstream)."""
+    _onboard_env(monkeypatch, tmp_path, branded_exit=None)
+    monkeypatch.setattr(arnold_agent.shutil, "which", lambda name: None)
+    flow_calls: list[dict] = []
+    monkeypatch.setattr(flow_mod, "run_flow", lambda **kw: flow_calls.append(kw))
+    monkeypatch.setattr(
+        arnold_agent,
+        "_omp_supports_onboard",
+        lambda bin_: (_ for _ in ()).throw(
+            AssertionError("plain launch must never probe for omp onboard")
+        ),
+    )
+    monkeypatch.setattr(
+        arnold_agent, "_find_launcher", lambda: Path("/fake/bin/agent")
+    )
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(
+        arnold_agent.os,
+        "execvp",
+        lambda file, argv: (recorded.append([file, *argv]), (_ for _ in ()).throw(_OnboardExecSentinel)),
+    )
+
+    # Plain headless launch: pytest's captured stdio is not a TTY, guards skip.
+    with pytest.raises(_OnboardExecSentinel):
+        arnold_agent.main([])
+    assert recorded == [["/fake/bin/agent", "/fake/bin/agent", "run", "arnold"]]
+    assert flow_calls == []
