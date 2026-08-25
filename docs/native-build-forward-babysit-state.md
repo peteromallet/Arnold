@@ -143,3 +143,22 @@ site-packages (`/tmp/copy-omprpc2.sh` on box) — `host_tool OK`.
 Plan p0-…-1149 now RUNNING: step=plan, model=openrouter/stealth/ox-alpha,
 failure none. Watch item: critique_evaluator schema compliance with the
 hardened prompt (one_of selections) — first ox-alpha test of it.
+
+## NEW FINDING (2026-08-25 ~12:10Z) — box meta-loop kills long worker sessions
+Pattern across attempts: chain starts, ox-alpha LLM call begins (llm_call_start
+recorded), then worker AND driver die silently mid-call (no failure recorded,
+tmux session gone). The box's meta-loop (hourly codex probe + stale-session
+cleanup, see docs/hetzner-watchdog-meta-loop.md) is the likely killer: it
+treats sessions with dead worker pids as stale and kills the session tree —
+which takes out the driver too. Its own watchdog relaunch (00:06) restarted the
+chain once, then the same cycle repeated.
+NEXT ACTION (fresh context): read docs/hetzner-watchdog-meta-loop.md +
+the meta-loop's stale-session rules on the box (tmux sessions it kills, the
+EVIDENCE_DIR codex probe at /tmp). Either (a) register native-build-forward
+with the watchdog marker contract so the meta-loop SUPERVISES it instead of
+killing it (marker: /workspace/.megaplan/native-build-forward.json exists —
+check why the meta-loop doesn't treat it as supervised), or (b) launch the
+chain via the meta-loop's own launch path, or (c) exclude the session from
+stale-cleanup. Then relaunch via /tmp/relaunch9.sh (all other launch blockers
+are FIXED and proven: ox-alpha routing works, llm_call_start fires, plan phase
+runs until the kill).
