@@ -487,6 +487,12 @@ def _critique_evaluator_prompt(
         omitting one that your verdict actually relies on will fail
         validation.
 
+        HARD REQUIREMENT: every `selections` entry MUST contain ALL of
+        `check_id`, `complexity` (int 1-10), AND `complexity_justification`
+        (a non-empty string). An entry missing ANY of these three keys fails
+        validation outright. Do not omit `complexity_justification`.
+
+        Remember: prefer the smallest selected set that still covers the real
         Remember: prefer the smallest selected set that still covers the real
         risk.  Skipping requires a justification.  When you skip, explain *why
         this specific lens is unnecessary for this specific plan* — do not

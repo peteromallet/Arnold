@@ -499,6 +499,12 @@ def classify_model_family(model: str) -> ModelFamily:
         return ModelFamily.KIMI
     if lowered.startswith(("glm-", "glm/")):
         return ModelFamily.GLM
+    if "ox-alpha" in lowered or lowered.startswith("stealth/"):
+        # OpenRouter stealth/ox-alpha (operator directive 2026-08-24: all
+        # native-build-forward phases on ox-alpha). Budget accounting rides
+        # the frontier-coding defaults.
+        return ModelFamily.CODEX
+
     if lowered.startswith(("mimo-", "mimo/")):
         return ModelFamily.MIMO
     raise ModelBudgetError(f"unknown normalized model family: {model!r}")

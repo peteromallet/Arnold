@@ -94,6 +94,7 @@ _OMP_CATALOG_MODELS: dict[str, tuple[str, ...]] = {
     "moonshot": ("moonshot/kimi-k2.7-code",),
     "kimi-code": ("kimi-code/kimi-for-coding",),
     "openrouter": (
+        "openrouter/stealth/ox-alpha",
         "openrouter/openai/gpt-5.5",
         "openrouter/deepseek/deepseek-chat",
         "openrouter/deepseek/deepseek-r1",
