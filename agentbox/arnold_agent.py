@@ -37,6 +37,7 @@ Run an omp named agent. Bare = interactive session; a message = one-shot
 (printed answer). Leading flags pass through to omp.
 
   --agent NAME     talk to a different installed agent (default: arnold)
+  --onboard        run provider setup, then exit (also works when already set up)
   -c               continue the most recent conversation
   --resume ID      resume a specific session
   -h, --help       show this help
@@ -132,6 +133,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         agent = rest.pop(index)
+    # --onboard: run the provider-onboarding flow on demand and exit. Works
+    # regardless of what is already configured so it doubles as a test entry.
+    if "--onboard" in rest:
+        rest.remove("--onboard")
+        if rest:
+            print(
+                "arnold: --onboard takes no other arguments",
+                file=sys.stderr,
+            )
+            return 1
+        from agentbox.onboarding.flow import run_flow
+
+        return run_flow().exit_code
+
     # Leading omp flags (continue/resume/session-dir/profile) pass through.
     # A trailing message implies one-shot mode (--print); flags alone keep the
     # interactive TUI/picker.
