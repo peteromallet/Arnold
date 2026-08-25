@@ -1669,7 +1669,7 @@ def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
     )
     assert adopted["source_revision"] == live["source_revision"]
 
-    # Different import_root -> fail closed.
+    # Different import_root -> fail closed with diagnostic.
     other_root = dict(live)
     other_root["import_root"] = "/workspace/runtime-candidates/other"
     try:
@@ -1678,6 +1678,12 @@ def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
         )
     except Exception as exc:
         assert getattr(exc, "code", None) == RUNTIME_ATTESTATION_ERROR
+        msg = str(getattr(exc, "message", getattr(exc, "args", ("",))[0]))
+        assert "recorded_identity=import_root=" in msg
+        assert "live_identity=import_root=" in msg
+        assert "source_revision=" in msg
+        assert "generation=114" in msg
+        assert "generation=115" in msg
     else:
         raise AssertionError("different import_root must fail closed")
 

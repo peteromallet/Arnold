@@ -1876,6 +1876,26 @@ def ensure_runtime_launch_seed(
     return seed_path
 
 
+def _render_launch_identity_diagnostic(
+    label: str,
+    identity: Mapping[str, Any],
+    generation: int | None,
+) -> str:
+    """Render a concise launch-relevant identity for diagnostic messages.
+
+    Shows ``import_root`` and ``source_revision`` when present; renders as
+    ``<empty>`` when both are absent.  ``generation`` is ``None`` when
+    unknown (first-launch context).
+    """
+    root = str((identity.get("import_root") or "")).rstrip("/")
+    rev = str(identity.get("source_revision") or "")
+    if not root and not rev:
+        gen = generation if generation is not None else "no recorded generation"
+        return f"{label}=<empty>, generation={gen}"
+    gen = generation if generation is not None else "unknown"
+    return f"{label}=import_root={root}, source_revision={rev}, generation={gen}"
+
+
 def _adopt_or_refuse_launch_identity(
     recorded: Mapping[str, Any],
     live: Mapping[str, Any],
@@ -1901,9 +1921,16 @@ def _adopt_or_refuse_launch_identity(
     if rec_root == live_root and rec_rev == live_rev:
         return dict(recorded)
     if rec_root != live_root:
+        recorded_diag = _render_launch_identity_diagnostic(
+            "recorded_identity", recorded, recorded_generation
+        )
+        live_diag = _render_launch_identity_diagnostic(
+            "live_identity", live, live_generation
+        )
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
-            "chain execution binding does not match the live manifest-pinned runtime",
+            "chain execution binding does not match the live manifest-pinned runtime: "
+            f"{recorded_diag}, {live_diag}",
         )
     if recorded_generation is not None and live_generation < recorded_generation:
         # A genuine downgrade (operator rolled the manifest BACK) on the same
