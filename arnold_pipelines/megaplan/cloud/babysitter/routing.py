@@ -14,6 +14,7 @@ from typing import Mapping
 ROUTING_ENV = "ARNOLD_BABYSITTER_ROUTING"
 CODEX_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_MODEL"
 CODEX_INVESTIGATOR_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_INVESTIGATOR_MODEL"
+OMP_MODEL_ENV = "ARNOLD_BABYSITTER_OMP_MODEL"
 
 OMP_ROUTING = "omp"
 CODEX_ROUTING = "codex"
@@ -61,9 +62,9 @@ def resolve_babysitter_routing(env: Mapping[str, str] | None = None) -> Babysitt
         return BabysitterRouting(
             mode=OMP_ROUTING,
             controller_backend="omp",
-            controller_model=OMP_CONTROLLER_MODEL,
+            controller_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
             investigator_backend="omp",
-            investigator_model=OMP_CONTROLLER_MODEL,
+            investigator_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
         )
     if selected != CODEX_ROUTING:
         raise ValueError(
