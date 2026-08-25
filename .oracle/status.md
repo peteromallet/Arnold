@@ -12,3 +12,11 @@
 - Next: Phase 4 tasklist + pre-execution contract review, then freeze.
 - Phase: EXECUTE (tasklist FROZEN; contract review PASS)
 - Next: Batch 1.
+- Phase: EXECUTE batch 2
+- Checkpoint: B1 PASS committed.
+- Phase: EXECUTE batch 4
+- Checkpoints: B1 PASS b45dff9, B2 PASS 5910d23, B3 PASS.
+- Phase: COMPLETE
+- Final reviews: FinalA+FinalB FAIL -> final-attempt-1 rework (5 items) -> GateFR PASS
+  (P3 over-redaction accepted as safe-direction tradeoff, recorded).
+- Suites at close: onboarding 135 passed/1 skipped; pipeline_run_cli 50; characterization etc green.

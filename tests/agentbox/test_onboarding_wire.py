@@ -13,14 +13,18 @@ import json
 import os
 import shutil
 import sqlite3
+import fcntl
 import subprocess
 import sys
 from pathlib import Path
+
+import time as _time
 
 import pytest
 import yaml
 
 import agentbox.onboarding.wire as wire_mod
+from agentbox.onboarding import detect as _detect_mod
 from agentbox.onboarding.wire import (
     PROVIDER_TO_CLIPROXY_TYPE,
     _splice_provider,
@@ -501,3 +505,139 @@ def test_splice_preserves_flow_providers_header(tmp_path: Path) -> None:
     merged = _splice_provider(text, "deepseek", "deepseek:\n  apiKey: sk-test\n")
     data = yaml.safe_load(merged)
     assert set(data["providers"]) == {"grok", "deepseek"}
+
+
+# ---------------------------------------------------------------------------
+# Redaction shapes [rework final-attempt-1 item 1]
+# ---------------------------------------------------------------------------
+
+# Synthetic shapes: structurally identical to real keys but with a FAKE
+# marker so secret scanners never mistake fixtures for live credentials.
+_REAL_KEY_SHAPES = (
+    "sk-ant-api03-FAKE0000-aaaa-bbbb-cccc-dddd-eeee-ffff",
+    "sk-proj-FAKE0000-aaaa-bbbb-cccc-dddd-eeee-ffff-gggg",
+    "sk-or-v1-FAKE0000-aaaa-bbbb-cccc-dddd-eeee-ffff-hhhh",
+    "xai-FAKE0000-aaaa-bbbb-cccc-dddd-eeee-ffff",
+)
+
+
+@pytest.mark.parametrize("secret", _REAL_KEY_SHAPES)
+def test_redact_covers_real_key_shapes(secret: str) -> None:
+    text = f"boom near {secret} end"
+    assert secret not in wire_mod._redact(text)
+    assert "[REDACTED]" in wire_mod._redact(text)
+    # detect's defensive scrub mirrors the same shapes.
+    scrubbed = _detect_mod._SECRET_RE.sub("[redacted]", text)
+    assert secret not in scrubbed
+
+
+def test_verify_route_redacts_explicitly_passed_secret(
+    agent_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = _RunRecorder(
+        results=[subprocess.CompletedProcess([], 1, stdout="", stderr=f"bad key {SECRET_VALUE}")]
+    )
+    monkeypatch.setattr(wire_mod, "_run", recorder)
+    result = verify_route("vendor/model", agent_dir=agent_dir, secrets=(SECRET_VALUE,))
+    assert not result.ok
+    assert SECRET_VALUE not in result.output
+    assert "[REDACTED]" in result.output
+
+
+def test_wire_api_key_failure_detail_is_secret_free(
+    agent_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-sk-shaped key must still be scrubbed via the explicit-secrets
+    path (regex alone cannot cover arbitrary pasted values)."""
+    recorder = _RunRecorder(
+        results=[subprocess.CompletedProcess([], 1, stdout="", stderr=f"broker exploded near {SECRET_VALUE}")]
+    )
+    monkeypatch.setattr(wire_mod, "_run", recorder)
+    result = wire_api_key("anthropic", SECRET_VALUE, agent_dir=agent_dir)
+    assert not result.ok
+    assert SECRET_VALUE not in result.detail
+    assert "[REDACTED]" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# models.yml merge locking [rework final-attempt-1 item 3]
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_CHILD_MERGE = """
+import sys
+from pathlib import Path
+from agentbox.onboarding.wire import wire_api_key
+
+agent_dir = Path(sys.argv[1])
+provider = sys.argv[2]
+for i in range(25):
+    result = wire_api_key(
+        provider, "sk-" + provider + str(i) + "0123456789abcdef",
+        agent_dir=agent_dir,
+    )
+    assert result.ok, result.detail
+print("merged")
+"""
+
+
+def _spawn_merge_child(agent_dir: Path, provider: str) -> subprocess.Popen:
+    return subprocess.Popen(
+        [sys.executable, "-c", _CHILD_MERGE, str(agent_dir), provider],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(_REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+    )
+
+
+def test_merge_waits_for_external_flock_holder(agent_dir: Path) -> None:
+    agent_dir.mkdir(parents=True)
+    models_yml = agent_dir / "models.yml"
+    models_yml.write_text(
+        "providers:\n  other:\n    apiKey: keep\n", encoding="utf-8"
+    )
+    # Hold the lock BEFORE spawning so the child can never write early.
+    with open(agent_dir / ".models.yml.lock", "a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        child = _spawn_merge_child(agent_dir, "deepseek")
+        try:
+            # Generous window for interpreter startup + imports; the merge
+            # itself must stay blocked on our flock the whole time.
+            _time.sleep(4.0)
+            under_lock = models_yml.read_text(encoding="utf-8")
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    try:
+        out, err = child.communicate(timeout=120)
+    finally:
+        if child.poll() is None:  # pragma: no cover - cleanup on failure
+            child.kill()
+            child.communicate()
+    assert child.returncode == 0, err
+    assert "deepseek" not in under_lock, "merge ran while lock was held"
+    merged = yaml.safe_load(models_yml.read_text(encoding="utf-8"))
+    assert merged["providers"]["other"]["apiKey"] == "keep"
+    assert "deepseek" in merged["providers"]
+
+
+def test_concurrent_merges_keep_every_provider_block(agent_dir: Path) -> None:
+    """Two simultaneous first-run launches must both land in models.yml."""
+    agent_dir.mkdir(parents=True)
+    children = [
+        _spawn_merge_child(agent_dir, "deepseek"),
+        _spawn_merge_child(agent_dir, "google"),
+    ]
+    try:
+        for child in children:
+            out, err = child.communicate(timeout=180)
+            assert child.returncode == 0, err
+    finally:
+        for child in children:
+            if child.poll() is None:  # pragma: no cover - cleanup on failure
+                child.kill()
+                child.communicate()
+    merged = yaml.safe_load((agent_dir / "models.yml").read_text(encoding="utf-8"))
+    assert set(merged["providers"]) >= {"deepseek", "google"}

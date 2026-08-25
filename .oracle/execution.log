@@ -1,0 +1,1 @@
+2026-08-25 B1 execute(ExecB1) -> review(GateB1): FAIL 2 findings -> rework attempt1 -> re-review(GateB1r): PASS. Checkpoint $(git rev-parse --short HEAD).

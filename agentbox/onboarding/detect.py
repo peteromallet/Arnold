@@ -30,8 +30,10 @@ from agentbox.onboarding.catalog import PROVIDERS, RANK_ORDER
 
 # Belt-and-braces scrub for origin detail strings; origins are built from
 # paths and enum-ish values only, but the North Star forbids secret leakage
-# outright, so to_json() scrubs defensively anyway.
-_SECRET_RE = re.compile(r"sk-[A-Za-z0-9]{8,}")
+# outright, so to_json() scrubs defensively anyway. Mirrors
+# agentbox.onboarding.wire._SECRET_RE: covers sk-* (incl. sk-ant-api03-,
+# sk-proj-, sk-or-v1-) and xai-* key shapes.
+_SECRET_RE = re.compile(r"(?:sk|xai)-[A-Za-z0-9_-]{8,}")
 
 READY = "ready"
 CANDIDATE = "candidate"

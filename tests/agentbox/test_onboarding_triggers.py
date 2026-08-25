@@ -88,6 +88,34 @@ def _patch_scan(monkeypatch: pytest.MonkeyPatch, *statuses: str) -> None:
     monkeypatch.setattr(detect_mod, "scan_providers", lambda **kw: report)
 
 
+
+def _patch_catalog_scan(
+    monkeypatch: pytest.MonkeyPatch, *ready_ids: str
+) -> list[list[str]]:
+    """Scan stub over real catalog ids; only *ready_ids* report READY."""
+    from agentbox.onboarding.catalog import RANK_ORDER
+
+    calls: list[list[str]] = []
+    providers = tuple(
+        detect_mod.ProviderScan(
+            id=pid,
+            status=detect_mod.READY if pid in ready_ids else detect_mod.MISSING,
+            origin=None,
+            env_keys=(),
+            default_route="vendor/model",
+        )
+        for pid in RANK_ORDER
+    )
+    report = detect_mod.ScanReport(providers=providers, rank_order=())
+
+    def fake_scan(**kw):
+        calls.append(sorted(ready_ids))
+        return report
+
+    monkeypatch.setattr(detect_mod, "scan_providers", fake_scan)
+    return calls
+
+
 def _patch_offer(monkeypatch: pytest.MonkeyPatch, result=None) -> list[dict]:
     calls: list[dict] = []
 
@@ -165,7 +193,10 @@ def test_non_tty_launch_never_offers(monkeypatch, capsys) -> None:
     assert captured.err == ""
 
 
-@pytest.mark.parametrize("argv", [["--resume", "abc"], ["-c"], ["--session-dir", "d"]])
+@pytest.mark.parametrize(
+    "argv",
+    [["--resume", "abc"], ["-r", "abc"], ["-c"], ["--session-dir", "d"]],
+)
 def test_resume_style_flags_never_offers(monkeypatch, argv) -> None:
     _fake_ttys(monkeypatch)
     _patch_scan(monkeypatch)  # zero routes ready, would otherwise offer
@@ -397,10 +428,14 @@ def test_t2_non_tty_exit_7_untouched_and_silent_flow(monkeypatch, capsys) -> Non
 def test_t2_tty_option_4_invokes_flow_then_exits_7_while_still_missing(
     monkeypatch,
 ) -> None:
+    """Flow exits 0 but the scan shows nothing wired: env-only re-checks are
+    unreachable by design (the flow never sets this process's env), so the
+    readiness verdict comes from detect.scan_providers READY statuses."""
     _tty_stdout(monkeypatch)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(builtins, "input", lambda prompt="": "4")
+    scan_calls = _patch_catalog_scan(monkeypatch)  # nothing ready anywhere
 
     flow_calls: list[dict] = []
 
@@ -415,19 +450,26 @@ def test_t2_tty_option_4_invokes_flow_then_exits_7_while_still_missing(
 
     assert exc_info.value.code == 7
     assert len(flow_calls) == 1
+    assert len(scan_calls) == 1
 
 
-def test_t2_tty_option_4_continues_when_credentials_now_present(
+def test_t2_tty_option_4_continues_when_slots_ready_after_flow(
     monkeypatch,
 ) -> None:
+    """Model reality: the flow persists into omp's own stores and does NOT
+    set process env; the launch continues because the failing slot's provider
+    reports READY in the post-flow scan."""
     _tty_stdout(monkeypatch)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(builtins, "input", lambda prompt="": "4")
+    _patch_catalog_scan(monkeypatch, "anthropic")
 
     def fake_run_flow(**kw):
-        # Wiring made the key visible to this process.
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-onboarded")
+        # Reality check: wiring must not touch this process's environment.
+        import os
+
+        assert not os.environ.get("ANTHROPIC_API_KEY")
         return FlowResult(0, wired_provider="anthropic", verified=True)
 
     monkeypatch.setattr(flow_mod, "run_flow", fake_run_flow)
@@ -438,6 +480,25 @@ def test_t2_tty_option_4_continues_when_credentials_now_present(
         )
         is None
     )
+
+
+def test_t2_tty_option_4_partial_readiness_still_exits_7(monkeypatch) -> None:
+    """Two failing slots, only one wired by the flow: exit 7 unchanged."""
+    _tty_stdout(monkeypatch)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "4")
+    _patch_catalog_scan(monkeypatch, "anthropic")  # openai still missing
+    monkeypatch.setattr(
+        flow_mod,
+        "run_flow",
+        lambda **kw: FlowResult(0, wired_provider="anthropic", verified=True),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        preflight_or_raise(_PROFILE, pipeline_name="p", profile_name="prof")
+
+    assert exc_info.value.code == 7
 
 
 @pytest.mark.parametrize("answer", ["1", "2", "3", "", "n"])

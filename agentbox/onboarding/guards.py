@@ -23,7 +23,7 @@ def should_offer(
 
     - stdin AND stderr are TTYs (strictly an interactive-terminal offer)
     - not ``--message`` one-shot mode
-    - no ``-c`` / ``--resume`` / ``--session-dir`` flag (those runs have
+    - no ``-c`` / ``-r`` / ``--resume`` / ``--session-dir`` flag (those runs have
       their own contract and must fail closed byte-for-byte as today)
     - ``CI`` unset (empty value counts as unset), ``ARNOLD_STOCK_OMP != 1``,
       ``MEGAPLAN_RESIDENT_MODE`` unset (empty counts as unset).
@@ -33,8 +33,8 @@ def should_offer(
     if message:
         return False
     for flag in flags:
-        if flag in ("-c", "--resume", "--session-dir") or flag.startswith(
-            ("--resume=", "--session-dir=")
+        if flag in ("-c", "-r", "--resume", "--session-dir") or flag.startswith(
+            ("-r=", "--resume=", "--session-dir=")
         ):
             return False
     if environ.get("CI"):

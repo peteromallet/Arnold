@@ -1,0 +1,6 @@
+sandbox_real_home=/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/arnold-onboard-e2e-5214_qkq
+wire_cli_proxy ok=True mechanism=cli-proxy-models-yml
+files_scanned=models.yml grok-token.py
+users_literal_hits=[]
+grok_token_py_users_hits=False
+W1R4_HOME_EXPANSION=PASS

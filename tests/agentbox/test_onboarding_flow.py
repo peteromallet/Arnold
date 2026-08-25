@@ -130,9 +130,11 @@ class VerifyScript:
         self.verdicts = list(verdicts)
         self._last = bool(verdicts[-1]) if verdicts else False
         self.routes: list[str] = []
+        self.calls: list[dict] = []
 
     def __call__(self, route, *, agent_dir, **kw) -> VerifyResult:
         self.routes.append(route)
+        self.calls.append({"route": route, **kw})
         ok = self.verdicts.pop(0) if self.verdicts else self._last
         ok = bool(ok)
         return VerifyResult(ok=ok, latency_ms=1, output="" if ok else "boom")
@@ -180,6 +182,8 @@ def _run(script_answers, *, agent_dir, monkeypatch, verify_verdicts=None,
         (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["-c"], environ={}), False),
         (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["--resume"], environ={}), False),
         (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["--resume=abc"], environ={}), False),
+        (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["-r"], environ={}), False),
+        (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["-r=abc"], environ={}), False),
         (dict(stdin_tty=True, stderr_tty=True, message=False, flags=["--session-dir", "/tmp/x"], environ={}), False),
         # environment guards
         (dict(stdin_tty=True, stderr_tty=True, message=False, flags=[], environ={"CI": "true"}), False),
@@ -229,6 +233,21 @@ def test_happy_path_candidate_paste_verify(canned_scan, agent_dir, monkeypatch):
     # detection-before-asking UI: buckets + recommended marker present
     assert "recommended" in out.text
     assert "Ready now:" in out.text
+
+
+def test_pasted_key_threaded_into_verify_redaction(
+    canned_scan, agent_dir, monkeypatch
+):
+    """The accepted key must reach verify_route as an explicit secret so a
+    failed verification can never echo it back (rework item 1)."""
+    _result, _out, _wire, verify = _run(
+        ["2", FAKE_KEY, "", ""],
+        agent_dir=agent_dir,
+        monkeypatch=monkeypatch,
+        verify_verdicts=[True],
+    )
+    assert len(verify.calls) == 1
+    assert FAKE_KEY in verify.calls[0].get("secrets", ())
 
 
 def test_menu_buckets_found_first_and_toggle(canned_scan, agent_dir, monkeypatch):

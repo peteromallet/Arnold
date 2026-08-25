@@ -272,8 +272,12 @@ def _pick_provider(io_: _IO, report: ScanReport, configured: set[str]) -> str | 
         io_.say("Pick a number from the list, 's' to toggle, or 'n' to skip.")
 
 
-def _wire_once(pid: str, *, io_: _IO, agent_dir: Path) -> WireResult:
-    """S2: wire according to the catalog auth_kinds (api_key > oauth > cli_proxy)."""
+def _wire_once(pid: str, *, io_: _IO, agent_dir: Path) -> tuple[WireResult, str]:
+    """S2: wire according to the catalog auth_kinds (api_key > oauth > cli_proxy).
+
+    Returns ``(result, api_key)``; ``api_key`` is the pasted key (only for the
+    api_key route) so the caller can thread it into verification redaction.
+    """
     spec = PROVIDERS[pid]
     kinds = spec.auth_kinds
     env_label = "/".join(spec.env_keys) or f"{pid} API key"
@@ -289,20 +293,20 @@ def _wire_once(pid: str, *, io_: _IO, agent_dir: Path) -> WireResult:
             agent_dir=agent_dir,
             origin_kind="manual-entry",
             origin_detail=f"interactive onboarding ({env_label})",
-        )
+        ), key.strip()
     if "oauth" in kinds:
-        return wire_oauth(pid, agent_dir=agent_dir)
+        return wire_oauth(pid, agent_dir=agent_dir), ""
     if "cli_proxy" in kinds:
         return wire_cli_proxy(
             pid, source=f"foreign CLI store ({pid})", agent_dir=agent_dir
-        )
+        ), ""
     return WireResult(
         ok=False,
         provider=pid,
         mechanism="none",
         detail=f"no supported wiring kind for {pid!r}",
         provenance={},
-    )
+    ), ""
 
 
 def _configure_provider(
@@ -320,7 +324,7 @@ def _configure_provider(
     default_route = PROVIDERS[pid].default_route
     for _attempt in range(1, _MAX_VERIFY_ATTEMPTS + 1):
         try:
-            result = _wire_once(pid, io_=io_, agent_dir=agent_dir)
+            result, api_key = _wire_once(pid, io_=io_, agent_dir=agent_dir)
         except _Cancelled:
             return (_STOP, ("", ""))
         if not result.ok:
@@ -333,8 +337,7 @@ def _configure_provider(
         if raw is None:
             return (_STOP, ("", ""))
         route = raw.strip() or default_route
-        # S4 verify via wire.verify_route.
-        verdict = verify_route(route, agent_dir=agent_dir)
+        verdict = verify_route(route, agent_dir=agent_dir, secrets=(api_key,) if api_key else ())
         if verdict.ok:
             record_provenance(agent_dir, [dict(result.provenance, route=route)])
             return (_OK, (pid, route))
@@ -400,7 +403,6 @@ def run_flow(
     scan: ScanReport | None = None,
     stdin: Callable[[], str] = input,
     stdout: Callable[[str], None] = print,
-    omp_bin: str = "omp",
     agent_dir=None,
     stdin_tty: bool | None = None,
     stderr_tty: bool | None = None,
@@ -408,9 +410,8 @@ def run_flow(
     """Run the interactive screens S0-S5.
 
     Exit contract: 0 >= 1 verified route; 1 cancelled; 2 non-TTY (prints
-    one hint line). ``omp_bin`` is accepted for parity with the wire layer;
-    all omp subprocess traffic itself goes through the pinned seams in
-    :mod:`agentbox.onboarding.wire`.
+    one hint line). All omp subprocess traffic goes through the pinned
+    seams in :mod:`agentbox.onboarding.wire`.
     """
     if stdin_tty is None:
         stdin_tty = sys.stdin.isatty()
@@ -440,7 +441,6 @@ def offer_and_repreflight(
     flags: Sequence[str],
     repreflight: Callable[[], bool],
     environ: Mapping[str, str] = os.environ,
-    omp_bin: str = "omp",
     agent_dir=None,
     summary_lines: Sequence[str] = (),
 ) -> bool | None:
@@ -473,7 +473,7 @@ def offer_and_repreflight(
     if answer.strip().lower() in ("n", "no", "q"):
         return None
     try:
-        result = run_flow(omp_bin=omp_bin, agent_dir=agent_dir)
+        result = run_flow(agent_dir=agent_dir)
     except OSError:
         # OLD-PIN FALLBACK: omp binary absent/broken during flow startup.
         return None

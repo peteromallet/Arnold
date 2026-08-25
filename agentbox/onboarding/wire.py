@@ -50,6 +50,7 @@ All subprocess traffic goes through :func:`_run` so tests can monkeypatch it.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -59,6 +60,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -66,7 +68,9 @@ from pathlib import Path
 import yaml
 
 # Belt-and-braces scrub, mirroring agentbox.onboarding.detect._SECRET_RE.
-_SECRET_RE = re.compile(r"sk-[A-Za-z0-9]{8,}")
+# Covers the real key shapes: sk-* (incl. sk-ant-api03-, sk-proj-, sk-or-v1-,
+# whose bodies contain hyphens) and xai-* keys.
+_SECRET_RE = re.compile(r"(?:sk|xai)-[A-Za-z0-9_-]{8,}")
 _REDACTED = "[REDACTED]"
 _PROVENANCE_FILE = ".arnold_onboarding_provenance.jsonl"
 
@@ -205,11 +209,12 @@ def wire_api_key(
     ok = proc.returncode == 0 and any(e.get("provider") == provider_id for e in imported)
     detail_parts: list[str] = []
     if not ok and proc.returncode != 0:
-        detail_parts.append(f"exit={proc.returncode} {_redact(proc.stderr or '')}".strip())
+        detail_parts.append(
+            f"exit={proc.returncode} {_redact(proc.stderr or '', (api_key,))}".strip()
+        )
     if parse_error:
         detail_parts.append(parse_error)
-    detail_parts.extend(_redact(reason) for reason in skipped_reasons)
-
+    detail_parts.extend(_redact(reason, (api_key,)) for reason in skipped_reasons)
     return WireResult(
         ok=ok,
         provider=provider_id,
@@ -475,6 +480,24 @@ def _atomic_write(path: Path, content: str) -> None:
             pass
         raise
 
+@contextmanager
+def _models_yml_lock(agent_dir: Path):
+    """Cross-process lock around the models.yml read-modify-write section.
+
+    Concurrent first-run launches (two terminals, watchdog + interactive)
+    would otherwise race the splice and drop each other's provider block.
+    The lockfile lives in the agent dir next to models.yml; fcntl.flock is
+    advisory but every writer in this module honors it.
+    """
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = agent_dir / ".models.yml.lock"
+    with open(lock_path, "a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
 
 def wire_cli_proxy(provider_id: str, source: str, *, agent_dir: Path) -> WireResult:
     """Merge a command-backed ``apiKey`` entry into ``<agent-dir>/models.yml``.
@@ -499,19 +522,20 @@ def wire_cli_proxy(provider_id: str, source: str, *, agent_dir: Path) -> WireRes
     ordered.update(entry)
 
     models_yml = agent_dir / "models.yml"
-    existing = ""
-    try:
-        existing = models_yml.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        pass
-    updated = _splice_provider(existing, provider_id, _render_provider_block(provider_id, ordered))
-    _atomic_write(models_yml, updated)
+    with _models_yml_lock(agent_dir):
+        existing = ""
+        try:
+            existing = models_yml.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        updated = _splice_provider(existing, provider_id, _render_provider_block(provider_id, ordered))
+        _atomic_write(models_yml, updated)
 
-    # Round-trip sanity: the merged file must still parse and keep the cmd key.
-    merged = yaml.safe_load(models_yml.read_text(encoding="utf-8"))
-    ok = isinstance(merged, dict) and str(
-        (merged.get("providers") or {}).get(provider_id, {}).get("apiKey", "")
-    ).startswith("!python3 ")
+        # Round-trip sanity: the merged file must still parse and keep the cmd key.
+        merged = yaml.safe_load(models_yml.read_text(encoding="utf-8"))
+        ok = isinstance(merged, dict) and str(
+            (merged.get("providers") or {}).get(provider_id, {}).get("apiKey", "")
+        ).startswith("!python3 ")
 
     return WireResult(
         ok=ok,
@@ -531,19 +555,20 @@ def _wire_models_yml_static(provider_id: str, api_key: str, *, agent_dir: Path) 
     """Fallback route: static ``apiKey`` merged into models.yml for providers
     without a CLIProxyAPI type mapping."""
     models_yml = Path(agent_dir) / "models.yml"
-    existing = ""
-    try:
-        existing = models_yml.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        pass
-    updated = _splice_provider(
-        existing, provider_id, _render_provider_block(provider_id, {"apiKey": api_key})
-    )
-    _atomic_write(models_yml, updated)
-    merged = yaml.safe_load(models_yml.read_text(encoding="utf-8"))
-    ok = isinstance(merged, dict) and (
-        (merged.get("providers") or {}).get(provider_id, {}).get("apiKey") == api_key
-    )
+    with _models_yml_lock(Path(agent_dir)):
+        existing = ""
+        try:
+            existing = models_yml.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        updated = _splice_provider(
+            existing, provider_id, _render_provider_block(provider_id, {"apiKey": api_key})
+        )
+        _atomic_write(models_yml, updated)
+        merged = yaml.safe_load(models_yml.read_text(encoding="utf-8"))
+        ok = isinstance(merged, dict) and (
+            (merged.get("providers") or {}).get(provider_id, {}).get("apiKey") == api_key
+        )
     return WireResult(
         ok=ok,
         provider=provider_id,
