@@ -1154,6 +1154,14 @@ def run_omp_step(
     import copy as _copy
 
     strict_capture_schema = _copy.deepcopy(schema)
+    # Runtime dialect (mirrors the codex path in _core/io.py): convert oneOf
+    # to anyOf and promote optional properties to nullable-required so
+    # non-Codex models are audited against the same looser runtime dialect
+    # the structured-output submission uses. Without this, models that omit
+    # branch-specific optional keys (e.g. `area` for catalog lenses) fail the
+    # exactly-one oneOf audit on valid output.
+    from arnold_pipelines.megaplan._core.io import _enforce_openai_strict_mode as _strict_mode
+    strict_capture_schema = _strict_mode(strict_capture_schema)
     strict_capture_schema["additionalProperties"] = False
     normalized_options = dict(worker_options or {})
     explicit_output_path = output_path
