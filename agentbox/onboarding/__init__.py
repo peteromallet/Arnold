@@ -14,6 +14,15 @@ from agentbox.onboarding.detect import (
     parse_env_file,
     scan_providers,
 )
+from agentbox.onboarding.wire import (
+    VerifyResult,
+    WireResult,
+    record_provenance,
+    verify_route,
+    wire_api_key,
+    wire_cli_proxy,
+    wire_oauth,
+)
 
 __all__ = [
     "PROVIDERS",
@@ -24,4 +33,9 @@ __all__ = [
     "ScanReport",
     "parse_env_file",
     "scan_providers",
+    "VerifyResult",
+    "WireResult",
+    "wire_api_key",
+    "wire_cli_proxy",
+    "wire_oauth",
 ]
