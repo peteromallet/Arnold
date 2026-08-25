@@ -1536,6 +1536,38 @@ if current not in {
         sys.exit(1)
 active = state.get("active_step")
 if active and isinstance(active, dict) and active.get("phase"):
+    # Repeated-error-fingerprint stall (2026-08-25): a live worker stuck in a
+    # deterministic retry loop (same error fingerprint >= 3 in the recent
+    # event window, no progress event after the newest error) is a stall the
+    # fixer must pick up even though the worker process is alive. Without
+    # this, failures that retry internally (schema mismatches, provider 429
+    # loops) are invisible: the chain never presents as blocked.
+    events_file = plan_dir / "events.ndjson"
+    try:
+        import collections
+        tail = open(events_file, "rb").read().splitlines()[-60:]
+        prints = collections.Counter()
+        newest_err_seq = -1
+        newest_progress_seq = -1
+        for raw in tail:
+            try:
+                d = json.loads(raw)
+            except Exception:
+                continue
+            seq = d.get("seq", -1)
+            payload = d.get("payload") or {}
+            msg = str(payload.get("message") or "")
+            if d.get("kind") in ("llm_call_error", "phase_failed") or "structural audit failed" in msg:
+                prints[(d.get("kind"), msg[:200])] += 1
+                newest_err_seq = max(newest_err_seq, seq if isinstance(seq, int) else -1)
+            elif d.get("kind") in ("llm_call_end", "phase_end", "state_transition"):
+                newest_progress_seq = max(newest_progress_seq, seq if isinstance(seq, int) else -1)
+        repeated = [f for f, c in prints.items() if c >= 3]
+        if repeated and newest_err_seq >= newest_progress_seq:
+            print("repeated-error-fingerprint stall: " + repeated[0][0] + " " + repeated[0][1][:120], file=sys.stderr)
+            sys.exit(0)  # stalled: dispatch the fixer
+    except Exception:
+        pass
     sys.exit(1)  # a worker is live; not parked
 # No active step in a stoppage state (or between milestones with no plan):
 # parked unless a driver is live.
