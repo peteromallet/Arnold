@@ -275,7 +275,11 @@ def active_step_has_live_worker(active_step: Any) -> bool:
     return observe_active_step_worker(active_step).state == WORKER_LIVE
 
 
-DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS = 900
+# 2026-08-25: raised 900 -> 7200. The 900s cap predates frontier-model plan
+# phases (Ox Alpha crosswalk deliverables run 15-90 min); the flash-era cap
+# TERMed every non-execute phase at exactly +15 min. Aligned with
+# worker_timeout_seconds (7200).
+DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS = 7200
 
 
 @dataclass(frozen=True)
