@@ -7578,7 +7578,28 @@ def run_chain(
     # Idempotent: the date/branch are persisted on first run, never recomputed.
     spec = ensure_reconcile_milestone(spec_path, root=root, writer=writer)
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
-    state = chain_spec.load_chain_state(spec_path)
+    # Load without execution-binding verification first, so the bootstrap can
+    # populate an empty current_identity from the launch seed before the
+    # strict binding check runs.
+    state = chain_spec.load_chain_state(
+        spec_path, verify_execution_binding=False
+    )
+
+    # Bootstrap: populate empty current_identity from the configured launch
+    # seed when the chain has progressed state with a valid launch binding
+    # but no runtime identity yet.  This is a one-time initialization, not a
+    # runtime rebind — it preserves the existing launched_identity, bound_at,
+    # schemas, and rebind_events.
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        _bootstrap_runtime_identity_from_seed,
+    )
+
+    _bootstrapped = _bootstrap_runtime_identity_from_seed(spec_path, state)
+    if _bootstrapped:
+        chain_spec.save_chain_state(spec_path, state)
+        # Reload with verification now that current_identity is populated.
+        state = chain_spec.load_chain_state(spec_path, verify_execution_binding=True)
+
     _preflight_agent_backends(
         spec,
         writer=writer,

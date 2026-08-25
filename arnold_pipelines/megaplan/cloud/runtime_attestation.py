@@ -2629,6 +2629,83 @@ def configured_seed_path() -> Path | None:
     return Path(value).expanduser().resolve(strict=False) if value else None
 
 
+def readonly_seed_runtime_identity(
+    spec_path: Path,
+) -> dict[str, Any] | None:
+    """Read-only extractor for the launch seed's runtime identity.
+
+    Validates the seed digest, readiness, chain-spec path, and runtime-identity
+    shape WITHOUT performing the circular chain-binding comparison.  Returns
+    the normalized identity dict when the seed is valid and populated, or
+    ``None`` when the seed is absent.
+
+    Raises ``CliError`` (``RUNTIME_ATTESTATION_ERROR``) on any validation
+    failure: digest mismatch, unready seed, wrong spec, absent or malformed
+    runtime identity.
+    """
+    seed_path = configured_seed_path()
+    if seed_path is None or not seed_path.exists():
+        return None
+    seed = _json_file(seed_path, label="runtime launch seed")
+    _verify_seed_digest(seed)
+    if not bool(seed.get("ready")) or seed.get("errors"):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime launch seed is not release-ready for identity bootstrap",
+        )
+    # Verify the seed points at the active spec.
+    input_paths = seed.get("input_paths") or {}
+    seed_spec = str(input_paths.get("chain_spec") or "").rstrip("/")
+    if seed_spec != str(spec_path.resolve(strict=False)).rstrip("/"):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime launch seed chain_spec {seed_spec} does not match "
+            f"the active spec {spec_path}",
+        )
+    # Extract and validate chain_runtime_binding.runtime_identity.
+    chain_binding = seed.get("chain_runtime_binding") or {}
+    seed_identity = chain_binding.get("runtime_identity") or {}
+    if not isinstance(seed_identity, Mapping) or not seed_identity.get(
+        "import_root"
+    ) or not seed_identity.get("source_revision"):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime launch seed chain_runtime_binding.runtime_identity "
+            "is absent or incomplete",
+        )
+    # Verify digest-valid when content_sha256 is present.
+    supplied_digest = seed_identity.get("content_sha256")
+    if supplied_digest:
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            _normalized_runtime_identity,
+        )
+
+        computed = _normalized_runtime_identity(seed_identity)
+        if computed.get("content_sha256") != supplied_digest:
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                "runtime launch seed runtime_identity digest is invalid",
+            )
+    # Verify root/revision agree with the seed's expected root/revision.
+    expected_root = str(seed.get("expected_root") or "").rstrip("/")
+    expected_revision = str(seed.get("expected_revision") or "")
+    import_root = str(seed_identity.get("import_root") or "").rstrip("/")
+    source_revision = str(seed_identity.get("source_revision") or "")
+    if expected_root and expected_root != import_root:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime launch seed import_root {import_root} does not match "
+            f"expected_root {expected_root}",
+        )
+    if expected_revision and expected_revision != source_revision:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime launch seed source_revision {source_revision} does not "
+            f"match expected_revision {expected_revision}",
+        )
+    return dict(seed_identity)
+
+
 def configured_process_attestation_path(
     component: str, *, seed: Mapping[str, Any] | None = None
 ) -> Path:

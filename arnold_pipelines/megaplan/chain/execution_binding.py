@@ -1137,6 +1137,12 @@ def runtime_binding_report(
     runtime_binding = binding.get("runtime_binding")
     runtime_binding = runtime_binding if isinstance(runtime_binding, Mapping) else {}
     expected = runtime_binding.get("current_identity")
+    # An absent or exactly empty current_identity is "missing", not a
+    # content-addressed identity with a synthetic digest that would look like
+    # drift. The bootstrap at chain start writes the seed identity into this
+    # slot once; everything else fails closed.
+    if isinstance(expected, Mapping) and not expected:
+        expected = None
     legacy = False
     if not isinstance(expected, Mapping):
         launched = binding.get("launched_identity")
@@ -1262,6 +1268,52 @@ def assert_execution_binding(
             "operator-authorized content-addressed runtime rebind is required.",
         )
     return report
+
+
+def _bootstrap_runtime_identity_from_seed(
+    spec_path: Path,
+    state: Any,
+) -> bool:
+    """Populate an empty ``current_identity`` from the launch seed.
+
+    A progressed chain with a valid immutable launch binding but an absent
+    or exactly empty ``current_identity`` (e.g. after a state-format upgrade)
+    reads the configured launch seed, validates it, and writes the normalized
+    identity into the runtime binding.  This is a one-time initialization, not
+    a runtime rebind: it preserves the existing ``launched_identity``,
+    ``bound_at``, schemas, and ``rebind_events``.
+
+    Returns ``True`` when the identity was bootstrapped, ``False`` when
+    ``current_identity`` was already populated or the seed is absent (no-op).
+    Raises ``CliError`` on validation failure.
+    """
+    binding = getattr(state, "metadata", {}).get("execution_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    runtime_binding = binding.get("runtime_binding")
+    runtime_binding = runtime_binding if isinstance(runtime_binding, Mapping) else {}
+    current = runtime_binding.get("current_identity")
+    # Already populated — nothing to bootstrap.
+    if isinstance(current, Mapping) and current:
+        return False
+    # No launch binding at all — can't bootstrap.
+    if not binding.get("launched_identity"):
+        return False
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        readonly_seed_runtime_identity as _get_seed_identity,
+    )
+
+    seed_identity = _get_seed_identity(spec_path)
+    if seed_identity is None:
+        return False
+    normalized = _normalized_runtime_identity(seed_identity)
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    exec_binding = dict(metadata.get("execution_binding", {}))
+    rt_binding = dict(exec_binding.get("runtime_binding", {}))
+    rt_binding["current_identity"] = normalized
+    exec_binding["runtime_binding"] = rt_binding
+    metadata["execution_binding"] = exec_binding
+    state.metadata = metadata
+    return True
 
 
 def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
