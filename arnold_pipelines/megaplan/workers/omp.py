@@ -42,6 +42,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from arnold_pipelines.megaplan._core import (
     creative_form_id,
+    get_effective,
     read_json,
     schemas_root,
 )
@@ -1061,15 +1062,16 @@ def _resolve_omp_schema(step: str, state: PlanState, root: Path) -> dict[str, An
 
 
 def _omp_timeout_for_step(step: str) -> float:
+    # The canonical timeout is worker_timeout_seconds (default 7200).  The
+    # legacy MEGAPLAN_OMP_TIMEOUT_S override is still accepted for migration;
+    # everything else uses the configured policy.
     try:
         value = float(os.getenv("MEGAPLAN_OMP_TIMEOUT_S", ""))
         if value > 0:
             return value
     except (TypeError, ValueError):
         pass
-    # Execute workers run long builds/tests; everything else is bounded by a
-    # generous structured-output window.
-    return float(os.getenv("MEGAPLAN_OMP_EXECUTE_TIMEOUT_S", "3600") if step in _EXECUTE_STEPS else os.getenv("MEGAPLAN_OMP_NON_EXECUTE_TIMEOUT_S", "1800"))
+    return float(get_effective("execution", "worker_timeout_seconds"))
 
 
 def _prompt_phase_tools(step: str, read_only: bool) -> tuple[str, ...] | None:
