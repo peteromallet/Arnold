@@ -645,10 +645,12 @@ class _OnboardExecSentinel(Exception):
     """Raised by the fake execvp so main() stops without replacing us."""
 
 
-def _script_bin(path: Path, exit_code: int) -> Path:
-    """A tiny executable whose only job is to exit with *exit_code*."""
+def _script_bin(
+    path: Path, exit_code: int, output: str = arnold_agent._ONBOARD_HELP_MARKER
+) -> Path:
+    """A tiny executable that prints *output* then exits with *exit_code*."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{output}'\nexit {exit_code}\n", encoding="utf-8")
     path.chmod(0o755)
     return path
 

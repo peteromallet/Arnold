@@ -92,3 +92,7 @@ Full verbatim output for each: files listed in the evidence index.
 - -r alias guard: guards parametrize extended
 - omp_bin dead param removed; no stale callers (grep)
 - Accepted P3: over-redaction of hyphenated words in failure output — safe-direction tradeoff.
+
+## Run 2 addendum — native wizard pivot (omp onboard)
+- D5 superseded design: --onboard execs native `omp onboard` when probe (exit 0 + help marker) confirms support; Python flow = fallback. Probe false-positive on pre-onboard builds fixed (final-ui-attempt-1).
+- Fork suites at close: bun 38+17 pass, typecheck clean. Arnold: pytest -k onboarding 142 passed/1 skipped.

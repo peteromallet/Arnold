@@ -20,3 +20,4 @@
 - Final reviews: FinalA+FinalB FAIL -> final-attempt-1 rework (5 items) -> GateFR PASS
   (P3 over-redaction accepted as safe-direction tradeoff, recorded).
 - Suites at close: onboarding 135 passed/1 skipped; pipeline_run_cli 50; characterization etc green.
+- Phase: COMPLETE (B3 switch landed; final-ui rework PASS)

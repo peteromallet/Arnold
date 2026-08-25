@@ -228,10 +228,17 @@ def test_select_omp_bin_stock_opt_out(monkeypatch, tmp_path) -> None:
     assert "OMP_BIN" not in os.environ
 
 
-def _script_bin(path, exit_code: int = 0):
-    """Tiny executable stub that just exits with *exit_code*."""
+def _script_bin(
+    path, exit_code: int = 0, output: str = arnold_agent._ONBOARD_HELP_MARKER
+):
+    """Executable stub that prints *output* then exits with *exit_code*."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    path.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' '{output}'\n"
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
     path.chmod(0o755)
     return path
 
@@ -268,13 +275,25 @@ def test_resolve_omp_bin_nothing_resolves(monkeypatch, tmp_path) -> None:
     assert arnold_agent._resolve_omp_bin({}) is None
 
 
-@pytest.mark.parametrize("exit_code, supported", [(0, True), (2, True), (1, False)])
+@pytest.mark.parametrize("exit_code, supported", [(0, True), (2, False), (1, False)])
 def test_omp_supports_onboard_exit_codes(
     tmp_path, exit_code, supported
 ) -> None:
     bin_ = _script_bin(tmp_path / "omp", exit_code=exit_code)
 
     assert arnold_agent._omp_supports_onboard(str(bin_)) is supported
+
+
+def test_omp_supports_onboard_unknown_command_output_is_unsupported(
+    tmp_path,
+) -> None:
+    """Pre-onboard omp dispatchers exit 0 printing launch help for unknown
+    subcommands — that must NOT count as onboard support."""
+    bin_ = _script_bin(
+        tmp_path / "omp", exit_code=0, output="Unknown command: onboard"
+    )
+
+    assert arnold_agent._omp_supports_onboard(str(bin_)) is False
 
 
 def test_omp_supports_onboard_unexecutable_bin_is_unsupported(

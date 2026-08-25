@@ -84,12 +84,18 @@ def _resolve_omp_bin(env=None) -> str | None:
     return shutil.which("omp")
 
 
+_ONBOARD_HELP_MARKER = "detect-first provider onboarding"
+
+
 def _omp_supports_onboard(omp_bin: str) -> bool:
     """Probe whether this omp build ships the ``onboard`` subcommand.
 
-    Exit 0/2 from ``omp onboard --help`` counts as supported (argparse uses 2
-    for unknown commands, so anything else — or any spawn failure/timeouts —
-    means the build predates onboarding and the caller should fall back).
+    Supported ONLY when ``omp onboard --help`` exits 0 AND its combined
+    output carries the onboard help marker ("detect-first provider
+    onboarding"). Pre-onboard omp dispatchers exit 0 printing generic
+    launch help for unknown subcommands, so exit status alone
+    false-positives; anything else — or any spawn failure/timeout — means
+    the build predates onboarding and the caller should fall back.
     """
     try:
         proc = subprocess.run(
@@ -100,7 +106,10 @@ def _omp_supports_onboard(omp_bin: str) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return proc.returncode in (0, 2)
+    if proc.returncode != 0:
+        return False
+    combined = proc.stdout + proc.stderr
+    return _ONBOARD_HELP_MARKER.encode() in combined
 
 
 def _select_omp_bin(env=None) -> None:
