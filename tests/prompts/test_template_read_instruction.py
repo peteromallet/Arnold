@@ -115,6 +115,22 @@ def test_critique_evaluator_prompt_forbids_invented_check_ids(tmp_path: Path) ->
     assert "north_star_alignment" in prompt
 
 
+def test_critique_evaluator_prompt_matches_closed_catalog_selection_schema(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    prompt = _critique_evaluator_prompt(state, tmp_path / "plan", root=tmp_path)
+
+    assert (
+        "{check_id, complexity (int 1–10), complexity_justification, why?}"
+        not in prompt
+    )
+    assert (
+        '{check_id: "other", area, why, complexity (int 1–10), '
+        "complexity_justification}"
+    ) in prompt
+
+
 def test_critique_evaluator_prompt_forbids_combined_flag_verification_lenses(
     tmp_path: Path,
 ) -> None:

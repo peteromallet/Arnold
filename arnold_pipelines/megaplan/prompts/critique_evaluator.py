@@ -450,7 +450,7 @@ def _critique_evaluator_prompt(
 
         Your output must be a JSON object with these keys:
         - `selections`: list of objects. For catalog lenses:
-          {{check_id, complexity (int 1–10), complexity_justification, why?}}
+          {{check_id, complexity (int 1–10), complexity_justification}}
           For `other` custom areas:
           {{check_id: "other", area, why, complexity (int 1–10), complexity_justification}}
         - `skipped`: list of {{check_id, why}} objects

@@ -254,5 +254,44 @@ def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:
     assert not result.ok
 
 
+def test_critique_evaluator_catalog_selection_has_no_stray_why_field() -> None:
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "The correctness risk is material.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "gpt-5-codex",
+    }
+
+    assert validate_payload_against_schema(payload, schema).ok
+
+    payload["selections"][0]["why"] = "This belongs only to a custom area."
+    assert not validate_payload_against_schema(payload, schema).ok
+
+
+def test_critique_evaluator_other_selection_retains_why_field() -> None:
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "other",
+                "area": "custom area",
+                "why": "Probe this custom risk.",
+                "complexity": 4,
+                "complexity_justification": "The custom risk needs review.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "gpt-5-codex",
+    }
+
+    assert validate_payload_against_schema(payload, schema).ok
+
+
 def test_critique_evaluator_schema_lens_ids_match_registry() -> None:
     assert CRITIQUE_EVALUATOR_CHECK_IDS == [check["id"] for check in CRITIQUE_CHECKS]
