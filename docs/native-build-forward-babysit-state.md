@@ -113,3 +113,23 @@ Check-in script: /tmp/checkin.py on box (re-create from this doc if /tmp clears)
 Hourly loop: armed via background sleep-3600 jobs; each fire runs checkin.py,
 re-arms, escalates per ladder. Profile switch COMPLETE — the epic runs
 entirely on ox-alpha via OpenRouter as directed.
+
+## OPEN BLOCKER (2026-08-25 ~11:15Z) — omp_rpc host_tools import in driver
+Plan phase blocks 3x with "omp_rpc host_tools module is unavailable"
+(workers/omp.py:484, `from omp_rpc.host_tools import host_tool`).
+Verified: the import SUCCEEDS in the exact driver env (generation venv
+05b40a47 python, PYTHONPATH=runtime root, PYTHONSAFEPATH=1, MEGAPLAN_TRUSTED_CONTAINER=1)
+— manual repro prints "host_tool OK". The driver still fails → driver-internal
+state: suspect sys.path divergence after the concurrent writer's commits
+(c29ebd977c78 lineage: human-halt settlement fixes + megado elegance pass landed
+on the runtime branch from another session), or a cached partial `omp_rpc`
+package resolving to a copy without host_tools (check old live tree for
+omp_rpc/ and the driver's sys.path at failure).
+Next diagnostic: add a sys.path + omp_rpc.__path__ dump next to the debug
+writer in _adopt_or_refuse (pattern: /tmp/add-debug.py), relaunch, read
+/tmp/adopt-debug.jsonl. Likely fix: remove the shadowing copy or pin
+PYTHONPATH so the venv's omp_rpc wins; alternatively install omp_rpc into the
+worktree-resolved interpreter.
+Also note: a CONCURRENT WRITER (ttys013 session — human-halt settlement fixes,
+megado elegance pass) commits on this runtime branch. Coordinate before
+force-pushing; their human-halt settlements target the same revise-halt.
