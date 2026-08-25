@@ -79,6 +79,11 @@ python -m arnold_pipelines.megaplan setup
 
 The setup command detects your installed agents and walks you through credentials. The old `[agent]` extra remains as a no-op compatibility alias on current releases, but it is no longer required. You need two things:
 
+Launching the `arnold` agent for the first time also offers an interactive onboarding
+flow: it detects credentials you already have (CLI logins, env keys), wires **one**
+verified model route into omp's own stores, and never asks again afterwards — see
+[docs/onboarding.md](docs/onboarding.md).
+
 - **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`). The public `claude` agent route always uses the Shannon-backed interactive tmux worker — it preserves OAuth subscription billing and never falls back to a headless `claude -p` subprocess.
 - **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
 

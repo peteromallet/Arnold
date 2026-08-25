@@ -1,0 +1,13 @@
+Welcome to Arnold! Let's find a working model route for you.
+Scanned this machine: 0 ready, 1 found-but-unwired, 0 missing.
+Pick what to set up (found/ready first):
+Found (needs a step to wire):
+  1. deepseek [candidate] (cli_store: ~/.deepseek/config)  <- recommended
+  o. Set up OpenRouter (one key, hundreds of models — openrouter.ai)
+Number, 's' to toggle hidden, or 'n' to skip setup: 
+Paste your DEEPSEEK_API_KEY key (input hidden; Enter=cancel): 
+Model [deepseek/deepseek-v4-flash] (Enter=keep): 
+Verified route: deepseek/deepseek-v4-flash
+Saved into omp's own store under /var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/arnold-onboard-e2e-5214_qkq/.omp/agent — future launches reuse it silently, you will never be asked again.
+Provenance recorded in /var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/arnold-onboard-e2e-5214_qkq/.omp/agent/.arnold_onboarding_provenance.jsonl (origin: onboarding).
+Add another provider now? [y/N] 

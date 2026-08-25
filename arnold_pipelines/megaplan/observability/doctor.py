@@ -797,6 +797,11 @@ def handle_doctor(root: Path, args: argparse.Namespace) -> int:
     repo_mode = getattr(args, "repo", False)
     adaptive_critique_mode = getattr(args, "adaptive_critique", False)
 
+    if getattr(args, "onboard", False):
+        from agentbox.onboarding.flow import run_flow
+
+        return run_flow().exit_code
+
     if plan_name:
         from arnold_pipelines.megaplan._core import find_plan_dir
 

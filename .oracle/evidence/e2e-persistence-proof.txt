@@ -1,0 +1,9 @@
+LAUNCH #1 (interactive accept — see e2e-transcript-launch1.txt)
+  offer_shown=True prompts=['menu S1', 'paste key S2', 'model S3', ...]
+  persisted: models.yml=True provenance=True
+
+LAUNCH #2 (same sandbox, NEW process-equivalent guard evaluation)
+  guard_should_offer=True
+  ready_providers_detected_from_omp_stores=['deepseek:ready', 'grok:ready']
+  offer_shown=False prompts_printed=[]
+PERSISTENCE_PROOF=PASS (second launch shows no prompt: offer skipped because a ready route exists)

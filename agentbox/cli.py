@@ -178,6 +178,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run read-only health checks for the AgentBox host.",
     )
     doctor_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+    doctor_parser.add_argument(
+        "--onboard",
+        action="store_true",
+        help="Run the interactive first-run provider onboarding flow.",
+    )
 
     services_parser = subparsers.add_parser(
         "services",
@@ -302,6 +307,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "bootstrap":
             return _bootstrap(config, json_output=json_output)
         if args.command == "doctor":
+            if getattr(args, "onboard", False):
+                from agentbox.onboarding.flow import run_flow
+
+                return run_flow().exit_code
             return _doctor(config, json_output=json_output)
         if args.command == "services":
             return _services(config, args, json_output=json_output)

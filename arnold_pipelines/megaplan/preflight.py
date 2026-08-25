@@ -294,6 +294,46 @@ def preflight_check_profile(
     return missing
 
 
+def _onboarding_provider_ids(spec: str, env_var: str) -> set[str]:
+    """Map one missing slot onto candidate onboarding catalog provider ids.
+
+    ``omp:<provider>/model`` specs name their provider directly; agent-level
+    slots (claude/codex) map by the catalog's accepted env-key aliases.
+    """
+    from agentbox.onboarding.catalog import PROVIDERS
+
+    ids: set[str] = set()
+    candidate = spec.strip()
+    if candidate.startswith("omp:"):
+        candidate = candidate[len("omp:"):]
+    provider = candidate.partition("/")[0]
+    if not provider and ":" in candidate:
+        provider, _ = candidate.split(":", 1)
+    if provider in PROVIDERS:
+        ids.add(provider)
+    ids.update(pid for pid, p in PROVIDERS.items() if env_var in p.env_keys)
+    return ids
+
+
+def _slots_ready_after_flow(missing: list[dict[str, Any]]) -> bool:
+    """True iff every previously-missing slot now has a READY provider.
+
+    The onboarding flow persists into omp's own stores — never this process's
+    environment — so readiness is re-checked from the read-only machine scan
+    (detect.scan_providers) instead of re-running the env-var-only check.
+    """
+    from agentbox.onboarding import detect
+
+    status = {p.id: p.status for p in detect.scan_providers().providers}
+    for entry in missing:
+        ids = _onboarding_provider_ids(
+            str(entry.get("spec", "")), str(entry["env_var"])
+        )
+        if not any(status.get(pid) == detect.READY for pid in ids):
+            return False
+    return True
+
+
 def render_credential_failure(
     missing: list[dict[str, Any]],
     *,
@@ -404,9 +444,27 @@ def preflight_or_raise(
 
     if is_tty:
         print(message)
-        # In TTY mode, we could prompt for input. For Sprint A, just exit 7
-        # with the structured message. Interactive credential input (option 3)
-        # is deferred to a follow-up.
+        try:
+            choice = input("Select an option [1]: ").strip()
+        except (EOFError, KeyboardInterrupt, OSError):
+            sys.exit(7)  # No answer: fail closed exactly as before.
+        if choice == "4":
+            # Sign in: hand the terminal to the interactive onboarding flow.
+            # The flow persists into omp's own stores (never this process's
+            # environment), so afterwards readiness is re-checked from
+            # detect.scan_providers READY statuses for the failing slots'
+            # providers. Onboarding must never crash past this point — any
+            # failure falls through to exit 7.
+            try:
+                from agentbox.onboarding.flow import run_flow
+
+                ready = run_flow().exit_code == 0 and _slots_ready_after_flow(
+                    missing
+                )
+            except Exception:
+                ready = False  # Onboarding unavailable/failed: exit 7 path.
+            if ready:
+                return  # Every previously-missing slot is ready; continue.
         sys.exit(7)
     else:
         # Non-TTY: structured message to stderr, exit 7

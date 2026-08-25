@@ -1,0 +1,46 @@
+providers:
+  grok:
+    baseUrl: https://cli-chat-proxy.grok.com/v1
+    api: openai-completions
+    apiKey: '!python3 /private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/arnold-onboard-e2e-5214_qkq/.omp/agent/grok-token.py'
+    headers:
+      X-XAI-Token-Auth: xai-grok-cli
+      x-grok-client-version: 1.0.5
+      x-grok-client-identifier: grok-shell
+    models:
+    - id: grok-4.6
+      name: Grok 4.6
+      contextWindow: 500000
+      maxTokens: 32768
+      reasoning: true
+      thinking:
+        mode: effort
+        efforts:
+        - low
+        - medium
+        - high
+        - xhigh
+        defaultLevel: high
+      compat:
+        supportsDeveloperRole: true
+        supportsReasoningEffort: true
+        reasoningContentField: reasoning_content
+    - id: grok-4.5
+      name: Grok 4.5
+      contextWindow: 500000
+      maxTokens: 32768
+      reasoning: true
+      thinking:
+        mode: effort
+        efforts:
+        - low
+        - medium
+        - high
+        - xhigh
+        defaultLevel: high
+      compat:
+        supportsDeveloperRole: true
+        supportsReasoningEffort: true
+        reasoningContentField: reasoning_content
+  deepseek:
+    apiKey: [REDACTED]
