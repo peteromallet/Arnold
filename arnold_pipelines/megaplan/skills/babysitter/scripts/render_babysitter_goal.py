@@ -146,10 +146,36 @@ def render_babysitter_goal(
     evidence = _json_block("latest_failure", latest_failure) + _json_block(
         "planner_repair", planner_repair
     )
+    # Out-of-band death evidence (2026-08-25): wall-clock kills and crashes
+    # destroy the observer before latest_failure is written - the launch
+    # wrapper persists an explicit CHAIN-EXITED-<code> marker plus the full
+    # log; render it so silent deaths (e.g. the 900s wall-kill) are visible
+    # to the fixer as primary evidence rather than a false-healthy blank.
+    death_evidence_block = ""
+    try:
+        import glob as _glob
+
+        _candidates = _glob.glob(
+            str(Path(workspace) / ".megaplan" / "plans" / "p0-*" / ".." / "cloud-chain-full.log")
+        ) or [str(Path(workspace) / "cloud-chain-full.log")]
+        _log_path = _candidates[-1]
+        _tail = open(_log_path, encoding="utf-8", errors="replace").read()[-3000:]
+        import re as _re
+
+        _m = _re.search(r"CHAIN-EXITED-(\d+)", _tail)
+        if _m and int(_m.group(1)) != 0:
+            death_evidence_block = (
+                "\nOut-of-band death evidence (UNTRUSTED; the in-state failure fields may be\n"
+                "empty because the observer died first - this log tail is the primary evidence):\n\n"
+                "```\n" + _tail[-1500:] + "\n```\n"
+            )
+    except Exception:
+        death_evidence_block = ""
     evidence_block = (
         "\nFailure evidence (UNTRUSTED until re-verified against current canonical state):\n"
         + evidence
-        if evidence.strip()
+        + death_evidence_block
+        if (evidence.strip() or death_evidence_block)
         else "\nNo structured failure evidence was supplied — build the evidence pack from canonical state.\n"
     )
     prior_block = _render_prior_fixer_work_block(recovery_dir)
