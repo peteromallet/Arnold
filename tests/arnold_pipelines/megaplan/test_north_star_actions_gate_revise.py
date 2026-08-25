@@ -1318,6 +1318,7 @@ class TestOperatorDispositionResolver:
         assert carried[0]["resolved"] is True
         assert carried[0]["status"] == "resolved"
         assert carried[0]["operator_disposition"]["decision"] == "DENIED"
+        assert _revise_north_star_halt_actions(carried) == []
 
     def test_carry_rejects_worker_fake_resolved(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.north_star_actions import (
@@ -1345,3 +1346,25 @@ class TestOperatorDispositionResolver:
         carried = read_carried_north_star_actions(plan_dir)
         assert len(carried) == 1
         assert carried[0].get("resolved") is not True
+        assert len(_revise_north_star_halt_actions(carried)) == 1
+
+    def test_carry_rejects_untyped_or_unmatched_settlement(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.north_star_actions import (
+            read_carried_north_star_actions,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir(parents=True)
+        action = self._halt_action(question_id="route-authority")
+        carry = {
+            "north_star_actions": [action],
+            "settled_north_star_actions": [
+                {"id": "other-action", "resolved": True},
+                {"id": action["id"], "resolved": True},
+            ],
+        }
+        (plan_dir / "gate_carry.json").write_text(json.dumps(carry), encoding="utf-8")
+
+        carried = read_carried_north_star_actions(plan_dir)
+        assert carried[0].get("resolved") is not True
+        assert len(_revise_north_star_halt_actions(carried)) == 1

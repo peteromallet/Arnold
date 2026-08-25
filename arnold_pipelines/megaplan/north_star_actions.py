@@ -760,11 +760,21 @@ def _reapply_carried_settlements(
     for action in normalized:
         aid = action.get("id")
         record = settled_by_id.get(aid) if isinstance(aid, str) else None
-        if record is not None and record.get("resolved") is True:
+        disposition = (
+            record.get("operator_disposition")
+            if isinstance(record, Mapping)
+            else None
+        )
+        is_canonical_disposition = (
+            isinstance(disposition, Mapping)
+            and disposition.get("source") == "user"
+            and disposition.get("question_id") == action.get("question_id")
+            and disposition.get("decision") in OPERATOR_DISPOSITION_DECISIONS
+        )
+        if record is not None and record.get("resolved") is True and is_canonical_disposition:
             annotated = dict(action)
             annotated["resolved"] = True
             annotated["status"] = "resolved"
-            disposition = record.get("operator_disposition")
             if isinstance(disposition, Mapping):
                 annotated["operator_disposition"] = dict(disposition)
             result.append(annotated)

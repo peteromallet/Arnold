@@ -1509,6 +1509,11 @@ def _revise_north_star_halt_actions(
         action_type = action.get("action_type")
         category = action.get("category")
         if action_type == "add_human_halt":
+            # A matching source=user disposition is re-applied by the
+            # handler-owned carry reader.  Do not turn an already-settled
+            # human gate back into the same pre-worker failure on revise.
+            if action.get("resolved") is True:
+                continue
             halt.append(dict(action))
             continue
         if action_type not in _REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES:
