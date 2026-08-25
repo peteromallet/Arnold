@@ -150,11 +150,15 @@ def _validate(
                 append_json_pointer(append_json_pointer(schema_pointer, "oneOf"), index),
             ):
                 match_count += 1
-        if match_count != 1:
+        if match_count == 0:
+            # Runtime dialect (mirrors _core/io.py _enforce_openai_strict_mode):
+            # model outputs are audited under the looser anyOf semantics —
+            # at least one branch — while stored-artifact schemas keep the
+            # strict exactly-one rule for offline validation.
             diagnostics.append(
                 _diagnostic(
                     "one_of_mismatch",
-                    f"value must match exactly one oneOf branch; matched {match_count}",
+                    f"value must match at least one oneOf branch; matched {match_count}",
                     payload_pointer,
                     append_json_pointer(schema_pointer, "oneOf"),
                 )
