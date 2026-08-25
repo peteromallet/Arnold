@@ -174,3 +174,11 @@ Result: plan phase RUNNING 25+ min past the historical kill window — worker
 pid 1501275 alive on openrouter/stealth/ox-alpha, zero failures.
 NOTE: re-enable the cron ONLY if the live epics need watchdog supervision
 again; it is hostile to manifest-pinned runtimes whose worker pids cycle.
+
+## SURVIVAL CONFIRMED (2026-08-25 ~13:52Z)
+With the megaplan-maintenance watchdog killed + ensurer cron disabled, the P0
+plan phase on ox-alpha survived 25+ min (worker 1518468 alive, zero failures) —
+past the historical kill window. The killer's sweep was the sole cause of all
+silent session deaths. Watch item: critique_evaluator schema compliance with
+the hardened prompt (first ox-alpha test of the selections oneOf) when the
+plan phase completes.
