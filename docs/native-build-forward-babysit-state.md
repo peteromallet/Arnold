@@ -182,3 +182,20 @@ past the historical kill window. The killer's sweep was the sole cause of all
 silent session deaths. Watch item: critique_evaluator schema compliance with
 the hardened prompt (first ox-alpha test of the selections oneOf) when the
 plan phase completes.
+
+## SELF-HEALING LOOP RESTORED (2026-08-25 ~18:25Z)
+The full pipeline-babysitting stack is back, fixed:
+- Watchdog re-enabled (ensurer cron uncommented, fresh watchdog running) with
+  the FIXED sweep: repeated-error-fingerprint trigger added — a live worker
+  retrying the same error >=3x with no progress is now a stall the fixer
+  picks up (the class that was invisible before: schema mismatches, 429 loops).
+- The fixer routes on ox-alpha: ARNOLD_BABYSITTER_OMP_MODEL=omp:openrouter/
+  stealth/ox-alpha in hot-env + the routing override committed (routing.py).
+- The babysitter's rendered goal no longer stamps the 900s consult bound onto
+  worker spawns (render_babysitter_goal.py fix on oracle-run-2, to sync).
+- Chain state: P0 critique PASSED on ox-alpha (schema fix verified end-to-end),
+  revise running, worker alive, zero failures.
+Coordination rule: the box fixer stands down when another fixer is active —
+my hourly check-ins verify movement; the box fixer handles blocks between
+fires. No more crossfire: the fixer's launch assessment now runs before any
+session kill.
