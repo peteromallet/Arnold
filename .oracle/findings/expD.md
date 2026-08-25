@@ -1,0 +1,6 @@
+# Area D — test conventions (Explorer D)
+Layout: tests/ flat+domain subdirs (workers/, agentbox/, cloud/, ...). Config pyproject.toml: testpaths=["tests"], pythonpath=["."], addopts="--import-mode=importlib"; python_files test_*.py + editorial_*.py; norecursedirs excludes tests/archive.
+Markers registered: asyncio conformance integration slow crash_isolation version_skew hinge_gate substrate_swap replay_oracle m8_benchmark wheel_smoke.
+HOME/env isolation: monkeypatch.setenv("HOME", str(tmp_path)) standard (tests/workers/test_codex_child_env_auth.py etc.). Subprocess mocking: monkeypatch.setattr(subprocess,"run",fake_run) / Popen (tests/cloud/test_operator_control.py). OMP worker fakes: tests/workers/fake_omp_rpc.py FakeRpcClient + set_omp_client_factory(None) reset autouse in tests/workers/test_omp_adapter.py; MEGAPLAN_MOCK_WORKERS=1 fast-path.
+Credential tests exemplar: tests/agentbox/test_credentials.py. Secret-leak audit exemplar: tests/arnold/security/test_audit_non_exposure.py. NOTE tests/test_no_bare_subprocess.py AST-walks for bare subprocess use outside runtime!
+No pty-test precedent found. Invoke: python -m pytest ... -q or uv run pytest; fast subsets via -k/-m/MEGAPLAN_MOCK_WORKERS=1.
