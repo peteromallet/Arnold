@@ -133,3 +133,13 @@ worktree-resolved interpreter.
 Also note: a CONCURRENT WRITER (ttys013 session — human-halt settlement fixes,
 megado elegance pass) commits on this runtime branch. Coordinate before
 force-pushing; their human-halt settlements target the same revise-halt.
+
+## RESOLVED (2026-08-25 ~11:50Z) — omp_rpc root cause found and fixed
+The worker runs under the manifest's ACTIVE generation venv = python 3.13
+(`/workspace/runtime-venvs/aeeb72de…`), NOT the 3.11 venv all earlier tests
+used. That venv lacked `omp_rpc` (private package, not on PyPI). Fix: copied
+the pure-python `omp_rpc/` + dist-info from the 3.11 venv into the 3.13
+site-packages (`/tmp/copy-omprpc2.sh` on box) — `host_tool OK`.
+Plan p0-…-1149 now RUNNING: step=plan, model=openrouter/stealth/ox-alpha,
+failure none. Watch item: critique_evaluator schema compliance with the
+hardened prompt (one_of selections) — first ox-alpha test of it.
