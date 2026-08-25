@@ -99,3 +99,17 @@ to the new HEAD (script pattern: /tmp/fix-heads2.py on the box).
 - Hourly check-in: verify worker liveness + state advance; on stall, diagnose per
   the blocker section; the container-PYTHONPATH poisoning is mitigated by the
   /root/.bashrc MEGAPLAN_ENGINE_ROOT guard (present in every login shell).
+
+## RESOLVED (2026-08-25 ~02:00Z) — epic RUNNING ON OX-ALPHA
+Final fix chain for the launch: (1) omp installed on box + stealth provider
+renamed `openrouter` (B1 provider allowlist), (2) model id `stealth/ox-alpha`
+added to the B1 omp catalog (workers/omp.py), (3) `stealth/ox-alpha` classified
+into the frontier-coding budget family (arnold/pipeline/model_seam.py),
+(4) OPENROUTER_API_KEY uncommented in /workspace/.cloud-hot-env.
+All four committed on fixer/native-build-forward-20260824 (HEAD 52a791de3090
++ model_seam commit). Chain state: plan p0-...-0155 RUNNING, step=plan,
+model=openrouter/stealth/ox-alpha, worker alive, zero failures.
+Check-in script: /tmp/checkin.py on box (re-create from this doc if /tmp clears).
+Hourly loop: armed via background sleep-3600 jobs; each fire runs checkin.py,
+re-arms, escalates per ladder. Profile switch COMPLETE — the epic runs
+entirely on ox-alpha via OpenRouter as directed.
