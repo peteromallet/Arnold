@@ -31,6 +31,7 @@ from pathlib import Path
 
 from agentbox.onboarding import detect
 from agentbox.onboarding.catalog import PROVIDERS
+from agentbox.onboarding.guards import should_offer
 from agentbox.onboarding.detect import CANDIDATE, MISSING, READY, ScanReport
 from agentbox.onboarding.wire import (
     WireResult,
@@ -62,41 +63,6 @@ class FlowResult:
 # ---------------------------------------------------------------------------
 # Guard: should the interactive offer happen at all?
 # ---------------------------------------------------------------------------
-
-def should_offer(
-    *,
-    stdin_tty: bool,
-    stderr_tty: bool,
-    message: bool,
-    flags: Sequence[str],
-    environ: Mapping[str, str] = os.environ,
-) -> bool:
-    """Pure guard — ALL conditions must hold to offer the flow.
-
-    - stdin AND stderr are TTYs (strictly an interactive-terminal offer)
-    - not ``--message`` one-shot mode
-    - no ``-c`` / ``--resume`` / ``--session-dir`` flag (those runs have
-      their own contract and must fail closed byte-for-byte as today)
-    - ``CI`` unset (empty value counts as unset), ``ARNOLD_STOCK_OMP != 1``,
-      ``MEGAPLAN_RESIDENT_MODE`` unset (empty counts as unset).
-    """
-    if not (stdin_tty and stderr_tty):
-        return False
-    if message:
-        return False
-    for flag in flags:
-        if flag in ("-c", "--resume", "--session-dir") or flag.startswith(
-            ("--resume=", "--session-dir=")
-        ):
-            return False
-    if environ.get("CI"):
-        return False
-    if environ.get("ARNOLD_STOCK_OMP") == "1":
-        return False
-    if environ.get("MEGAPLAN_RESIDENT_MODE"):
-        return False
-    return True
-
 
 # ---------------------------------------------------------------------------
 # Injectable I/O

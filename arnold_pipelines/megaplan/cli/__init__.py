@@ -650,6 +650,12 @@ def build_parser() -> argparse.ArgumentParser:
         observability_parser = subparsers.add_parser(_cmd)
         observability_parser.add_argument("--project-dir", default=None)
         observability_parser.add_argument("--plan")
+        if _cmd == "doctor":
+            observability_parser.add_argument(
+                "--onboard",
+                action="store_true",
+                help="Run the interactive first-run provider onboarding flow.",
+            )
 
     return parser
 from .status_view import (

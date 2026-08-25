@@ -148,6 +148,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    # First-run provider onboarding: strictly an interactive-terminal offer,
+    # gated on zero ready routes so configured machines are never nagged.
+    # Onboarding must NEVER break a launch — any failure proceeds silently.
+    try:
+        # guards.py is stdlib-only: evaluating the gate must not pay the
+        # onboarding import cost on any launch that can never offer.
+        from agentbox.onboarding.guards import should_offer
+
+        stdin_tty, stderr_tty = sys.stdin.isatty(), sys.stderr.isatty()
+        guards = dict(
+            stdin_tty=stdin_tty,
+            stderr_tty=stderr_tty,
+            message=bool(message),
+            flags=flags,
+        )
+        if should_offer(**guards):
+            from agentbox.onboarding.detect import READY, scan_providers
+
+            def _route_ready() -> bool:
+                return any(p.status == READY for p in scan_providers().providers)
+
+            if not _route_ready():
+                from agentbox.onboarding.flow import offer_and_repreflight
+
+                offer_and_repreflight(**guards, repreflight=_route_ready)
+    except Exception:
+        pass
+
     launcher = _find_launcher()
     if launcher is None:
         print(

@@ -404,9 +404,27 @@ def preflight_or_raise(
 
     if is_tty:
         print(message)
-        # In TTY mode, we could prompt for input. For Sprint A, just exit 7
-        # with the structured message. Interactive credential input (option 3)
-        # is deferred to a follow-up.
+        try:
+            choice = input("Select an option [1]: ").strip()
+        except (EOFError, KeyboardInterrupt, OSError):
+            sys.exit(7)  # No answer: fail closed exactly as before.
+        if choice == "4":
+            # Sign in: hand the terminal to the interactive onboarding
+            # flow, then re-run the same checks. Onboarding must never
+            # crash past this point — any failure falls through to exit 7.
+            try:
+                from agentbox.onboarding.flow import run_flow
+
+                verified = run_flow().exit_code == 0 and not preflight_check_profile(
+                    profile,
+                    pipeline_name=pipeline_name,
+                    profile_name=profile_name,
+                    vendor=vendor,
+                )
+                if verified:
+                    return  # Credentials now present; continue the launch.
+            except Exception:
+                pass  # Onboarding unavailable/failed: original exit 7 path.
         sys.exit(7)
     else:
         # Non-TTY: structured message to stderr, exit 7
