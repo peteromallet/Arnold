@@ -236,7 +236,13 @@ HARD TURN CONTRACT — read before anything else:
 4. This run's budget allows long work: omp turns up to 7200s, container
    memory 16G.  Time alone is not a reason to stop.
 
-Context:
+TOOLING (verified): there is no `megaplan` binary on PATH — invoke the CLI as
+   `cd <workspace> && python3 -m arnold_pipelines.megaplan <cmd> ...`.
+   Codex is available as `codex exec` and the swarm via
+   `python3 skills/subagent-launcher/fan.py` / launch_omp_agent.py from the
+   engine root.  "Missing tools" is never a valid verdict without first
+   running `command -v` / a probe of these exact forms.
+
 {chr(10).join(context_lines)}
 
 {evidence_block}
