@@ -1,6 +1,6 @@
 ---
 name: subagent-launcher
-description: Launch an external model as a subagent for a second opinion, adversarial review, or delegated work. Default pathway is an agentic DeepSeek / Kimi / Zhipu GLM hermes subagent (file/web/terminal tools, one process or fanned out N-wide); also Codex (GPT-5.5), Claude via the Agent tool, and Grok via omp (same x.ai token as the grok CLI). Use for independent root-cause analysis, cross-checking your reasoning, judge/jury panels, or handing implementation to a different model.
+description: Launch an external model as a subagent for a second opinion, adversarial review, or delegated work. Default pathway is an agentic DeepSeek / Kimi / Zhipu GLM omp subagent (file/web/terminal tools, one process or fanned out N-wide); also Codex (GPT-5.5), Claude via the Agent tool, and Grok via omp (same x.ai token as the grok CLI). Use for independent root-cause analysis, cross-checking your reasoning, judge/jury panels, or handing implementation to a different model.
 ---
 
 # Subagent launcher (multi-model)
@@ -11,19 +11,19 @@ Pathways:
 
 | Pathway | Model | Invocation | Tools |
 | --- | --- | --- | --- |
-| **Hermes agentic** *(default)* | DeepSeek V4 (Pro/Flash), Kimi K2.7, Zhipu GLM, … | `launch_hermes_agent.py` — or `fan.py` to run N in one process | `file`, `web`, optional `terminal` |
+| **omp agentic** *(default)* | DeepSeek V4 (Pro/Flash), Kimi K2.7, Zhipu GLM, … | `launch_omp_agent.py` — or `fan.py` to run N in one process | `file`, `web`, optional `terminal` |
 | **Codex** | GPT-5.5 | `codex exec` (CLI) | sandboxed workspace |
 | **Claude** | Claude (Opus/Sonnet/Haiku) | `launch_claude_agent.py --model=opus` or Claude Code `Agent` tool | Claude Code tools |
 | **Grok via omp** | Grok 4.6 / 4.5 | `launch_omp_agent.py --model=grok-4.6` | full omp toolset (Bash, Read, Edit, …) |
 
-**Default to the hermes agentic pathway, and to DeepSeek Flash within it** — different model family, cheap, fast, tool-using. Reach for DeepSeek Pro only when the task needs reasoning judgement; reach for Codex or Claude only when you specifically want their strengths.
+**Default to the omp agentic pathway, and to DeepSeek Flash within it** — different model family, cheap, fast, tool-using. Reach for DeepSeek Pro only when the task needs reasoning judgement; reach for Codex or Claude only when you specifically want their strengths.
 
 > **⚠️ Network sandbox warning for Codex subagents**
-> `codex exec` runs its subprocess with `CODEX_SANDBOX_NETWORK_DISABLED=1`. Hermes agents (DeepSeek/Kimi/MiMo/GLM/OpenRouter) need outbound network to reach their provider APIs, so **launching them from inside a `codex exec` subagent will fail**. The launcher itself is fine; it fails only because the parent process has no network.
+> `codex exec` runs its subprocess with `CODEX_SANDBOX_NETWORK_DISABLED=1`. omp agents (DeepSeek/Kimi/MiMo/GLM/OpenRouter) need outbound network to reach their provider APIs, so **launching them from inside a `codex exec` subagent will fail**. The launcher itself is fine; it fails only because the parent process has no network.
 >
 > **Workarounds:**
-> 1. Launch the hermes subagent directly from a normal shell or Bash tool.
-> 2. If you need a **Codex subagent to orchestrate hermes subagents**, run the
+> 1. Launch the omp subagent directly from a normal shell or Bash tool.
+> 2. If you need a **Codex subagent to orchestrate omp subagents**, run the
 >    outer Codex command with `--sandbox danger-full-access` and seal stdin with
 >    `</dev/null`, for example:
 >
@@ -34,9 +34,9 @@ Pathways:
 >    ```
 >
 >    `read-only` and `workspace-write` both disable outbound network for the
->    Codex subprocess; only `danger-full-access` allows nested Hermes provider
+>    Codex subprocess; only `danger-full-access` allows nested omp provider
 >    API calls from inside `codex exec`. Tell Codex explicitly to use
->    `launch_hermes_agent.py` or `fan.py`, and to spend its own context budget
+>    `launch_omp_agent.py` or `fan.py`, and to spend its own context budget
 >    by delegating broad searches, file mapping, and independent reviews to
 >    DeepSeek/Kimi subagents wherever practical.
 >
@@ -44,12 +44,12 @@ Pathways:
 
 ## Picking a pathway
 
-- **Default — an independent DeepSeek/Kimi subagent that reads the repo itself?** → §1 (`launch_hermes_agent.py --model="deepseek:deepseek-v4-flash"`). Need many at once (≥ ~5 parallel)? Same pathway, `fan.py`.
+- **Default — an independent DeepSeek/Kimi subagent that reads the repo itself?** → §1 (`launch_omp_agent.py --model="deepseek:deepseek-v4-flash"`). Need many at once (≥ ~5 parallel)? Same pathway, `fan.py`.
 - **Pure chat opinion, no tools?** → §1 with `--toolsets=""`.
 - **GPT-5.x (Codex) judgement, no API key?** → §1/§2, `--model="codex:gpt-5.6-sol"`. Sandboxed write-heavy work? `codex exec --sandbox workspace-write`.
 - **Same-*family* judgement but isolated from this thread, with explicit Opus/Sonnet selection?** → §3 Claude CLI launcher (the only family not yet on omp — no anthropic creds configured). If the host exposes the Claude Code `Agent` tool and model selection is not required, that is also fine.
-- **Want xAI's model with the full omp toolset, no API key, billed to your grok account?** → §1/§4, `--model=grok` (`launch_omp_agent.py` is a thin alias).
-- **Jury for a high-stakes call?** → fan the same prompt to Codex + hermes-DeepSeek + hermes-Kimi in parallel; divergence is the signal.
+- **Want xAI's model with the full omp toolset, no API key, billed to your grok account?** → §1/§4, `--model=grok`.
+- **Jury for a high-stakes call?** → fan the same prompt to Codex + omp-DeepSeek + omp-Kimi in parallel; divergence is the signal.
 - **Bigger than ~a day or two of work?** → it's a *deliverable*, not a dispatch: run a `megaplan` (itself launched as a subagent) and size it with the **`megaplan-decision`** skill. Past ~2 weeks → an epic.
 - **Already have the answer?** → don't dispatch. Subagents aren't free.
 
@@ -68,12 +68,12 @@ Beware the asymmetry: reasoning models handed mechanical briefs refactor (becaus
 
 ---
 
-## 1. Hermes agentic (DeepSeek / Kimi / Zhipu GLM) — the default
+## 1. omp agentic (DeepSeek / Kimi / Zhipu GLM) — the default
 
 A real tool-using agent in a non-Claude model's voice, far lighter than a `megaplan` run. It runs as a one-off **omp (Oh My Pi)** process — `omp -p --model <model> "<prompt>"` — so the agent gets omp's full toolset (Bash, Read, Edit, Glob, Grep, web search, …). No Arnold/megaplan runtime, no key pool: provider availability follows what omp has configured (`~/.omp/agent/models.yml` + stored credentials). This is the same migration `origin/omp-migration` performs for megaplan's workers (hermes SDK → omp RPC).
 
 ```bash
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
+python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
   --model="deepseek:deepseek-v4-flash" \
   --toolsets="file,web" \
   --query-file=/tmp/brief.md \
@@ -113,7 +113,7 @@ python ~/.claude/skills/subagent-launcher/fan.py \
 # Per-brief models: --model-map="fast:scan-*.md,pro:verdict-*.md"
 ```
 
-Each brief `<stem>.md` yields `<stem>.txt` (response), `<stem>.meta.json` (status/timing/pid), `<stem>.pid` (killable task group), and an aggregate `_report.json`. Kill a running fan from another shell: `fan_kill.py --output-dir=… [--hard]`. Default `--task-timeout=1800` (30 min — forensic work with ≥10 tool calls routinely exceeds 10 min). Bump higher for very heavy briefs (e.g. `--task-timeout=3600` for cross-file audits). Each task runs in its own process group; `fan_kill.py --hard` SIGKILLs the whole tree. Below ~5 parallel, just launch `launch_hermes_agent.py` N times in parallel Bash calls — simpler.
+Each brief `<stem>.md` yields `<stem>.txt` (response), `<stem>.meta.json` (status/timing/pid), `<stem>.pid` (killable task group), and an aggregate `_report.json`. Kill a running fan from another shell: `fan_kill.py --output-dir=… [--hard]`. Default `--task-timeout=1800` (30 min — forensic work with ≥10 tool calls routinely exceeds 10 min). Bump higher for very heavy briefs (e.g. `--task-timeout=3600` for cross-file audits). Each task runs in its own process group; `fan_kill.py --hard` SIGKILLs the whole tree. Below ~5 parallel, just launch `launch_omp_agent.py` N times in parallel Bash calls — simpler.
 
 ### Use `megaplan` instead when you need
 
@@ -121,7 +121,7 @@ multi-phase orchestration (plan → critique → revise → execute → gate →
 
 ### Liveness
 
-The launcher forwards omp's stderr, ending with `[launch_hermes_agent] done in N.Ns`; a run stuck in "Working..." with no exit for minutes = wedged (check `--timeout`). For `fan.py`, watch `.meta.json` files appearing under `--output-dir`.
+The launcher forwards omp's stderr, ending with `[launch_omp_agent] done in N.Ns`; a run stuck in "Working..." with no exit for minutes = wedged (check `--timeout`). For `fan.py`, watch `.meta.json` files appearing under `--output-dir`.
 
 ---
 
@@ -131,7 +131,7 @@ The canonical Codex dispatch is the same omp pathway as §1 — ChatGPT-subscrip
 backend through omp's `openai-codex` provider, **no API key**:
 
 ```bash
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
+python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
   --model="codex:gpt-5.6-sol" \
   --query-file=/tmp/brief.md --project-dir="$PWD"
 ```
@@ -195,21 +195,15 @@ Prefer Claude over Codex when you want the *same family* of judgement isolated f
 
 Grok is dispatched through the exact same omp pathway as §1/§2 — the grok
 provider in `~/.omp/agent/models.yml` (grok CLI proxy, same x.ai token, no API
-key). Two equivalent invocations:
+key). One invocation, the canonical launcher:
 
 ```bash
-# canonical (one launcher for every model):
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
-  --model=grok --query-file=/tmp/brief.md --project-dir="$PWD"
-
-# thin alias (same mechanism, grok-focused defaults):
 python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
-  --model=grok-4.6 --query-file=/tmp/brief.md --project-dir="$PWD"
+  --model=grok --query-file=/tmp/brief.md --project-dir="$PWD"
 ```
 
-`launch_omp_agent.py` is a thin wrapper around the same `omp -p` dispatch with
-`grok/grok-4.6` as its default model — use either; `launch_hermes_agent.py` is
-the canonical entry for all models.
+`grok` is a shortcut for `grok/grok-4.6`; `grok-4.5` passes through to omp
+fuzzy matching. `launch_omp_agent.py` is the canonical entry for all models.
 
 Auth: omp's `~/.omp/agent/models.yml` defines a `grok` provider pointing at the
 CLI's `cli-chat-proxy.grok.com` proxy; the bearer token is read from
@@ -247,14 +241,14 @@ Don't dispatch what you already know, and don't re-ask what you've answered — 
 
 ## Judge / jury for high-stakes calls
 
-Send the same unbiased prompt to several models in parallel (Codex + hermes-DeepSeek + hermes-Kimi, optionally a Claude `Agent`) and compare — convergence on a subtle call is far stronger than one model's confidence; divergence is signal. Reserve it for risky pre-merge reviews, hard-to-reverse architecture calls, security-sensitive paths. Don't fan out routine work. For a multi-lens sense-check of one proposal (human-user / agent-user / abstraction lenses), give each agent only its own lens and never show one's output to another.
+Send the same unbiased prompt to several models in parallel (Codex + omp-DeepSeek + omp-Kimi, optionally a Claude `Agent`) and compare — convergence on a subtle call is far stronger than one model's confidence; divergence is signal. Reserve it for risky pre-merge reviews, hard-to-reverse architecture calls, security-sensitive paths. Don't fan out routine work. For a multi-lens sense-check of one proposal (human-user / agent-user / abstraction lenses), give each agent only its own lens and never show one's output to another.
 
 ## Detecting hangs
 
 Check liveness **30–60 s after launch**, not 10 minutes in.
 
 - **Codex** — see the `</dev/null` wedge above; the tell is an output file stuck at the banner size while wall-clock climbs.
-- **Hermes / fan.py** — stuck in "Working..." with no `[launch_hermes_agent] done` line for minutes = wedged; `--timeout` bounds it. For fan.py, watch `.meta.json` files appearing under `--output-dir`.
+- **omp / fan.py** — stuck in "Working..." with no `[launch_omp_agent] done` line for minutes = wedged; `--timeout` bounds it. For fan.py, watch `.meta.json` files appearing under `--output-dir`.
 - **Claude Agent / launcher** — synchronous, rarely wedges; the common failure is a terse prompt → shallow hedged answer in < 30 s. Cap length and demand a position.
 - **megaplan** — an "stuck" run is usually a gated step awaiting approval; `megaplan status --plan <name>`.
 
@@ -263,15 +257,15 @@ Check liveness **30–60 s after launch**, not 10 minutes in.
 ## Quick reference
 
 ```bash
-# 1. Hermes agentic (default) — DeepSeek/Kimi/Zhipu GLM via omp
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
+# 1. omp agentic (default) — DeepSeek/Kimi/Zhipu GLM via omp
+python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
   --model="deepseek:deepseek-v4-flash" --toolsets="file,web" \
   --query-file=/tmp/brief.md --project-dir="$PWD"
 # Default: --model="deepseek:deepseek-v4-flash"   Very fast: --model=fast   Pro (reasoning): --model="deepseek:deepseek-v4-pro"   Kimi: --model="kimi:kimi-k2.7-code"   GLM: --model="zhipu:glm-5.2"   GPT: --model="codex:gpt-5.6-sol:high" (ChatGPT subscription, no API key)   Grok: --model=grok
 # Pure chat: --toolsets=""    Fan N≥5: fan.py --briefs-dir=… --output-dir=… --max-workers=5 --task-timeout=1800
 
 # 2. Codex (GPT-5.x) — same omp pathway, ChatGPT subscription, no API key
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
+python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
   --model="codex:gpt-5.6-sol:high" --query-file=/tmp/brief.md --project-dir="$PWD"
 # Raw codex exec (sandboxed writes): timeout 1800 codex exec --sandbox workspace-write "<prompt>" </dev/null
 
@@ -280,9 +274,8 @@ python ~/.claude/skills/subagent-launcher/launch_claude_agent.py \
   --model=opus --query-file=/tmp/prompt.md --project-dir="$PWD"
 
 # 4. Grok via omp — same x.ai token as the grok CLI, no API key
-python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py \
+python ~/.claude/skills/subagent-launcher/launch_omp_agent.py \
   --model=grok --query-file=/tmp/brief.md --project-dir="$PWD"
-# (launch_omp_agent.py is a thin alias with grok/grok-4.6 as default)
 
 # Multi-phase: megaplan init --profile all-deepseek-pro-direct --robustness light "<task>"
 ```

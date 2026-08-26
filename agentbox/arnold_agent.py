@@ -260,6 +260,9 @@ def main(argv: list[str] | None = None) -> int:
         exec_argv += ["--print", *message]
         _print_one_shot_header(agent)
     _select_omp_bin()
+    # Per-instance identity: the omp TUI resolves its ASCII face/palette from
+    # OMP_AGENT_IDENTITY, so each agent instance renders its own brand.
+    os.environ.setdefault("OMP_AGENT_IDENTITY", agent)
     # Hand the terminal over wholesale either way.
     os.execvp(str(launcher), exec_argv)
 

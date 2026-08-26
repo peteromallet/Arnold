@@ -234,33 +234,19 @@ find "$PWD" -maxdepth 3 -type f \
 
 ### Agent-history storage side effect
 
-Loose-branch and worktree cleanup often involves many Hermes/Codex sessions and
-wide tool output. If the machine is under disk pressure, check Hermes session
+Loose-branch and worktree cleanup often involves many omp/Codex sessions and
+wide tool output. If the machine is under disk pressure, check omp session
 state before starting a long cleanup:
 
 ```bash
-du -sh "$HOME/.hermes/state.db" "$HOME/.hermes/state.db-shm" "$HOME/.hermes/state.db-wal" 2>/dev/null
-sqlite3 -readonly "$HOME/.hermes/state.db" \
-  "SELECT name, ROUND(SUM(pgsize)/1024.0/1024.0,1) AS mib FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC LIMIT 20;" 2>/dev/null
+du -sh "$HOME/.omp/agent" 2>/dev/null
 ```
 
-On this machine, `~/.hermes/state.db` grew to **7.9G** from CLI/tool history plus
-FTS5 indexes (`messages_fts` and especially `messages_fts_trigram`). If the user
-does not care about Hermes resume/search/insights history, the clean purge is to
-stop Hermes, then remove the SQLite trio:
-
-```bash
-lsof +D "$HOME/.hermes" 2>/dev/null
-rm -f "$HOME/.hermes/state.db" "$HOME/.hermes/state.db-shm" "$HOME/.hermes/state.db-wal"
-```
-
-To prevent it from coming back after the local Hermes patch that supports it, set:
-
-```yaml
-sessions:
-  enabled: false
-```
-
+On this machine, the legacy hermes `~/.hermes/state.db` grew to **7.9G** from
+CLI/tool history plus FTS5 indexes before the hermes runtime was removed; the
+omp runtime keeps its session/agent state under `~/.omp/agent`. If you do not
+care about omp resume/search history, stop omp and remove the session files
+under that directory.
 This is not branch cleanup and should not be mixed into destructive branch actions;
 it is a disk-pressure guardrail to run only with explicit user approval.
 
@@ -493,7 +479,7 @@ When classification has medium-or-higher ambiguity — *is effort A superseded b
 *is this epic actually complete?*, *what's the merge conflict surface?*, *do these tests pass?*,
 *is this dirty worktree payload unique or duplicated elsewhere?* — fan the questions out to parallel
 **DeepSeek V4 Pro** agents (the `subagent-launcher` skill: `fan.py` for ≥5 agents,
-`launch_hermes_agent.py` for 1–4). One independent decision area per agent, run in parallel, no cross-talk.
+`launch_omp_agent.py` for 1–4). One independent decision area per agent, run in parallel, no cross-talk.
 The point is to cheaply convert uncertainty into a go/no-go cleanup recommendation; do not feel bad about
 using agents when a direct survey leaves anything important unclear.
 Best practices that earned their place:

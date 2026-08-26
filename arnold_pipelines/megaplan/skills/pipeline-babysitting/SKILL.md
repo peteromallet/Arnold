@@ -1,28 +1,115 @@
 ---
-name: babysitting-principles
+name: pipeline-babysitting
 description: >
-  The operating philosophy for the fix-the-fixer / babysitting loop: the three
-  layers of fixing (self-healing → automated fixer → fix the fixer), escalation
-  on repetition, evidence-first, minimalism, per-epic branch lineage, cost
-  discipline, the living evidence doc, and honest logging — plus the
-  aspirational principles for harness improvements and the anti-principles that
-  cause the most pain. Use when deciding HOW to fix a stalled chain/fixer, when
-  escalating a repeated blocker, when improving the Arnold/megaplan harness, or
-  when reviewing whether a gate/pin/check is overzealous. Includes the
-  one-command status tools (fixer-status, epic-board).
+  The merged babysitting protocol for the fix-the-fixer loop: a once-per-hour
+  check-in that (1) checks for failures and repeated fixer misses, (2) runs the
+  fixing loop — DeepSeek Flash swarm to understand, Grok for the recommendation,
+  DeepSeek to implement, all inside sub-agents, biased toward fixing the fixer —
+  and (3) escalates to extreme intervention when the fixer itself is stuck for
+  structural reasons (its prompt missing, its engine broken), fixing the actual
+  megaplan code itself with the same loop plus Grok sense-checks via the
+  sub-agent launcher. Plus the
+  three layers of fixing, evidence-first, minimalism, per-epic branch lineage,
+  cost discipline, the living evidence doc, honest logging, the aspirational
+  principles for harness improvements, and the anti-principles that cause the
+  most pain. Use when deciding HOW to fix a stalled chain/fixer, when escalating
+  a repeated blocker, when improving the Arnold/megaplan harness, or when
+  reviewing whether a gate/pin/check is overzealous. Includes the one-command
+  status tools (fixer-status, epic-board).
 ---
 
 # Babysitting Principles
 
 How we run the fix-the-fixer / babysitting loop, and what the harness should
-aspire to. Canonical source: `docs/babysitting-principles.md` in the Arnold
+aspire to. Canonical source: `docs/pipeline-babysitting.md` in the Arnold
 repo; this skill is the agent-facing form (same content, plus the tools).
 
 ---
 
-## 1. The three layers of fixing
+## 1. The hourly check-in
 
-### 1.1 Self-healing wherever possible
+The babysitting loop runs as a **once-per-hour check-in**. Each check-in is
+one pass over the live system: **check → fix → push → re-arm**. It never just
+reports — every check-in ends with the run measurably closer to done or a
+concrete blocker fixed at the root. (Acute stoppages between check-ins are
+caught by the watchdog's status-trigger path — the `arnold-babysitter`
+wrapper launches a single Flash agent whose goal is rendered by
+`skills/babysitter/scripts/render_babysitter_goal.py`.)
+
+### 1.1 Check for failures and repeated misses
+
+- Pull the live status with the one-command tools (`fixer-status`,
+  `epic-board`) and read the living evidence doc (§3.6).
+- For every stopped/failed/stalled chain, ask: **is this a repeated failure
+  class the fixer isn't fixing, or isn't getting around to?** Same failure
+  fingerprint roughly three times in a row, or a chain blocked ~1 hour
+  without autorecovery, is the trigger.
+- This question targets the **fixer's failure to fix**, not the chain's
+  failure to run.
+
+### 1.2 The fixing loop — bias toward fixing the fixer
+
+When something is stuck or a failure class repeats, run the loop entirely
+inside sub-agents:
+
+1. **Understand** — deploy a bounded, read-only swarm of DeepSeek Flash
+   sub-agents over the failure evidence (what happened, the code path, how
+   state is passed around) — `skills/subagent-launcher/fan.py`.
+2. **Recommend** — hand the packed context (evidence pack, swarm index, every
+   investigator report) to a premium model — **Grok** — for the
+   once-and-for-all recommendation.
+3. **Implement** — with DeepSeek Flash, fix the fixer itself (its prompt, its
+   dispatch, its config) in the approved editable runtime — the chain-level
+   fix is what the fixer does once it runs again. Verify against the focused
+   regression.
+4. **Relaunch the fixer** — the deliverable of the loop is the fixer running
+   again with the fix in place: restart the fixer (and, when the evidence
+   requires, the chain via megaplan resume / chain start); never `--fresh`.
+5. **Verify at the next check-in** — the next hourly check-in checks whether
+   and how the fixer actually fixed the chain: `chain-*.json` `last_state`
+   leaves blocked and the same `failure_fingerprint` does not recur. A PID,
+   commit, self-report, or heartbeat is NOT proof.
+
+Stand down cleanly when nothing is actually blocked/failed, or when another
+fixer already owns the occurrence — never invent work.
+
+### 1.3 Extreme intervention — fix the megaplan code itself
+
+When the check-in finds the **fixer itself** stuck for structural reasons — a
+higher-level problem, e.g. its prompt is missing, its engine/dispatch is
+broken, it cannot even attempt the loop — the last rung is fixing the actual
+megaplan code itself, so the machinery the fixer runs on is actually fixed:
+
+1. DeepSeek Flash sub-agents swarm the fixer's own failure evidence.
+2. **Grok sense-checks** the plan — one or two passes via the sub-agent
+   launcher — before any change.
+3. DeepSeek implements the fix directly in the megaplan source (the engine,
+   the harness, the fixer's own code), not just the chain.
+4. Relaunch the fixer and prove it now makes movement.
+
+This is still *improving the machinery*, never hand-driving the chain: the
+extreme tier fixes the actual megaplan code itself so the fixer (and future
+chains) work. Hand-fixing the chain remains forbidden (§2.3).
+
+### 1.4 Loop mechanics
+
+- **Re-arm** — schedule the next check-in in one hour; tear the loop down
+  only when the whole run is genuinely done (all milestones complete / job
+  exited success).
+- **No questions** — a check-in never asks the operator anything. Decide
+  every blocker, prefer the reversible option, log the decision + rationale
+  in the check-in report so it can be audited later.
+- **Verify, don't trust** — on any "done", check the work actually landed
+  (files/commits/merged content), not the status word.
+- **Fix the engine, not just the run** — when a stall traces to a
+  harness/engine defect, fix it in the engine source (with a test) so it
+  never recurs; ticket what you can't fix on the spot.
+
+---
+
+## 2. The three layers of fixing
+
+### 2.1 Self-healing wherever possible
 
 The system should be programmatically self-healing first — before any agent is
 involved. When something fails, the harness tries to recover on its own:
@@ -30,7 +117,7 @@ restart the chain, retry the phase, re-drive the stuck step. The goal is that
 the thing heals itself, or at least tries to. Self-healing is the cheapest fix
 and should always be attempted first.
 
-### 1.2 The automated fixer fixes things
+### 2.2 The automated fixer fixes things
 
 When self-healing isn't enough, the automatic fixer fixes the problem. It
 watches the epics, notices when they stop running, understands why they
@@ -38,10 +125,10 @@ stopped, and repairs — investigating, shipping its own engine patches,
 rebinding, and re-driving the chain. The fixer is the primary repair
 mechanism; it should fix any stoppage, including itself.
 
-### 1.3 Failing that, fix the fixer — never hand-fix the chain
+### 2.3 Failing that, fix the fixer — almost never hand-fix the chain
 
 When the fixer can't reach the root, the operator's job is to improve the
-fixer so it can — never to rescue the chain directly. Fix the machinery, not
+fixer so it can — almost never to rescue the chain directly. Fix the machinery, not
 the instance. Direct implementation is only the last rung of the escalation
 ladder, and even then it is *improving the fixer* (engine fixes the fixer can
 ship), not hand-driving the chain. Hand-fixing the chain is forbidden: it
@@ -49,19 +136,18 @@ invalidates in-flight rebinds, re-blocks plans, and teaches nothing.
 
 ---
 
-## 2. Operating principles
+## 3. Operating principles
 
-### 2.1 Escalate on repetition
+### 3.1 Escalate on repetition
 
 When the same issue repeats — roughly the same class three times in a row, or
-the chain stays blocked ~1 hour without autorecovery — escalate. Deploy a
-swarm of DeepSeek Flash agents to understand the fixer's failure, feed that
-evidence to a Codex/Grok sub-agent to think about the higher issue at play,
-then improve the fixer and retrigger it. Keep looping until unblocked. The
-escalation is about the fixer's failure to fix, not the chain's failure to
-run.
+the chain stays blocked ~1 hour without autorecovery — the hourly check-in
+fires the fixing loop (§1.2): a swarm of DeepSeek Flash agents to understand
+the fixer's failure, Grok for the recommendation, then improve the fixer and
+retrigger it. Keep looping until unblocked. The escalation is about the
+fixer's failure to fix, not the chain's failure to run.
 
-### 2.2 Evidence first
+### 3.2 Evidence first
 
 Verify the root cause before shipping; the fix must reach the root, not the
 symptom. Deploy swarms of DeepSeek sub-agents to gather precise evidence at
@@ -70,7 +156,7 @@ things are being passed around. Feed evidence packs to the oracle for the
 once-and-for-all design. Never trust narrative over evidence; ask "does this
 get to the root of why it failed?" before acting.
 
-### 2.3 Minimalism
+### 3.3 Minimalism
 
 Remove overzealous bureaucracy rather than patch around it; bias toward
 simplicity. Delete pins, gates, and layers that convert ordinary development
@@ -78,28 +164,29 @@ into blocks. Use the fewest moving parts that can disagree. Default-on for the
 one intended flow; everything else is removed or deleted. If a check doesn't
 protect a real invariant, it just makes change expensive — get rid of it.
 
-### 2.4 The fixer edits the epic's own branch
+### 3.4 The fixer edits the epic's own branch
 
 Engine fixes are shared machinery, but lineage is per-epic. The fixer makes
 its fixes on the epic's own branch (`fixer/<slug>-<date>`); the PR to main
 happens at sprint end, with all fixes together. Never push engine fixes
 straight to main mid-sprint.
 
-### 2.5 Cost discipline
+### 3.5 Cost discipline
 
 Flash does the work; strong models only for the hard core and the oracle.
 Route by difficulty: easy work on cheap models, hard work on the strongest,
-oracle decisions on high reasoning. Don't spend expensive reasoning on tasks a
-flash agent can do.
+oracle decisions on high reasoning (Grok for the recommendation and
+sense-checks, §1.2–1.3). Don't spend expensive reasoning on tasks a flash
+agent can do.
 
-### 2.6 Living evidence doc
+### 3.6 Living evidence doc
 
 Maintain a living document of every observed issue, fix, and oracle
 assessment. Whenever the fixer resolves a real issue, ask: "Would completing
 the current epic have prevented or resolved this? If not, what needs to
 change?" Keep updating the epic and the fixer from this evidence.
 
-### 2.7 The system should tell the truth
+### 3.7 The system should tell the truth
 
 Honest logs, honest fixers. Logs must say what actually happens; typed errors
 must distinguish real cases (e.g. "nothing to claim" vs "couldn't claim"); the
@@ -108,9 +195,9 @@ must be verifiable against the live system.
 
 ---
 
-## 3. Aspirational principles
+## 4. Aspirational principles
 
-### 3.1 What a good harness improvement looks like
+### 4.1 What a good harness improvement looks like
 
 1. **Minimal surface.** The best fix is often a deletion. Reduce the number of
    moving parts that can disagree; default-on for the one intended flow.
@@ -136,7 +223,7 @@ must be verifiable against the live system.
    file-existence instead of node-existence, and box-wide env instead of
    target-session identity.
 
-### 3.2 What the system should aspire to
+### 4.2 What the system should aspire to
 
 1. **Self-healing, fixer-first.** Success = the chain advances, not merely
    that the fixer diagnosed. The end-state: watchdog detects a stoppage →
@@ -162,7 +249,7 @@ must be verifiable against the live system.
    stage, honest "movement not yet proven" — so a human can trust the loop
    without watching it, and the loop can be improved from its own evidence.
 
-### 3.3 Anti-principles — what causes the most pain
+### 4.3 Anti-principles — what causes the most pain
 
 1. **Overzealous gates** — pins that convert ordinary development into blocks
    (chain-spec hash pins, test budgets that don't fit the tests the planner
@@ -200,7 +287,7 @@ on the box at `/usr/local/bin/`):
 
 Prints per epic: manifest gen/head · chain state/idx/done/plan/rev · plan
 state/phase/worker/failure/events/cursor/raw error · seed readiness/revision +
-gen match vs manifest · fixer log age + live hermes agents (with CPU) ·
+gen match vs manifest · fixer log age + live omp agents (with CPU) ·
 watchdog procs.
 
 ```
