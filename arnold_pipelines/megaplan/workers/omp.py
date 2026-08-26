@@ -101,6 +101,7 @@ _OMP_CATALOG_MODELS: dict[str, tuple[str, ...]] = {
         "openrouter/deepseek/deepseek-chat",
         "openrouter/deepseek/deepseek-r1",
         "openrouter/z-ai/glm-5.1",
+        "openrouter/z-ai/glm-5.3-flash",
     ),
     "xai": ("xai/grok-4-fast-non-reasoning",),
     # omp-native credential routes: omp resolves credentials from its own
