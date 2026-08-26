@@ -175,7 +175,10 @@ def run(
     resume_session: bool = False,
     metadata_file: Optional[str] = None,
     project_dir: Optional[str] = None,
-    timeout: float = 1800.0,
+    # Long superfixer/babysitter turns legitimately run 30-60+ min; the old
+    # hard 1800s default SIGTERMed them mid-work (rc=-15, no failure record).
+    # Env-overridable so callers can tune without code edits.
+    timeout: float = float(os.environ.get("MEGAPLAN_TURN_TIMEOUT_SECS", "7200")),
     omp_bin: str = "omp",
 ) -> int:
     """Dispatch a subagent through omp and print its final response to stdout."""
