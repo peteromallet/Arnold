@@ -81,6 +81,7 @@ _MODEL_SHORTCUTS = {
 # megaplan key-pool prefixes → omp provider selectors. Values are either a
 # fixed selector or a prefix to splice the model tail into.
 _PREFIX_MAP: dict[str, str] = {
+    "omp": "",                    # omp:provider/model → provider/model (megaplan profile-spec form)
     "deepseek": "deepseek/",       # deepseek:deepseek-v4-flash → deepseek/deepseek-v4-flash
     "kimi": "openrouter/moonshotai/kimi-latest",  # kimi:kimi-k2.7-code → nearest omp catalog row
     "zhipu": "openrouter/z-ai/glm-latest",        # zhipu:glm-5.2 → nearest omp catalog row
@@ -116,6 +117,8 @@ def _translate_model(model: str) -> tuple[str, Optional[str]]:
         marker = f"{prefix}:"
         if spec.startswith(marker):
             tail = spec[len(marker):]
+            if not mapped:
+                return tail, thinking  # identity prefix: the tail is the selector
             if mapped.endswith("/"):
                 return mapped + tail, thinking
             return mapped, thinking  # fixed catalog row; model tail is advisory
