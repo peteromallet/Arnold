@@ -217,6 +217,25 @@ back; you drive the chain out of the blocked/failed state."""
     return f"""/goal
 {controller_intro}
 
+HARD TURN CONTRACT — read before anything else:
+1. A checkin showing `worker pid ... alive: False` with no failure record IS a
+   stall.  You may NEVER conclude "operating as expected", "no further
+   intervention required", or similar while the occurrence's current phase
+   worker is dead and the plan state is not terminal-complete.  Any such
+   verdict contradicted by a later checkin is a FAILED turn.
+2. "Healthy" may only be declared with positive proof: a LIVE worker pid for
+   the current phase AND events.ndjson seq advanced within the last 10
+   minutes.  Print the pid and the seq delta as evidence.
+3. Do not end this turn until ONE of: (a) the five steps are complete and
+   step 5 shows the relaunch proving movement (live worker or advanced
+   state); (b) a genuinely external gate blocks you — then persist
+   handoff.md naming the exact external dependency and end with
+   agent_actionable:false; (c) the coordination guard fires (different live
+   controller owns this chain).  An early exit, a plan-only answer, or a
+   recommendation without execution is a FAILED turn.
+4. This run's budget allows long work: omp turns up to 7200s, container
+   memory 16G.  Time alone is not a reason to stop.
+
 Context:
 {chr(10).join(context_lines)}
 
