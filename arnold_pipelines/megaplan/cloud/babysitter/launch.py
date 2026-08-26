@@ -67,7 +67,7 @@ LAUNCH_RECEIPT_SCHEMA = "arnold.superfixer.babysitter_launch_receipt.v1"
 DISPATCH_RECEIPT_NAME = "{session}.babysitter-receipt.json"
 LAUNCH_RECEIPT_NAME = "{session}.babysitter-launch-receipt.json"
 
-DEFAULT_MODEL = "omp:meta/muse-spark-1.2-contributor"
+DEFAULT_MODEL = "omp:openrouter/meta/muse-spark-1.2-contributor"
 TOOLSETS = "file,web,terminal"
 RUN_KIND = "automatic_watchdog_source_repair"
 ORIGIN_KIND = "watchdog_source_repair"
