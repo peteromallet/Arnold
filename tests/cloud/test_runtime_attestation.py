@@ -1298,14 +1298,30 @@ def test_worker_preflight_reads_configured_launch_seed_env(
     MEGAPLAN_RUNTIME_LAUNCH_SEED set, require_configured_runtime_launch reads
     that exact seed path instead of failing with 'required but missing'."""
     seed_path = tmp_path / "seed.json"
-    seed_path.write_text(json.dumps({"schema": "x", "ready": True}), encoding="utf-8")
+    seed_path.write_text(
+        json.dumps(
+            {
+                "schema": "x",
+                "ready": True,
+                "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
     monkeypatch.delenv("MEGAPLAN_RUNTIME_PROCESS_ATTESTATION", raising=False)
     observed: dict[str, str] = {}
     monkeypatch.setattr(
         attestation,
         "_json_file",
-        lambda path, label: (observed.update(path=str(path)) or {"schema": "x", "ready": True}),
+        lambda path, label: (
+            observed.update(path=str(path))
+            or {
+                "schema": "x",
+                "ready": True,
+                "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+            }
+        ),
     )
     monkeypatch.setattr(
         attestation,
@@ -1317,7 +1333,9 @@ def test_worker_preflight_reads_configured_launch_seed_env(
     seed = attestation.require_configured_runtime_launch(
         "worker", target_pid=123, create=True
     )
-    assert seed == {"schema": "x", "ready": True}
+    assert seed["schema"] == "x"
+    assert seed["ready"] is True
+    assert seed["authority"] == attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY
     assert observed["path"] == str(seed_path)
 
 
