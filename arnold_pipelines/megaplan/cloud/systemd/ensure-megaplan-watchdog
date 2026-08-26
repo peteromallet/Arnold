@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 # Ensure the megaplan watchdog is alive in the resident-only container.
-# Rewritten 2026-08-17 (I38, grok/user consult): the watchdog moved into
-# megaplan-cloud-agent-resident-only and tmux does not survive there; the
-# working launch is `docker exec -d ... nohup bash /tmp/launch-watchdog.sh &
-# disown`. The old unit targeted the stopped megaplan-cloud-agent container
-# and was masked - leaving the watchdog unsupervised. Health is process
-# liveness + a fresh sweep-completed receipt, NOT tmux.
+#
+# Identity-scoped observer, not an env-scoped epic pin. The supervisor
+# process MUST NOT inherit ARNOLD_RUNTIME_MANIFEST / ARNOLD_REPAIR_SESSION
+# for one epic: those leak into every babysitter dispatch and make the
+# watchdog supervise the wrong session with the wrong engine (observed
+# 2026-08-26: /tmp pin to megaplan-maintenance on arnold-4a830c6ac9a0, so
+# native-build-forward's parked stall was never driven by its own runtime).
+# One watchdog scans MARKER_DIR; per-tick identity is the marker session
+# -> {manifest_dir}/{session}.json -> epic.runtime_root (T-0022).
+#
+# This script is the PRODUCER of the in-container launch. There is no
+# /tmp consumer. Health is process liveness + a fresh sweep-completed
+# receipt, NOT tmux.
 set -u
 
 CONTAINER="${MEGAPLAN_CLOUD_CONTAINER:-megaplan-cloud-agent-resident-only}"
 LOG="${MEGAPLAN_WATCHDOG_ENSURE_LOG:-/var/log/megaplan-watchdog-ensure.log}"
+WATCHDOG_WRAPPER="${MEGAPLAN_WATCHDOG_WRAPPER:-/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
+WATCHDOG_LOG="${MEGAPLAN_WATCHDOG_LOG:-/tmp/watchdog-ensure.log}"
+# Snapshot argv is `bash /tmp/arnold-watchdog.XXXX`. Character-class the
+# dot so this is not a literal backslash inside single quotes. Never match
+# a bare `arnold-watchdog` substring (this health-check's own pgrep argv).
+WATCHDOG_PGREP="pgrep -f 'bash /tmp/arnold-watchdog[.]'"
 
 now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 log() { printf "[%s] %s\n" "$(now)" "$*" >> "$LOG"; }
@@ -31,29 +44,26 @@ fi
 STALE_HEARTBEAT_MIN="${MEGAPLAN_WATCHDOG_STALE_HEARTBEAT_MIN:-130}"
 SWEEP_COMPLETED="/workspace/.megaplan/status/watchdog-sweep.completed.json"
 
-# Health 1: a watchdog process must be alive in the container.
-watchdog_procs="$(docker exec "$CONTAINER" bash -lc 'pgrep -f arnold-watchdog | wc -l' 2>/dev/null | tr -d ' ')"
+watchdog_procs="$(docker exec "$CONTAINER" bash -lc "$WATCHDOG_PGREP | wc -l" 2>/dev/null | tr -d ' ')"
 if [[ "${watchdog_procs:-0}" -gt 0 ]]; then
-  # Health 2: the sweep-completed receipt must be fresh (process alive but
-  # wedged is unhealthy). Missing receipt is tolerated on a just-started
-  # watchdog (first sweep may not have completed yet); stale means wedged.
+  # A sweep that started recently is in-flight, not dead. Restacking every
+  # minute kills the babysitter launch (observed 2026-08-26).
+  started="$(docker exec "$CONTAINER" bash -lc "if [[ -s /workspace/.megaplan/status/watchdog-sweep.started.json ]] && find /workspace/.megaplan/status/watchdog-sweep.started.json -mmin -10 2>/dev/null | grep -q .; then echo recent; else echo old; fi" 2>/dev/null | tr -d ' ')"
   stale="$(docker exec "$CONTAINER" bash -lc "if [[ -s '$SWEEP_COMPLETED' ]] && find '$SWEEP_COMPLETED' -mmin +${STALE_HEARTBEAT_MIN} 2>/dev/null | grep -q .; then echo stale; else echo fresh; fi" 2>/dev/null | tr -d ' ')"
-  if [[ "$stale" != "stale" ]]; then
-    log "watchdog_alive container=$CONTAINER procs=${watchdog_procs}"
+  if [[ "$started" == "recent" || "$stale" != "stale" ]]; then
+    log "watchdog_alive container=$CONTAINER procs=${watchdog_procs} started=${started:-?} completed=${stale:-?}"
     exit 0
   fi
   log "watchdog_heartbeat_stale container=$CONTAINER (older than ${STALE_HEARTBEAT_MIN}m); killing to restart"
-  docker exec "$CONTAINER" bash -lc 'pkill -f arnold-watchdog 2>/dev/null || true; sleep 2; true' 2>/dev/null || true
+  docker exec "$CONTAINER" bash -lc "$WATCHDOG_PGREP | xargs -r kill 2>/dev/null || true; sleep 2; true" 2>/dev/null || true
 fi
 
 log "watchdog_missing restarting container=$CONTAINER"
-# The launch scripts live in the container /tmp (re-copied after container
-# recreation). Launch via docker exec -d with nohup+disown - the pattern that
-# survives (tmux does not persist in this container).
-docker exec -d "$CONTAINER" bash -lc "cd / && nohup bash /tmp/launch-watchdog.sh >> /tmp/watchdog-ensure.log 2>&1 & disown; nohup bash /tmp/launch-watchdog-astrid.sh >> /tmp/watchdog-ensure-astrid.log 2>&1 & disown; echo launched" >> "$LOG" 2>&1
+# Observer launch: no per-epic ARNOLD_RUNTIME_MANIFEST / ARNOLD_REPAIR_SESSION.
+docker exec -d "$CONTAINER" bash -lc "cd / && unset ARNOLD_RUNTIME_MANIFEST ARNOLD_REPAIR_SESSION ARNOLD_BABYSITTER_SESSION MEGAPLAN_SUPERVISOR_PYTHON PYTHONPATH && export ARNOLD_WATCHDOG_OBSERVER=1 CLOUD_WATCHDOG_INTERVAL_SECS=300 && nohup \"$WATCHDOG_WRAPPER\" >> \"$WATCHDOG_LOG\" 2>&1 & disown; echo launched" >> "$LOG" 2>&1
 
 sleep 3
-watchdog_procs="$(docker exec "$CONTAINER" bash -lc 'pgrep -f arnold-watchdog | wc -l' 2>/dev/null | tr -d ' ')"
+watchdog_procs="$(docker exec "$CONTAINER" bash -lc "$WATCHDOG_PGREP | wc -l" 2>/dev/null | tr -d ' ')"
 if [[ "${watchdog_procs:-0}" -gt 0 ]]; then
   log "watchdog_restarted container=$CONTAINER procs=${watchdog_procs}"
   exit 0

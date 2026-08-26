@@ -58,6 +58,17 @@ def test_renderer_is_the_single_agent_orchestrator_not_an_external_protocol() ->
         assert forbidden not in goal, f"goal must not contain {forbidden!r}"
 
 
+def test_renderer_coordination_guard_excludes_own_occurrence() -> None:
+    renderer = _load_renderer()
+    goal = renderer.render_babysitter_goal(
+        "demo-session", occurrence_digest="abc123def456"
+    )
+    assert "Another fixer is already active for this chain; standing down" in goal
+    assert "this occurrence's own babysitter-run directory" in goal
+    assert "self-standdown bug" in goal
+    assert "DIFFERENT" in goal
+
+
 def test_renderer_embeds_session_workspace_plan_context() -> None:
     renderer = _load_renderer()
     goal = renderer.render_babysitter_goal(

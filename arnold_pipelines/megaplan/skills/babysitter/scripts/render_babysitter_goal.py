@@ -418,6 +418,13 @@ Operator contract:
   repair lease, or running subagent_worker for this session).  If active,
   report "Another fixer is already active for this chain; standing down" and
   end — never launch a competing fixer.
+  Node-level, not file-level: this occurrence's own babysitter-run directory
+  (run_id / occurrence_digest in the goal header) is YOU, not another fixer.
+  A directory existing, a receipt for this same run_id, or a managed-automatic
+  subdir created by this launch is not a competing fixer. Only a DIFFERENT
+  live controller pid (not this process, not this occurrence digest) is
+  "another fixer". Standing down on your own run is the 2026-08-26
+  self-standdown bug.
 - Use $superfixer-debug for the evidence-first recovery protocol and
   $megaplan-cloud when this is a cloud target.
 - Preserve the failed occurrence.  Never fabricate an output, clear state,

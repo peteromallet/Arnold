@@ -40,6 +40,7 @@ WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET="${MEGAPLAN_SUPERVISOR_PYTHON+x}"
 WATCHDOG_CALLER_SUPERVISOR_PYTHON="${MEGAPLAN_SUPERVISOR_PYTHON-}"
 WATCHDOG_CALLER_RUNTIME_REQUIRED_SET="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED+x}"
 WATCHDOG_CALLER_RUNTIME_REQUIRED="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED-}"
+WATCHDOG_CALLER_OBSERVER="${ARNOLD_WATCHDOG_OBSERVER-}"
 
 WATCHDOG_HOT_ENV="${ARNOLD_CLOUD_HOT_ENV:-/workspace/.cloud-hot-env}"
 if [[ -f "$WATCHDOG_HOT_ENV" ]]; then
@@ -57,8 +58,15 @@ if [[ -n "$WATCHDOG_CALLER_RUNTIME_REQUIRED_SET" ]]; then
   MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED="$WATCHDOG_CALLER_RUNTIME_REQUIRED"
   export MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED
 fi
+# Observer mode is a caller contract: hot-env must not re-pin a per-epic
+# manifest / repair session onto a marker-scoped supervisor.
+if [[ "${WATCHDOG_CALLER_OBSERVER:-}" == "1" || "${ARNOLD_WATCHDOG_OBSERVER:-}" == "1" ]]; then
+  export ARNOLD_WATCHDOG_OBSERVER=1
+  unset ARNOLD_RUNTIME_MANIFEST ARNOLD_REPAIR_SESSION ARNOLD_BABYSITTER_SESSION
+fi
 unset WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET WATCHDOG_CALLER_SUPERVISOR_PYTHON
 unset WATCHDOG_CALLER_RUNTIME_REQUIRED_SET WATCHDOG_CALLER_RUNTIME_REQUIRED
+unset WATCHDOG_CALLER_OBSERVER
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
@@ -193,21 +201,32 @@ SNAPSHOT_FAILURE_THRESHOLD="${CLOUD_WATCHDOG_SNAPSHOT_FAILURE_THRESHOLD:-3}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
-# P1 admission authority: the shared lib gate is the SOLE manifest resolver.
-# A present manifest must validate with an epic.branch; a genuinely absent
-# manifest is admitted only by a valid unexpired allow_manifestless permit
-# (.runtime_policy.json sidecar).  Runs BEFORE any field read or dispatch.
-arnold_runtime_manifest_authority watchdog
-
-
-MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
-MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field epic.branch)"
-# Runtime source + sync branch resolve from the per-epic manifest ONLY: the
-# manifest runtime_root, else the fixed /workspace/arnold fallback for
-# permit-admitted manifest-less runtimes.  Hot env and the legacy selectors
-# can never re-point a supervisor (P4 config cleanup).
-SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"
-SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
+# P1 admission authority: the shared lib gate is the SOLE per-epic
+# manifest resolver. Observer mode is marker-scoped: it MUST NOT bind a
+# box-global ARNOLD_RUNTIME_MANIFEST (that is the /tmp pin class). Per-tick
+# identity is the marker session -> {manifest_dir}/{session}.json.
+if [[ "${ARNOLD_WATCHDOG_OBSERVER:-}" == "1" ]]; then
+  MANIFEST_RUNTIME_ROOT=""
+  MANIFEST_EPIC_BRANCH=""
+  # The snapshot lives under /tmp; origin is the tracked wrapper. Four
+  # parents up from cloud/wrappers/arnold-watchdog is the engine root.
+  if [[ -n "${ARNOLD_WATCHDOG_ORIGIN:-}" ]]; then
+    SRC_DIR="$(cd "$(dirname "$ARNOLD_WATCHDOG_ORIGIN")/../../../.." && pwd)"
+  else
+    SRC_DIR="${WRAPPER_REPO_ROOT:-/workspace/arnold}"
+  fi
+  SYNC_BRANCH=""
+else
+  arnold_runtime_manifest_authority watchdog
+  MANIFEST_RUNTIME_ROOT="$(arnold_runtime_manifest_epic_field epic.runtime_root)"
+  MANIFEST_EPIC_BRANCH="$(arnold_runtime_manifest_epic_field epic.branch)"
+  # Runtime source + sync branch resolve from the per-epic manifest ONLY: the
+  # manifest runtime_root, else the fixed /workspace/arnold fallback for
+  # permit-admitted manifest-less runtimes.  Hot env and the legacy selectors
+  # can never re-point a supervisor (P4 config cleanup).
+  SRC_DIR="${MANIFEST_RUNTIME_ROOT:-/workspace/arnold}"
+  SYNC_BRANCH="${MANIFEST_EPIC_BRANCH:-}"
+fi
 # G5 (round-17 finding 1c): the live root the engine-root preflight compares
 # against is the ACTUAL import root of this running python — the root the
 # process resolves ``arnold_pipelines`` from — NOT the manifest-derived
@@ -1447,11 +1466,31 @@ babysitter_parked_chain_stall() {
   local plan_name="${5:-}"
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$plan_name" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
+
 session, workspace_raw, remote_spec_raw, plan_name = sys.argv[1:]
 workspace = Path(workspace_raw)
+
+def _pid_alive(value: object) -> bool:
+    """Node-level liveness: a leftover active_step.phase is not a live worker."""
+    try:
+        pid = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 def _find_plan_dir() -> Path | None:
     plans_root = workspace / ".megaplan" / "plans"
@@ -1535,54 +1574,7 @@ if current not in {
     if not chain_pending:
         sys.exit(1)
 active = state.get("active_step")
-if active and isinstance(active, dict) and active.get("phase"):
-    # Node-aware liveness (2026-08-25): a recorded active_step with a phase
-    # is NOT proof of a live worker - a silently killed worker leaves the
-    # stale step in state.json (the 1747 revise death). Check the pid.
-    _wpid = str(active.get("worker_pid") or "").strip()
-    _worker_dead = False
-    if _wpid.isdigit():
-        try:
-            os.kill(int(_wpid), 0)
-        except OSError:
-            _worker_dead = True
-            print("stale active_step: worker pid " + _wpid + " is dead - treating as parked", file=sys.stderr)
-    if not _worker_dead:
-        sys.exit(1)  # a worker is genuinely live; not parked
-    # worker dead: fall through to the parked-stall dispatch
-if active and isinstance(active, dict) and active.get("phase"):
-    # Repeated-error-fingerprint stall (2026-08-25): a live worker stuck in a
-    # deterministic retry loop (same error fingerprint >= 3 in the recent
-    # event window, no progress event after the newest error) is a stall the
-    # fixer must pick up even though the worker process is alive. Without
-    # this, failures that retry internally (schema mismatches, provider 429
-    # loops) are invisible: the chain never presents as blocked.
-    events_file = plan_dir / "events.ndjson"
-    try:
-        import collections
-        tail = open(events_file, "rb").read().splitlines()[-60:]
-        prints = collections.Counter()
-        newest_err_seq = -1
-        newest_progress_seq = -1
-        for raw in tail:
-            try:
-                d = json.loads(raw)
-            except Exception:
-                continue
-            seq = d.get("seq", -1)
-            payload = d.get("payload") or {}
-            msg = str(payload.get("message") or "")
-            if d.get("kind") in ("llm_call_error", "phase_failed") or "structural audit failed" in msg:
-                prints[(d.get("kind"), msg[:200])] += 1
-                newest_err_seq = max(newest_err_seq, seq if isinstance(seq, int) else -1)
-            elif d.get("kind") in ("llm_call_end", "phase_end", "state_transition"):
-                newest_progress_seq = max(newest_progress_seq, seq if isinstance(seq, int) else -1)
-        repeated = [f for f, c in prints.items() if c >= 3]
-        if repeated and newest_err_seq >= newest_progress_seq:
-            print("repeated-error-fingerprint stall: " + repeated[0][0] + " " + repeated[0][1][:120], file=sys.stderr)
-            sys.exit(0)  # stalled: dispatch the fixer
-    except Exception:
-        pass
+if active and isinstance(active, dict) and _pid_alive(active.get("worker_pid")):
     sys.exit(1)  # a worker is live; not parked
 # No active step in a stoppage state (or between milestones with no plan):
 # parked unless a driver is live.
@@ -2076,12 +2068,59 @@ launch_status_trigger_babysitter() {
   local plan_name="${5:-}"
   local report_items="$6"
   local digest="${7:-}"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
-  ARNOLD_WATCHDOG_MANIFEST_RUNTIME_ROOT="${MANIFEST_RUNTIME_ROOT:-}" \
-  ARNOLD_WATCHDOG_RUNTIME_SRC="${REPAIR_DISPATCH_RUNTIME_SRC:-$SRC_DIR}" \
+  local session_engine=""
+  if [[ -n "$workspace" && -d "$workspace/arnold_pipelines" ]]; then
+    session_engine="$workspace"
+  else
+    session_engine="$(python3 - "$session" "${ARNOLD_RUNTIME_MANIFEST_DIR:-/workspace/.megaplan}" <<'ENDENGINE'
+import json
+import pathlib
+import sys
+
+session, manifest_dir = sys.argv[1], sys.argv[2]
+path = pathlib.Path(manifest_dir) / f"{session}.json"
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+epic = payload.get("epic") if isinstance(payload, dict) else None
+root = (epic or {}).get("runtime_root") if isinstance(epic, dict) else None
+if isinstance(root, str) and root.strip() and (pathlib.Path(root) / "arnold_pipelines").is_dir():
+    print(root)
+ENDENGINE
+)"
+    session_engine="${session_engine//$'\n'/}"
+  fi
+  log "babysitter engine bind session=$session engine=${session_engine:-empty} src=${SRC_DIR:-}"
+  local launch_pythonpath="${session_engine:-${SRC_DIR:-$PWD}}"
+  # The supervisor python wrapper overwrites PYTHONPATH with
+  # MEGAPLAN_SUPERVISOR_SOURCE_ROOT (/workspace/arnold). Bind BOTH the
+  # interpreter and that var to the session engine so `set -u` wrappers
+  # and `-P` imports resolve the same tree (2026-08-26 ImportError
+  # chain_spec_sha256 / unbound MEGAPLAN_SUPERVISOR_SOURCE_ROOT).
+  local launch_python=""
+  for candidate in \
+      "${MEGAPLAN_BABYSITTER_PYTHON:-}" \
+      /root/.pyenv/versions/3.11.11/bin/python3 \
+      /usr/bin/python3
+  do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    launch_python="$candidate"
+    break
+  done
+  [[ -n "$launch_python" ]] || launch_python="$(command -v python3)"
+  [[ -n "$launch_python" ]] || launch_python="python3"
+  log "babysitter python=$launch_python engine=$launch_pythonpath"
+  PYTHONPATH="$launch_pythonpath" \
+  PYTHONSAFEPATH=1 \
+  MEGAPLAN_SUPERVISOR_SOURCE_ROOT="$launch_pythonpath" \
+  MEGAPLAN_SUPERVISOR_PYTHON="$launch_python" \
+  ARNOLD_WATCHDOG_MANIFEST_RUNTIME_ROOT="$launch_pythonpath" \
+  ARNOLD_WATCHDOG_RUNTIME_SRC="$launch_pythonpath" \
+  SRC_DIR="$launch_pythonpath" \
   CLOUD_WATCHDOG_BABYSITTER_BIN="${CLOUD_WATCHDOG_BABYSITTER_BIN:-}" \
   ARNOLD_BABYSITTER_LAUNCH_GRACE_SECS="${ARNOLD_BABYSITTER_LAUNCH_GRACE_SECS:-2}" \
-  python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" "$digest" <<'PY'
+  "$launch_python" -P - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" "$digest" <<'PY'
 import datetime as _dt
 import hashlib as _hashlib
 import json as _json
@@ -2144,25 +2183,41 @@ def emit_runtime_transition(event_name: str, *, error: str = "", summary: str = 
         raise SystemExit(1)
 
 
-# P2: journal the typed runtime transitions BEFORE the launch side effect
-# (no event = no side effect).
-emit_runtime_transition(
-    "deviation_declared",
-    error="watchdog observed unhealthy session; status-trigger babysitter dispatch requested",
-    summary=f"watchdog declared runtime deviation session={session}",
-)
-emit_runtime_transition(
-    "fallback_considered",
-    summary=f"watchdog considered status-trigger babysitter fallback session={session}",
-)
+def _session_engine_root() -> Path | None:
+    """Per-session identity: {manifest_dir}/{session}.json epic.runtime_root.
+
+    The supervisor is marker-scoped. Binding the babysitter to the
+    supervisor's own SRC_DIR / ARNOLD_RUNTIME_MANIFEST is env-scoped
+    (T-0022 / 2026-08-26 /tmp pin). The target session's manifest is
+    the only truth.
+    """
+    manifest_dir = Path(os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan"))
+    path = manifest_dir / f"{session}.json"
+    try:
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    epic = payload.get("epic")
+    if not isinstance(epic, dict):
+        return None
+    raw = epic.get("runtime_root")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    root = Path(raw).expanduser()
+    if (root / "arnold_pipelines").is_dir():
+        return root
+    return None
 
 
 def _superfixer_engine_roots() -> list[Path]:
-    """Live engine roots: manifest runtime root, dispatch runtime source,
-    SRC_DIR, then the origin-derived repo root.  The first root that carries
-    the babysitter assets wins; the hardcoded stale arnold-r7 tree is never
-    used."""
+    """Live engine roots: the TARGET SESSION's runtime first, then
+    supervisor observation roots. Never a hardcoded stale tree."""
     roots: list[Path] = []
+    session_root = _session_engine_root()
+    if session_root is not None:
+        roots.append(session_root)
     for env_name in (
         "ARNOLD_WATCHDOG_MANIFEST_RUNTIME_ROOT",
         "ARNOLD_WATCHDOG_RUNTIME_SRC",
@@ -2175,6 +2230,20 @@ def _superfixer_engine_roots() -> list[Path]:
     if origin:
         roots.append(Path(origin).resolve().parents[4])
     return roots
+
+
+# P2: journal the typed runtime transitions BEFORE the launch side effect
+# (no event = no side effect).
+emit_runtime_transition(
+    "deviation_declared",
+    error="watchdog observed unhealthy session; status-trigger babysitter dispatch requested",
+    summary=f"watchdog declared runtime deviation session={session}",
+)
+emit_runtime_transition(
+    "fallback_considered",
+    summary=f"watchdog considered status-trigger babysitter fallback session={session}",
+)
+
 
 
 def _resolve_renderer(roots: list[Path]) -> Path:
@@ -2283,13 +2352,24 @@ meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {
 planner_repair = meta.get("planner_repair")
 
 try:
-    roots = _superfixer_engine_roots()
-    renderer = _resolve_renderer(roots)
-    babysitter_bin = _resolve_bin(roots)
-    # The live engine root is the renderer's own tree (5 parents up from
-    # scripts/render_babysitter_goal.py), never the babysitter bin location
-    # (which a test override may relocate).
-    engine_root = renderer.resolve().parents[5]
+    session_root = _session_engine_root()
+    # Goal renderer: supervisor origin first so observer-mode prompt
+    # fixes (coordination guard) ship immediately. Child PYTHONPATH
+    # still binds to the target session's runtime_root.
+    supervisor_roots: list[Path] = []
+    origin = os.environ.get("ARNOLD_WATCHDOG_ORIGIN", "").strip()
+    if origin:
+        supervisor_roots.append(Path(origin).resolve().parents[4])
+    for env_name in ("SRC_DIR", "ARNOLD_WATCHDOG_RUNTIME_SRC"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            supervisor_roots.append(Path(value))
+    renderer_roots = list(supervisor_roots)
+    if session_root is not None:
+        renderer_roots.append(session_root)
+    renderer = _resolve_renderer(renderer_roots or _superfixer_engine_roots())
+    engine_root = session_root if session_root is not None else renderer.resolve().parents[5]
+    babysitter_bin = _resolve_bin([engine_root, *supervisor_roots])
     run_id = "sched_superfixer_status_" + session.replace("/", "_")[:48] + "_" + digest
     _ns = _runpy.run_path(str(renderer))
     render_babysitter_goal = _ns.get("render_babysitter_goal")
@@ -2313,9 +2393,10 @@ try:
     run_root = repair_data_dir / "babysitter-runs" / run_id
     run_root.mkdir(parents=True, exist_ok=True)
     child_env = dict(os.environ)
-    child_env["PYTHONPATH"] = str(engine_root) + (
-        ":" + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
-    )
+    child_env["PYTHONPATH"] = str(engine_root)
+    child_env["SRC_DIR"] = str(engine_root)
+    child_env["ARNOLD_WATCHDOG_MANIFEST_RUNTIME_ROOT"] = str(engine_root)
+    child_env["ARNOLD_WATCHDOG_RUNTIME_SRC"] = str(engine_root)
     child_env["ARNOLD_BABYSITTER_SESSION"] = session
     # ROOT FIX (grok consult 2026-08-17): the inherited box-global
     # ARNOLD_REPAIR_SESSION leaked into cross-session babysitter dispatches -
@@ -2329,6 +2410,10 @@ try:
     child_env["ARNOLD_REPAIR_SESSION"] = session
     child_env.pop("ARNOLD_LIVENESS_OWNER_PID", None)
     child_env.pop("ARNOLD_LIVENESS_OWNER_PROCESS_START", None)
+    # Observer / foreign-epic pins must not survive into the child. The
+    # session's own runtime_root is the engine; a leftover
+    # ARNOLD_RUNTIME_MANIFEST would re-select the supervisor's epic.
+    child_env.pop("ARNOLD_RUNTIME_MANIFEST", None)
     child_env["ARNOLD_BABYSITTER_WORKSPACE"] = str(workspace)
     child_env["ARNOLD_BABYSITTER_PLAN"] = resolved_plan_name
     child_env["ARNOLD_BABYSITTER_RUN_KIND"] = run_kind

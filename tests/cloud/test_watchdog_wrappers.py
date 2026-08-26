@@ -660,23 +660,27 @@ def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
 def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
     text = _systemd_file("ensure-megaplan-watchdog")
 
-    assert "tmux new-session -d -s watchdog -c /workspace" in text
-    assert ". /workspace/.cloud-hot-env" in text
-    assert "runtime_src=/workspace/arnold" in text
-    assert (
-        'exec "$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
-        'arnold-watchdog"'
-    ) in text
-    # G4: the ensure script no longer resolves runtime_src via env selectors.
+    launch_lines = [
+        line for line in text.splitlines()
+        if "docker exec -d" in line and "nohup" in line
+    ]
+    assert launch_lines, text
+    launch = "\n".join(launch_lines)
+    assert "/tmp/launch-watchdog.sh" not in launch
+    assert "/tmp/launch-watchdog-astrid.sh" not in launch
+    assert "ARNOLD_REPAIR_SESSION=megaplan-maintenance" not in launch
+    assert "ARNOLD_WATCHDOG_OBSERVER=1" in launch
+    assert "unset ARNOLD_RUNTIME_MANIFEST ARNOLD_REPAIR_SESSION" in launch
+    assert "WATCHDOG_WRAPPER" in launch
+    # Health check must not match its own pgrep argv.
+    assert "pgrep -f arnold-watchdog" not in text
+    assert "bash /tmp/arnold-watchdog[.]" in text
+    assert "watchdog_restart_failed_not_alive" in text
+    assert "tmux new-session -d -s watchdog" not in text
+    assert "tmux has-session -t watchdog" not in text
+    assert "runtime_src=/workspace/arnold" not in text
     assert "MEGAPLAN_RUNTIME_SRC" not in text
     assert "CLOUD_WATCHDOG_ARNOLD_SRC" not in text
-    assert (
-        "exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
-        "arnold-watchdog"
-    ) not in text
-    assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
-    assert "watchdog_restart_failed_not_alive" in text
-    assert text.count("tmux has-session -t watchdog") >= 2
 
 
 def test_host_resident_ensure_starts_from_pinned_runtime_source() -> None:
@@ -854,6 +858,92 @@ def test_watchdog_routes_dead_active_step_to_repair_dispatch() -> None:
         '"$plan_name" "$report_items"'
     ) in text
     assert '"stale active step: $stale_active_summary"' in text
+
+
+def _run_parked_stall(workspace: Path, spec_path: Path, plan_name: str = "") -> int:
+    program = _extract_watchdog_embedded_program(
+        "babysitter_parked_chain_stall",
+        "<<'PY'",
+    )
+    result = _run_embedded_python(
+        program, "demo-session", str(workspace), str(spec_path), plan_name
+    )
+    return result.returncode
+
+
+def _write_parked_plan(
+    tmp_path: Path,
+    *,
+    current_state: str,
+    active_step: dict | None,
+) -> tuple[Path, Path]:
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    initiative_dir = workspace / ".megaplan" / "initiatives" / "demo"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    initiative_dir.mkdir(parents=True)
+    spec_path = initiative_dir / "chain.yaml"
+    spec_path.write_text("- label: m1\n- label: m2\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "current_milestone_index": 0,
+                "last_state": current_state,
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state: dict[str, object] = {
+        "name": "demo-plan",
+        "current_state": current_state,
+    }
+    if active_step is not None:
+        state["active_step"] = active_step
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return workspace, spec_path
+
+
+def test_parked_stall_treats_dead_pid_as_parked(tmp_path: Path) -> None:
+    """A leftover active_step.phase with a dead pid is parked, not live."""
+    workspace, spec = _write_parked_plan(
+        tmp_path,
+        current_state="critiqued",
+        active_step={"phase": "revise", "worker_pid": 99999999, "attempt": 1},
+    )
+    assert _run_parked_stall(workspace, spec, "demo-plan") == 0
+
+
+def test_parked_stall_treats_live_pid_as_not_parked(tmp_path: Path) -> None:
+    workspace, spec = _write_parked_plan(
+        tmp_path,
+        current_state="critiqued",
+        active_step={"phase": "revise", "worker_pid": os.getpid(), "attempt": 1},
+    )
+    assert _run_parked_stall(workspace, spec, "demo-plan") == 1
+
+
+def test_parked_stall_phase_without_pid_is_parked(tmp_path: Path) -> None:
+    workspace, spec = _write_parked_plan(
+        tmp_path,
+        current_state="critiqued",
+        active_step={"phase": "revise"},
+    )
+    assert _run_parked_stall(workspace, spec, "demo-plan") == 0
+
+
+def test_watchdog_observer_mode_skips_per_epic_manifest_pin() -> None:
+    text = _wrapper("arnold-watchdog")
+    assert "ARNOLD_WATCHDOG_OBSERVER" in text
+    assert "Observer mode is a caller contract" in text
+    assert "MUST NOT bind a" in text
+    assert "_session_engine_root" in text
+    assert 'child_env.pop("ARNOLD_RUNTIME_MANIFEST", None)' in text
+    assert 'child_env["SRC_DIR"] = str(engine_root)' in text
 
 
 def test_watchdog_reaper_is_wired_into_scan_and_report_summary() -> None:
