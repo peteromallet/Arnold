@@ -792,6 +792,25 @@ def build_runtime_launch_seed(
         mod_root = mod.get("root", "")
         if mod_root and mod_root != str(root):
             errors.append(f"mixed_revision_module:{mod.get('module')}")
+    # Occurrence 12f5e50e0107: a seed built by an interpreter other than the
+    # bound dependency-generation interpreter used to record ready:true while
+    # its embedded interpreter vector pointed elsewhere (the poisoned
+    # dispatch-current.json generation-2 seed of 2026-08-26T20:16Z). The
+    # builder IS the generation interpreter, or the seed is born not-ready.
+    dep_generation_record = (
+        dependency_generation if isinstance(dependency_generation, Mapping) else {}
+    )
+    if dep_generation_record:
+        bound_interpreter = str(dep_generation_record.get("interpreter_path") or "")
+        if (
+            not bound_interpreter
+            or os.path.realpath(bound_interpreter)
+            != os.path.realpath(sys.executable)
+        ):
+            errors.append(
+                "dependency_generation_builder_interpreter_mismatch:"
+                f"builder={sys.executable},bound={bound_interpreter or '<unset>'}"
+            )
     core = {
         "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
         "authority": RUNTIME_LAUNCH_CLOUD_AUTHORITY,
@@ -1018,6 +1037,32 @@ def _launch_seed_current(
     # provided it must equal the seed's bound manifest_generation.
     if generation is not None and seed.get("manifest_generation") != generation:
         return False
+    # Occurrence 12f5e50e0107: never REUSE across interpreters. A stored
+    # seed whose embedded interpreter vector (or its dependency-generation
+    # interpreter) does not match the CURRENT dispatching interpreter was
+    # built by or for another runtime — treat it as stale so
+    # ensure_runtime_launch_seed rebuilds; worker-side
+    # validate_runtime_launch_seed would refuse it anyway with "runtime
+    # interpreter identity drifted".
+    interp = seed.get("interpreter")
+    interp = interp if isinstance(interp, Mapping) else {}
+    seed_executable = str(interp.get("executable") or "")
+    if (
+        not seed_executable
+        or os.path.realpath(seed_executable)
+        != os.path.realpath(sys.executable)
+    ):
+        return False
+    seed_dep = seed.get("dependency_generation")
+    seed_dep = seed_dep if isinstance(seed_dep, Mapping) else {}
+    if seed_dep:
+        seed_dep_interpreter = str(seed_dep.get("interpreter_path") or "")
+        if (
+            not seed_dep_interpreter
+            or os.path.realpath(seed_dep_interpreter)
+            != os.path.realpath(sys.executable)
+        ):
+            return False
     input_paths = seed.get("input_paths")
     input_paths = input_paths if isinstance(input_paths, Mapping) else {}
     seed_manifest = str(input_paths.get("manifest") or "").strip()
@@ -2871,6 +2916,94 @@ def require_configured_runtime_launch(
             attestation,
             component=component,
             target_pid=pid,
+        )
+    return seed
+
+
+def require_production_worker_dispatch_runtime(
+    *,
+    component: str = "worker",
+    create_process_attestation: bool = True,
+    demand_seed: bool = True,
+) -> dict[str, Any] | None:
+    """Admission gate for production phase/backend dispatch.
+
+    Occurrence 12f5e50e0107 (2026-08-26): parallel critique producers and
+    gate reached ``workers/omp.py::_write_phase_output_tool`` via backend
+    adapters that never pass :func:`run_step_with_worker`, then died late
+    with ImportError("omp_rpc host_tools module is unavailable") because the
+    DISPATCHING interpreter was not the manifest-bound dependency-generation
+    interpreter. This helper serves BOTH boundaries with a single contract:
+
+    * Orchestration boundary (``workers/_impl.py``, ``demand_seed=True``):
+      the seed requirement is UNCONDITIONAL — byte-for-byte the previous
+      run_step_with_worker contract (refresh + require + attestation).
+    * Backend boundary (``run_omp_step``, ``demand_seed=False``): enforcement
+      keys off the PRODUCTION binding. With no ``ARNOLD_RUNTIME_MANIFEST``
+      and no configured seed the call is a no-op so manifestless development
+      and unit harnesses keep working; with the binding present it demands
+      the seed and refuses any interpreter that does not realpath-match that
+      binding's dependency-generation interpreter and the seed's own
+      binding. Fails closed typed and early instead of late and confusing.
+    """
+    manifest_raw = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "").strip()
+    if not demand_seed and not manifest_raw and configured_seed_path() is None:
+        return None
+    refresh_runtime_launch_seed_for_worker_dispatch()
+    seed = require_configured_runtime_launch(
+        component,
+        create=create_process_attestation,
+    )
+    if not manifest_raw:
+        return seed
+    actual = os.path.realpath(sys.executable)
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            ManifestError,
+            load_manifest,
+        )
+
+        try:
+            manifest = load_manifest(Path(manifest_raw))
+        except ManifestError as exc:
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                f"runtime manifest {manifest_raw} is invalid: {exc}",
+            ) from exc
+    except OSError as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            f"runtime manifest {manifest_raw} is unreadable: {exc}",
+        ) from exc
+    dep = manifest.epic.get("dependency_generation")
+    dep = dep if isinstance(dep, Mapping) else {}
+    expected = os.path.realpath(str(dep.get("interpreter_path") or ""))
+    if not expected or expected != actual:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "worker dispatch requires the manifest dependency-generation "
+            f"interpreter: expected {expected or '<unset>'}, running "
+            f"{actual} (relaunch through arnold-chain)",
+        )
+    seed_dep = seed.get("dependency_generation")
+    seed_dep = seed_dep if isinstance(seed_dep, Mapping) else {}
+    seed_dep_interpreter = str(seed_dep.get("interpreter_path") or "")
+    if (
+        not seed_dep_interpreter
+        or os.path.realpath(seed_dep_interpreter) != expected
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "worker dispatch launch seed is bound to a different "
+            "dependency-generation interpreter",
+        )
+    interp = seed.get("interpreter")
+    interp = interp if isinstance(interp, Mapping) else {}
+    seed_executable = str(interp.get("executable") or "")
+    if not seed_executable or os.path.realpath(seed_executable) != actual:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime interpreter identity drifted",
         )
     return seed
 

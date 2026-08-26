@@ -27,6 +27,7 @@ def _write_json(path: Path, value: object) -> None:
 def _release_seed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    **build_kwargs: object,
 ) -> tuple[dict[str, object], dict[str, Path]]:
     root = tmp_path / "runtime"
     wrapper_dir = root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
@@ -181,6 +182,7 @@ def _release_seed(
         marker_path=marker,
         chain_spec_path=chain_spec,
         seed_doc_paths=[seed_doc],
+        **build_kwargs,
     )
     return seed, {
         "root": root,
@@ -1727,3 +1729,210 @@ def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
         normalized_recorded, live, recorded_generation=114, live_generation=115
     )
     assert adopted["source_revision"] == live["source_revision"]
+
+
+def test_production_worker_dispatch_requires_seed_when_manifest_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 12f5e50e0107: a production-bound (ARNOLD_RUNTIME_MANIFEST)
+    phase/backend dispatch without a configured launch seed fails closed
+    with the typed seed refusal instead of dying later on the first
+    ``omp_rpc.host_tools`` import."""
+    monkeypatch.delenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", raising=False)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", "/tmp/unrelated-manifest.json")
+
+    with pytest.raises(
+        CliError, match="canonical runtime launch seed is required but missing"
+    ):
+        attestation.require_production_worker_dispatch_runtime(component="worker")
+
+
+def test_production_worker_dispatch_rejects_manifest_generation_interpreter_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 12f5e50e0107: under a production binding whose
+    dependency-generation interpreter differs from the DISPATCHING
+    interpreter, the shared preflight refuses before any provider work —
+    naming expected vs actual and pointing at arnold-chain."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    seed_path = tmp_path / "seed.json"
+    _write_json(seed_path, {"schema": "x"})
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+
+    manifest_dep = str(Path(sys.executable).resolve())
+    other_gen = "/opt/other-generation/bin/python"
+    monkeypatch.setattr(
+        attestation,
+        "refresh_runtime_launch_seed_for_worker_dispatch",
+        lambda: seed_path,
+    )
+    monkeypatch.setattr(
+        attestation,
+        "require_configured_runtime_launch",
+        lambda component, **kwargs: {
+            "schema": "x",
+            "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+            "ready": True,
+            "errors": [],
+            "interpreter": {"executable": manifest_dep},
+            "dependency_generation": {"interpreter_path": other_gen},
+        },
+    )
+
+    from arnold_pipelines.megaplan.cloud import runtime_manifest as manifest_module
+
+    class _StubManifest:
+        epic = {"dependency_generation": {"interpreter_path": other_gen}}
+
+    monkeypatch.setattr(manifest_module, "load_manifest", lambda _path: _StubManifest())
+
+    with pytest.raises(
+        CliError, match="requires the manifest dependency-generation interpreter"
+    ) as excinfo:
+        attestation.require_production_worker_dispatch_runtime(component="worker")
+    assert "arnold-chain" in str(excinfo.value)
+
+
+def test_production_worker_dispatch_rejects_seed_bound_to_other_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The seed itself must carry the SAME dependency-generation interpreter
+    as the live manifest binding; a self-consistent-but-wrong generation
+    seed (the 20:16Z dispatch-current.json poison) refuses at admission."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    seed_path = tmp_path / "seed.json"
+    _write_json(seed_path, {"schema": "x"})
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_LAUNCH_SEED", str(seed_path))
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+
+    here = str(Path(sys.executable).resolve())
+    stale_seed_gen = str(Path(sys.executable).resolve()) + "#stale"
+    monkeypatch.setattr(
+        attestation,
+        "refresh_runtime_launch_seed_for_worker_dispatch",
+        lambda: seed_path,
+    )
+    monkeypatch.setattr(
+        attestation,
+        "require_configured_runtime_launch",
+        lambda component, **kwargs: {
+            "schema": "x",
+            "authority": attestation.RUNTIME_LAUNCH_CLOUD_AUTHORITY,
+            "ready": True,
+            "errors": [],
+            "interpreter": {"executable": here},
+            "dependency_generation": {"interpreter_path": stale_seed_gen},
+        },
+    )
+
+    from arnold_pipelines.megaplan.cloud import runtime_manifest as manifest_module
+
+    class _StubManifest:
+        epic = {"dependency_generation": {"interpreter_path": here}}
+
+    monkeypatch.setattr(manifest_module, "load_manifest", lambda _path: _StubManifest())
+
+    with pytest.raises(
+        CliError, match="launch seed is bound to a different"
+    ):
+        attestation.require_production_worker_dispatch_runtime(component="worker")
+
+
+def test_build_seed_not_ready_when_builder_interpreter_differs_from_dependency_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Occurrence 12f5e50e0107: a seed built by an interpreter other than the
+    bound dependency-generation interpreter can never be born ready:true."""
+    seed, _paths = _release_seed(
+        tmp_path,
+        monkeypatch,
+        dependency_generation={
+            "id": "c" * 64,
+            "frozen_spec_sha256": "c" * 64,
+            "venv_digest": "d" * 64,
+            "interpreter_path": "/opt/other-generation/bin/python",
+            "created": "2026-08-26T00:00:00Z",
+        },
+    )
+
+    assert seed["ready"] is False
+    assert any(
+        str(error).startswith("dependency_generation_builder_interpreter_mismatch:")
+        for error in seed["errors"]
+    )
+
+
+def test_launch_seed_current_rejects_cross_interpreter_ready_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A release-ready stored seed whose embedded interpreter vector or
+    dependency-generation interpreter no longer matches the current
+    dispatcher must never be REUSED — ensure_runtime_launch_seed rebuilds
+    instead (the ready:true ambient-executable seed of 2026-08-26T20:16Z)."""
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    store_dir = tmp_path / "seeds"
+    store_dir.mkdir()
+    manifest_pointer = tmp_path / "manifest-pointer.json"
+    revision = str(seed["expected_revision"])
+
+    def _materialize(name: str, mutate) -> Path:
+        core = {key: value for key, value in seed.items() if key != "content_sha256"}
+        input_paths = dict(core.get("input_paths") or {})
+        input_paths["manifest"] = str(manifest_pointer)
+        core["input_paths"] = input_paths
+        mutate(core)
+        core["content_sha256"] = attestation._canonical_sha256(core)
+        target = store_dir / f"{name}.json"
+        target.write_text(json.dumps(core), encoding="utf-8")
+        return target
+
+    def _current(core: dict[str, object]) -> None:
+        pass
+
+    def _cross_executable(core: dict[str, object]) -> None:
+        interp = dict(core["interpreter"])
+        interp["executable"] = "/opt/ambient-other/bin/python"
+        core["interpreter"] = interp
+
+    def _cross_dep(core: dict[str, object]) -> None:
+        core["dependency_generation"] = {
+            "id": "c" * 64,
+            "frozen_spec_sha256": "c" * 64,
+            "venv_digest": "d" * 64,
+            "interpreter_path": "/opt/other-generation/bin/python",
+            "created": "2026-08-26T00:00:00Z",
+        }
+
+    matching = _materialize("matching", _current)
+    assert attestation._launch_seed_current(
+        matching,
+        root=str(paths["root"]),
+        expected_revision=revision,
+        marker_path=paths["marker"],
+        manifest_path=manifest_pointer,
+    ) is True
+
+    cross_exe = _materialize("cross-exe", _cross_executable)
+    assert attestation._launch_seed_current(
+        cross_exe,
+        root=str(paths["root"]),
+        expected_revision=revision,
+        marker_path=paths["marker"],
+        manifest_path=manifest_pointer,
+    ) is False
+
+    cross_dep = _materialize("cross-dep", _cross_dep)
+    assert attestation._launch_seed_current(
+        cross_dep,
+        root=str(paths["root"]),
+        expected_revision=revision,
+        marker_path=paths["marker"],
+        manifest_path=manifest_pointer,
+    ) is False
