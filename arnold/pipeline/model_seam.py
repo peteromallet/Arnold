@@ -497,7 +497,7 @@ def classify_model_family(model: str) -> ModelFamily:
         return ModelFamily.DEEPSEEK
     if lowered.startswith("kimi-") or lowered.startswith("kimi/") or "kimi" in lowered:
         return ModelFamily.KIMI
-    if lowered.startswith(("glm-", "glm/")):
+    if lowered.startswith(("glm-", "glm/", "z-ai/glm")):
         return ModelFamily.GLM
     if "ox-alpha" in lowered or lowered.startswith("stealth/"):
         # OpenRouter stealth/ox-alpha (operator directive 2026-08-24: all
