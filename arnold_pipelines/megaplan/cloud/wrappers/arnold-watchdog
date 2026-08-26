@@ -2029,8 +2029,46 @@ for name in (
                     f"session={session} pids={hung} run_root={run_root}",
                     file=sys.stderr,
                 )
-            if not babysitter_wedged(payload, run_root):
-                raise SystemExit(0)
+            wedged_now = babysitter_wedged(payload, run_root)
+            # I-2026-08-26-TIMEOUTKILL: a single-scan wedge verdict has repeatedly
+            # SIGTERMed fixers that were mid-call (codex consult, long LLM wait
+            # with momentarily no established socket). Require the wedge to be
+            # observed on TWO scans separated by WEDGE_CONFIRM_SECS (default
+            # 600) before signaling. True hangs still die; mid-call dips live.
+            confirm_secs = float(
+                os.environ.get("CLOUD_WATCHDOG_WEDGE_CONFIRM_SECS", "600")
+            )
+            marker = None
+            if run_root is not None:
+                marker = run_root / "wedged-since.json"
+            if wedged_now:
+                first_seen = None
+                if marker is not None and marker.is_file():
+                    try:
+                        first_seen = float(json.loads(
+                            marker.read_text(encoding="utf-8")
+                        ).get("first_seen"))
+                    except Exception:
+                        first_seen = None
+                now_ts = datetime.now(timezone.utc).timestamp()
+                if first_seen is None:
+                    if marker is not None:
+                        try:
+                            marker.parent.mkdir(parents=True, exist_ok=True)
+                            marker.write_text(json.dumps({
+                                "first_seen": now_ts,
+                                "session": session,
+                            }, sort_keys=True) + "\n", encoding="utf-8")
+                        except OSError:
+                            pass
+                    raise SystemExit(0)
+                if now_ts - first_seen < confirm_secs:
+                    raise SystemExit(0)
+                if marker is not None:
+                    try:
+                        marker.unlink()
+                    except OSError:
+                        pass
         # Wedged (or dead): terminate the stale babysitter + its agent tree so
         # the fresh dispatch below does not race a zombie fixer on the same
         # chain (observed 2026-08-17 I35: wedged 15:38 agents lingered beside
