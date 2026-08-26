@@ -323,16 +323,6 @@ def provider_family(spec: str) -> str:
     """Return the provider-family boundary used for fallback independence."""
     parsed = parse_agent_spec(spec)
     if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
-        family = parsed.model.split(":", 1)[0].strip().lower()
-        alias_map = {
-            "openai-codex": "codex",
-            "openai": "openai",
-            "deep-seek": "deepseek",
-            "fireworks-ai": "fireworks",
-            "fireworks_ai": "fireworks",
-        }
-        return alias_map.get(family, family)
-    if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
         # omp routes carry the upstream provider as the first path segment
         # (``omp:deepseek/...`` → ``deepseek``, ``omp:zai/...`` → ``zai``).
         # The provider family is the upstream provider; transport identity

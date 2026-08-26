@@ -4104,9 +4104,9 @@ def _clear_orphaned_active_step(
             quarantined.extend(_quarantine_phase_outputs(plan_dir, expected_step))
         changed = current.pop("active_step", None) is not None
         cleared = changed
-        if quarantined:
-            meta = current.setdefault("meta", {})
-            if isinstance(meta, dict):
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            if quarantined:
                 history = meta.setdefault("orphan_recoveries", [])
                 if isinstance(history, list):
                     history.append({
@@ -4115,6 +4115,35 @@ def _clear_orphaned_active_step(
                         "quarantined": list(quarantined),
                     })
                     changed = True
+            if quarantine and changed:
+                # Dead-worker orphan: record a typed, attributed worker death
+                # so a SIGKILL (uncatchable, no failure record) stops being
+                # silent.  ``death_cause`` is cgroup_oom ONLY when the
+                # oom_kill counter advanced between dispatch and recovery.
+                deaths = meta.setdefault("worker_deaths", [])
+                if isinstance(deaths, list):
+                    death_record = _build_worker_death_record(
+                        plan_dir=plan_dir,
+                        phase=expected_step,
+                        active_step=expected_snapshot,
+                        active_step_cas=expected_token,
+                        quarantined=list(quarantined),
+                    )
+                    deaths.append(death_record)
+                    changed = True
+                    current["latest_failure"] = {
+                        "kind": "worker_killed",
+                        "message": (
+                            f"worker for phase {expected_step} died "
+                            f"(pid {death_record.get('worker_pid')}, cause "
+                            f"{death_record.get('death_cause')}); orphaned "
+                            "active_step cleared before redispatch"
+                        ),
+                        "phase": expected_step,
+                        "recorded_at": death_record.get("detected_at"),
+                        "suggested_action": "redispatch the phase (self-healing)",
+                        "metadata": death_record,
+                    }
         return changed
 
     try:
@@ -4131,7 +4160,122 @@ def _clear_orphaned_active_step(
             f"M3B_HALT_ORPHAN_CLEAR_WRITE: failed to clear orphaned active_step in {state_path}: {exc}",
             extra={"path": str(state_path), "expected_step": expected_step},
         ) from exc
+    if cleared and quarantine:
+        _emit_worker_killed_event(
+            plan_dir,
+            expected_step,
+            expected_snapshot,
+            active_step_cas=expected_token,
+            quarantined=list(quarantined),
+        )
     return cleared
+
+
+def _build_worker_death_record(
+    *,
+    plan_dir: Path | None,
+    phase: str,
+    active_step: Mapping[str, Any],
+    active_step_cas: str,
+    quarantined: list[str],
+) -> dict[str, Any]:
+    """Build a typed worker-death record from the orphaned active_step.
+
+    ``death_cause`` is ``cgroup_oom`` only when the cgroup ``oom_kill``
+    counter advanced between the phase's dispatch marker and this recovery —
+    a dead PID alone is ``signal_or_exit_unknown``.
+    """
+    from arnold_pipelines.megaplan.runtime.memory_headroom import (
+        death_cause_from_markers,
+        read_cgroup_memory_snapshot,
+        read_dispatch_memory_marker,
+    )
+
+    configured_specs = active_step.get("configured_specs")
+    if not isinstance(configured_specs, (list, tuple)):
+        configured_specs = ()
+    attempted_specs = active_step.get("attempted_specs")
+    if not isinstance(attempted_specs, (list, tuple)) or not attempted_specs:
+        attempted_specs = configured_specs or (
+            [active_step["model"]] if active_step.get("model") else []
+        )
+    selected_spec = str(attempted_specs[-1]) if attempted_specs else None
+    fallback_index: int | None = None
+    fallback_spec: str | None = None
+    if selected_spec and configured_specs:
+        try:
+            fallback_index = list(configured_specs).index(selected_spec)
+            if fallback_index + 1 < len(configured_specs):
+                fallback_spec = str(configured_specs[fallback_index + 1])
+        except ValueError:
+            fallback_index = None
+    detected_at = datetime.now(timezone.utc).isoformat()
+    cause = death_cause_from_markers(plan_dir, phase)
+    marker = read_dispatch_memory_marker(plan_dir, phase) or {}
+    baseline_oom = int(marker.get("oom_kill") or 0)
+    snapshot = read_cgroup_memory_snapshot() or {}
+    current_oom = int((snapshot.get("memory_events") or {}).get("oom_kill") or 0)
+    return {
+        "phase": phase,
+        "run_id": str(active_step.get("run_id") or ""),
+        "invocation_id": str(active_step.get("invocation_id") or ""),
+        "worker_pid": active_step.get("worker_pid"),
+        "worker_process_start_identity": {
+            "started_at": active_step.get("started_at"),
+            "last_activity_at": active_step.get("last_activity_at"),
+            "mode": active_step.get("mode"),
+            "agent": active_step.get("agent"),
+        },
+        "selected_spec": selected_spec,
+        "active_step_cas": active_step_cas,
+        "detected_at": detected_at,
+        "death_cause": cause,
+        "memory_before": marker.get("memory_current"),
+        "memory_after": snapshot.get("memory_current"),
+        "oom_kill_delta": max(0, current_oom - baseline_oom),
+        "quarantined": quarantined,
+        "fallback_index": fallback_index,
+        "fallback_spec": fallback_spec,
+    }
+
+
+def _emit_worker_killed_event(
+    plan_dir: Path | None,
+    phase: str,
+    active_step: Mapping[str, Any],
+    *,
+    active_step_cas: str,
+    quarantined: list[str],
+) -> None:
+    """Emit a ``worker_killed`` event to the plan journal (best-effort)."""
+    if plan_dir is None:
+        return
+    try:
+        from arnold_pipelines.megaplan.observability.events import EventKind, emit as emit_event
+        from arnold_pipelines.megaplan.runtime.memory_headroom import death_cause_from_markers
+
+        emit_event(
+            EventKind.WORKER_KILLED,
+            plan_dir,
+            phase=phase,
+            payload={
+                "phase": phase,
+                "run_id": str(active_step.get("run_id") or ""),
+                "invocation_id": str(active_step.get("invocation_id") or ""),
+                "worker_pid": active_step.get("worker_pid"),
+                "selected_spec": (
+                    str(active_step.get("attempted_specs")[-1])
+                    if isinstance(active_step.get("attempted_specs"), (list, tuple))
+                    and active_step.get("attempted_specs")
+                    else active_step.get("model")
+                ),
+                "active_step_cas": active_step_cas,
+                "quarantined": quarantined,
+                "death_cause": death_cause_from_markers(plan_dir, phase),
+            },
+        )
+    except Exception:
+        pass
 
 
 def _clear_completed_active_step(

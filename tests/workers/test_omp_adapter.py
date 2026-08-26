@@ -700,3 +700,61 @@ class TestThinkingPassthrough:
         _run_plan(client, tmp_path, model="omp:anthropic/claude-opus-4-8")
         assert ("anthropic", "claude-opus-4-8") in client.set_model_calls
         assert client.env.get("ANTHROPIC_API_KEY") is None or True
+
+
+class TestAutoCompaction:
+    """set_auto_compaction(True) is invoked once after start() and before the
+    model call (occurrence 1ac805e5eef9 memory lever); an unsupported client
+    does not prevent dispatch."""
+
+    def test_auto_compaction_invoked_once_before_model_call(
+        self, tmp_path, monkeypatch, deepseek_env
+    ):
+        payload = _valid_plan_payload()
+        client = FakeRpcClient()
+        _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
+
+        lifecycle: list[str] = []
+        original_start = client.start
+        original_set_model = client.set_model
+        original_compaction = client.set_auto_compaction
+
+        def _wrapped_start():
+            lifecycle.append("start")
+            return original_start()
+
+        def _wrapped_compaction(enabled: bool):
+            lifecycle.append(f"auto_compaction:{enabled}")
+            return original_compaction(enabled)
+
+        def _wrapped_set_model(provider, model_id):
+            lifecycle.append("set_model")
+            return original_set_model(provider, model_id)
+
+        client.start = _wrapped_start
+        client.set_auto_compaction = _wrapped_compaction
+        client.set_model = _wrapped_set_model
+
+        result = _run_plan(client, tmp_path)
+        assert client.auto_compaction_calls == [True]
+        assert lifecycle.index("start") < lifecycle.index("auto_compaction:True")
+        assert lifecycle.index("auto_compaction:True") < lifecycle.index("set_model")
+        assert result is not None
+
+    def test_unsupported_auto_compaction_does_not_prevent_dispatch(
+        self, tmp_path, monkeypatch, deepseek_env
+    ):
+        payload = _valid_plan_payload()
+        client = FakeRpcClient(
+            auto_compaction_error=AttributeError("set_auto_compaction unsupported")
+        )
+        _install_factory(monkeypatch, client)
+        client.turn_factory = _tool_write_turn(client, payload)
+
+        result = _run_plan(client, tmp_path)
+
+        assert result is not None
+        assert client.auto_compaction_calls == []
+        assert client.started == 1
+        assert client.stopped == 1

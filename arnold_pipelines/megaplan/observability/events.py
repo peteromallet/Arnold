@@ -156,6 +156,13 @@ class EventKind:
     ROUTING_DEGRADATION: str = "routing_degradation"
     AUTHORITY_DIVERGENCE: str = "authority_divergence"
 
+    # ── Worker lifecycle (1) ───────────────────────────────────────────
+    # A phase worker's process is gone while state.json still claims the
+    # phase is running (orphaned active_step).  Recorded at orphan recovery
+    # with an attributed death_cause (cgroup_oom vs signal_or_exit_unknown)
+    # so silent SIGKILL deaths stop being invisible.
+    WORKER_KILLED: str = "worker_killed"
+
     # ── Activation (1) ─────────────────────────────────────────────────
     ACTIVATION_TRANSITIONED: str = "activation_transitioned"
 
@@ -226,6 +233,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.DRIFT_DETECTED,
         EventKind.ROUTING_DEGRADATION,
         EventKind.AUTHORITY_DIVERGENCE,
+        EventKind.WORKER_KILLED,
         EventKind.ACTIVATION_TRANSITIONED,
         EventKind.STATE_CACHE_DRIFT,
         EventKind.CAPABILITY_CLAIM,
@@ -272,6 +280,7 @@ _SYSTEM_EVENT_KINDS: Set[str] = frozenset(
         EventKind.DRIFT_DETECTED,
         EventKind.ROUTING_DEGRADATION,
         EventKind.AUTHORITY_DIVERGENCE,
+        EventKind.WORKER_KILLED,
     }
 )
 

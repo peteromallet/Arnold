@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -1304,6 +1305,22 @@ def run_omp_step(
                 timeout=timeout_seconds,
             )
             client.start()
+            try:
+                # Bound the bun host's context growth during long streaming
+                # turns (occurrence 1ac805e5eef9: frontier-phase workers
+                # accumulated multi-GB RSS and were cgroup-OOM-killed under
+                # the 8 GiB ceiling).  Auto-compaction summarises old context
+                # instead of buffering unbounded thinking/tool deltas.
+                client.set_auto_compaction(True)
+            except Exception as exc:
+                # The pinned RpcClient supports it; fakes may not.  Never
+                # fail a launch over a best-effort memory lever, but make
+                # a missing lever observable instead of a silent pass.
+                logging.getLogger(__name__).warning(
+                    "set_auto_compaction unavailable (%s); "
+                    "continuing without context compaction",
+                    exc,
+                )
             try:
                 client.set_model(provider, model_id)
             except Exception:

@@ -1,1 +1,1 @@
-/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/prep_skill.md
+../../data/prep_skill.md

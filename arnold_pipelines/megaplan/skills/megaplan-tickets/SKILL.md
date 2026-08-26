@@ -1,1 +1,1 @@
-/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/tickets_skill.md
+../../data/tickets_skill.md

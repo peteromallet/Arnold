@@ -1,0 +1,342 @@
+"""Pre-dispatch cgroup memory headroom gate.
+
+Occurrence 1ac805e5eef9 (2026-08-26): the ``native-ox-alpha`` phase profile
+routes every phase to the frontier ``stealth/ox-alpha`` model.  Under the
+container's 8 GiB ``memory.max`` ceiling that model grew anonymous memory
+past the limit six times in a row, and the cgroup OOM killer SIGKILLed the
+chain driver (pids 1225229 / 1518468 / 1525415 / 1734837 / 1816031 / 1913264)
+with no typed failure record — SIGKILL is uncatchable, so the phase died
+silently with an orphaned ``active_step``.
+
+The ceiling cannot be raised from inside the container, so the only
+in-container lever is model selection.  This module:
+
+* reads the current cgroup memory snapshot (``memory.current`` /
+  ``memory.max`` / ``memory.swap.max`` / ``memory.events`` plus host
+  ``SwapTotal``);
+* classifies usable headroom for the selected spec — a declared
+  high-memory spec (frontier) requires more headroom than a normal one, and
+  fictional swap (``memory.swap.max > 0`` with host ``SwapTotal == 0``)
+  contributes zero headroom;
+* selects the first spec from the phase's configured fallback chain that has
+  safe headroom, skipping any spec with a *proven* prior cgroup OOM for the
+  same phase (learned-death policy — a prior OOM forces fallback even if
+  current memory later dropped);
+* returns ``None`` when no spec is safe, so the caller can fail with a typed
+  ``insufficient_memory_headroom`` error instead of launching a worker that
+  will be cgroup-killed.
+
+It also persists a per-dispatch ``oom_kill`` marker so the orphan-recovery
+path can attribute a dead worker to ``cgroup_oom`` only when the counter
+actually advanced between dispatch and recovery — never from a bare PID
+observation.
+
+This is a prevention gate, not a precise per-model RSS predictor: the exact
+ox-alpha allocation profile is unknown, so the thresholds are conservative
+knobs and the authoritative backstop is the persistent worker-death fallback
+cursor.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+_CGROUP_BASE = Path("/sys/fs/cgroup")
+
+# Evidence-based high-memory classification: the frontier model that OOM'd
+# the container resolves as ``omp:openrouter/stealth/ox-alpha`` or
+# ``omp:stealth/ox-alpha``.  Any spec containing these tokens is treated as
+# high-memory; everything else is a normal-memory spec.
+_HIGH_MEMORY_TOKENS = ("ox-alpha", "stealth/")
+
+# Headroom thresholds (bytes).  Conservative prevention knobs, NOT measured
+# per-model RSS bounds.
+_HIGH_MEMORY_MIN_HEADROOM = int(1.5 * 1024**3)  # 1.5 GiB for frontier models
+_NORMAL_MIN_HEADROOM = int(256 * 1024**2)  # 256 MiB otherwise
+
+# Marker file (plan_dir-scoped) recording the oom_kill counter at dispatch,
+# so orphan recovery can compute an honest delta.
+_MARKER_FILE = ".worker-dispatch-memory.json"
+
+
+def read_cgroup_memory_snapshot() -> dict[str, Any] | None:
+    """Read the current cgroup memory snapshot.
+
+    Returns ``None`` when the cgroup data is unreadable — headroom then
+    classifies as ``unknown``, never fabricated OOM evidence.
+    """
+    try:
+        current = _read_cgroup_int("memory.current")
+        maximum = _read_cgroup_int("memory.max")
+        if current is None or maximum is None:
+            return None
+        events: dict[str, int] = {}
+        try:
+            raw = (_CGROUP_BASE / "memory.events").read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        for line in raw.splitlines():
+            key, _, value = line.partition(" ")
+            if key and value.strip().isdigit():
+                events[key] = int(value.strip())
+        return {
+            "memory_current": current,
+            "memory_max": maximum,
+            "memory_swap_max": _read_cgroup_int("memory.swap.max") or 0,
+            "memory_events": events,
+            "host_swap_total": _host_swap_total(),
+        }
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _read_cgroup_int(name: str) -> int | None:
+    try:
+        raw = (_CGROUP_BASE / name).read_text(encoding="utf-8").strip()
+        if not raw or raw == "max":
+            return None
+        return int(raw)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _host_swap_total() -> int:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("SwapTotal:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def is_high_memory_spec(spec: str) -> bool:
+    """Return whether *spec* is a declared high-memory (frontier) spec."""
+    lowered = (spec or "").lower()
+    return any(token in lowered for token in _HIGH_MEMORY_TOKENS)
+
+
+def classify_memory_headroom(
+    spec: str,
+    snapshot: dict[str, Any] | None,
+    *,
+    min_headroom: int | None = None,
+) -> dict[str, Any]:
+    """Classify usable headroom for dispatching *spec* under *snapshot*.
+
+    ``snapshot is None`` (unreadable cgroup data) classifies as
+    ``ok=None`` / ``reason=unknown_cgroup_data`` — callers must not treat
+    missing data as permission to launch a known-dangerous worker.
+    """
+    if not snapshot:
+        return {"ok": None, "reason": "unknown_cgroup_data"}
+    current = int(snapshot.get("memory_current") or 0)
+    maximum = int(snapshot.get("memory_max") or 0)
+    usable = max(0, maximum - current)
+    swap_max = int(snapshot.get("memory_swap_max") or 0)
+    host_swap = int(snapshot.get("host_swap_total") or 0)
+    # Fictional swap: a swap.max > 0 with no host swap contributes zero.
+    usable_swap = swap_max if host_swap > 0 else 0
+    headroom = usable + usable_swap
+    need = (
+        min_headroom
+        if min_headroom is not None
+        else (_HIGH_MEMORY_MIN_HEADROOM if is_high_memory_spec(spec) else _NORMAL_MIN_HEADROOM)
+    )
+    oom_kill = int((snapshot.get("memory_events") or {}).get("oom_kill") or 0)
+    ok = headroom >= need
+    return {
+        "ok": ok,
+        "headroom_bytes": headroom,
+        "usable_bytes": usable,
+        "usable_swap_bytes": usable_swap,
+        "required_bytes": need,
+        "oom_kill_total": oom_kill,
+        "reason": "sufficient" if ok else "insufficient_headroom",
+    }
+
+
+def prior_cgroup_oom_deaths(
+    plan_dir: Path | None,
+    phase: str,
+    spec: str,
+) -> list[dict[str, Any]]:
+    """Return recorded ``meta.worker_deaths[]`` cgroup-OOM entries for *phase*.
+
+    The learned-death policy: a proven OOM for the same phase + spec forces
+    fallback even when current memory later dropped.
+    """
+    if plan_dir is None:
+        return []
+    try:
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    meta = state_data.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    deaths = meta.get("worker_deaths")
+    if not isinstance(deaths, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in deaths:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("phase") != phase:
+            continue
+        if entry.get("selected_spec") != spec:
+            continue
+        if entry.get("death_cause") != "cgroup_oom":
+            continue
+        out.append(entry)
+    return out
+
+
+def select_memory_safe_spec(
+    configured_specs: tuple[str, ...] | list[str] | None,
+    *,
+    phase: str,
+    plan_dir: Path | None,
+    snapshot: dict[str, Any] | None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Select the first configured spec that may be safely dispatched.
+
+    Returns ``(selected_spec_or_None, decision)``.  A spec with a proven
+    prior cgroup OOM for the phase is skipped before headroom is even
+    consulted; a high-memory spec with insufficient headroom is skipped in
+    favor of its configured fallback; no safe spec yields ``None`` so the
+    caller can fail closed.
+    """
+    specs = tuple(configured_specs or ())
+    if not specs:
+        return None, {"reason": "no_configured_specs"}
+    decision: dict[str, Any] = {"configured_specs": list(specs)}
+    for index, spec in enumerate(specs):
+        prior = prior_cgroup_oom_deaths(plan_dir, phase, spec)
+        if prior:
+            decision.update(
+                {
+                    "skipped_spec": spec,
+                    "skipped_index": index,
+                    "reason": "prior_cgroup_oom",
+                    "prior_deaths": len(prior),
+                }
+            )
+            continue
+        if not is_high_memory_spec(spec):
+            decision.update(
+                {
+                    "selected_index": index,
+                    "selected_spec": spec,
+                    "reason": "normal_memory_spec",
+                }
+            )
+            return spec, decision
+        result = classify_memory_headroom(spec, snapshot)
+        if result.get("ok") is False:
+            decision.update(
+                {
+                    "skipped_spec": spec,
+                    "skipped_index": index,
+                    "reason": result.get("reason"),
+                    "headroom_bytes": result.get("headroom_bytes"),
+                    "required_bytes": result.get("required_bytes"),
+                    "oom_kill_total": result.get("oom_kill_total"),
+                }
+            )
+            continue
+        if result.get("ok") is None:
+            # Unknown cgroup data: do not launch a known-dangerous worker on
+            # missing evidence — fail closed to the next fallback.
+            decision.update(
+                {
+                    "skipped_spec": spec,
+                    "skipped_index": index,
+                    "reason": result.get("reason"),
+                }
+            )
+            continue
+        decision.update(
+            {
+                "selected_index": index,
+                "selected_spec": spec,
+                "reason": result.get("reason"),
+                "headroom_bytes": result.get("headroom_bytes"),
+                "required_bytes": result.get("required_bytes"),
+            }
+        )
+        return spec, decision
+    decision["reason"] = decision.get("reason") or "no_safe_spec"
+    return None, decision
+
+
+def record_dispatch_memory_marker(plan_dir: Path | None, phase: str, spec: str) -> None:
+    """Persist the dispatch-time ``oom_kill`` counter for *phase*.
+
+    Orphan recovery compares this baseline against the current counter to
+    attribute a dead worker to ``cgroup_oom`` only on an actual delta.
+    Best-effort: a marker that cannot be written must not block dispatch.
+    """
+    if plan_dir is None:
+        return
+    snapshot = read_cgroup_memory_snapshot() or {}
+    oom_kill = int((snapshot.get("memory_events") or {}).get("oom_kill") or 0)
+    entry = {
+        "phase": phase,
+        "spec": spec,
+        "oom_kill": oom_kill,
+        "memory_current": snapshot.get("memory_current"),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        marker_path = plan_dir / _MARKER_FILE
+        markers: dict[str, Any] = {}
+        if marker_path.exists():
+            try:
+                markers = json.loads(marker_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                markers = {}
+        markers[phase] = entry
+        tmp = marker_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(markers, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, marker_path)
+    except OSError:
+        pass
+
+
+def read_dispatch_memory_marker(plan_dir: Path | None, phase: str) -> dict[str, Any] | None:
+    """Return the last dispatch marker for *phase*, or ``None``."""
+    if plan_dir is None:
+        return None
+    try:
+        markers = json.loads((plan_dir / _MARKER_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    entry = markers.get(phase)
+    return entry if isinstance(entry, dict) else None
+
+
+def death_cause_from_markers(
+    plan_dir: Path | None,
+    phase: str,
+) -> str:
+    """Attribute a dead worker's cause using dispatch vs recovery OOM deltas.
+
+    ``cgroup_oom`` only when the dispatch marker exists and the current
+    ``memory.events.oom_kill`` counter advanced past it.  Otherwise
+    ``signal_or_exit_unknown`` — a dead PID is not OOM evidence.
+    """
+    marker = read_dispatch_memory_marker(plan_dir, phase)
+    if marker is None:
+        return "signal_or_exit_unknown"
+    baseline = int(marker.get("oom_kill") or 0)
+    snapshot = read_cgroup_memory_snapshot() or {}
+    current = int((snapshot.get("memory_events") or {}).get("oom_kill") or 0)
+    if current > baseline:
+        return "cgroup_oom"
+    return "signal_or_exit_unknown"

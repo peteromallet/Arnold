@@ -74,6 +74,12 @@ class FakeRpcClient:
     thinking_levels: list[str | None] = field(default_factory=list, init=False)
     prompt_calls: int = field(default=0, init=False)
     abort_calls: int = field(default=0, init=False)
+    #: Recorded ``set_auto_compaction`` calls (bool payloads) — memory-lever
+    #: observability for the cgroup-OOM worker fix (occurrence 1ac805e5eef9).
+    auto_compaction_calls: list[bool] = field(default_factory=list, init=False)
+    #: When set, ``set_auto_compaction`` raises this exception (simulates an
+    #: RpcClient that does not implement the lever).
+    auto_compaction_error: BaseException | None = None
 
     @property
     def stderr(self) -> str:
@@ -100,6 +106,11 @@ class FakeRpcClient:
 
     def __exit__(self, *_exc: object) -> None:
         self.stop()
+
+    def set_auto_compaction(self, enabled: bool) -> None:
+        if self.auto_compaction_error is not None:
+            raise self.auto_compaction_error
+        self.auto_compaction_calls.append(enabled)
 
     def set_model(self, provider: str, model_id: str) -> Any:
         if self.set_model_error is not None:
