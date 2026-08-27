@@ -239,3 +239,46 @@ def test_renderer_noop_guard_teaches_real_health_condition(
     assert "SAME phase erroring" in result.stdout
     assert "events.ndjson is not advancing" in result.stdout
     assert "driver-alive is NOT health" in result.stdout
+
+
+def test_renderer_drive_custody_contract_pins_persistent_detached_launch() -> None:
+    """STEP 4 must enforce the hub custody contract for chain drives.
+
+    Regression for occurrence a1555447f922 (chain native-build-forward, plan
+    p2-milestone-gate-bootstrap-20260827-1501, 2026-08-27): a chain drive
+    launched persist=false/detached=false was SIGKILLed by hub last-omp
+    teardown when the owning babysitter session ended (13m19s uptime, zero log
+    output, no failure record, orphaned worker mid-gap between a successful
+    plan phase and critique dispatch). Third recurrence of the class. The goal
+    must pin the four hub fields, forbid a ready matcher, and forbid
+    restart=on-failure (run_chain is synchronous, no singleton lock).
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RENDERER),
+            "--target",
+            "native-build-forward",
+            "--workspace",
+            "/workspace/runtime-candidates/native-build-forward",
+            "--plan",
+            "p2-milestone-gate-bootstrap-20260827-1501",
+            "--run-kind",
+            "chain",
+            "--occurrence-digest",
+            "a1555447f922",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    for required in (
+        "DRIVE CUSTODY CONTRACT",
+        "persist: true",
+        "detached: true",
+        "pty: false",
+        "restart: no",
+        "NEVER use restart=on-failure",
+    ):
+        assert required in result.stdout, f"goal missing {required!r}"

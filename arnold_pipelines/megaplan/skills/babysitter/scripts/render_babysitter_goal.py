@@ -312,6 +312,18 @@ Mandatory flow — follow the five steps exactly:
   resume / chain start as the evidence requires — never --fresh, never a state
   wipe.  The relaunch must carry the same occurrence identity and the fixed
   source.
+  DRIVE CUSTODY CONTRACT (occurrence a1555447f922, 2026-08-27; third recurrence
+  of owning-session teardown): a hub-launched chain drive MUST use
+  ``persist: true`` + ``detached: true`` + ``pty: false`` + ``restart: no`` and
+  NO ``ready`` matcher (driver output goes to ``.megaplan/cloud-chain.log``,
+  not a matched stream).  NEVER launch the drive with persist=false or
+  detached=false: hub last-omp teardown SIGKILLs it when your session ends
+  (silent death: zero log output, no failure record, orphaned worker).
+  NEVER use restart=on-failure on a chain drive: run_chain is synchronous
+  with no singleton lock, so a restart creates overlapping drives of the same
+  plan.  After launch, ATTEST the contract from the hub process record (the
+  persist/detached/pty/restart fields) and record the attestation in your
+  evidence pack.
   SEED ENV (required when driving plan/resume directly): export
   MEGAPLAN_RUNTIME_LAUNCH_SEED=<launch-seed path> and
   ARNOLD_RUNTIME_MANIFEST=<manifest path> in the invocation env, exactly as
