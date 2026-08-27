@@ -13,21 +13,36 @@ impossible to recur:
    (cloud/runtime_attestation.py) into the single production worker-admission door:
    spec translation, catalog row, model-family classification, live omp membership,
    seed/interpreter binding, timeout budget — fail closed before any worker exists.
-2. **Wire all three launch doors.** workers/_impl.py raw pair, workers/omp.py
-   run_omp_step, cloud/babysitter/launch.py must call the gate; no other
-   refresh_/require_ preflight may execute on these paths.
-3. **Typed death dispositions.** Every terminate site appends
-   `{killer, signal, elapsed_s, disposition_id}` to the incident ledger:
-   - launcher TimeoutExpired (subagent-launcher/launch_omp_agent.py)
-   - resident/subagent.py worker.terminate()
-   - watchdog SIGTERM + wedged-signaling path (wrappers/arnold-watchdog)
+2. **Wire all three launch doors — exactly once each.** workers/_impl.py non-OMP
+   routes, workers/omp.py run_omp_step (backend entry; _impl delegates to it at
+   _impl.py:7698-7713 — the nested OMP path must total ONE hit), and
+   cloud/babysitter/launch.py pre-managed-launch. No other refresh_/require_
+   preflight may execute on these paths.
+3. **Typed death dispositions — every real signal branch.** Route ALL terminate
+   sites through one typed helper over `IncidentLedger.append_event`
+   (incident/ledger.py:338-361), appending
+   `{killer, signal, elapsed_s, disposition_id}`:
+   - launcher: the child is killed BEFORE TimeoutExpired raises
+     (subagent-launcher/launch_omp_agent.py:251-261) — disposition at the kill,
+     not the exception
+   - resident/subagent.py: two terminate→kill ladders (:4818-4824, :5065-5072)
+   - watchdog: SIGTERM + wedged-signaling path (wrappers/arnold-watchdog)
    - ensure-megaplan-watchdog restack pkill
-4. **Fingerprint redispatch block.** Recovery loop refuses to redispatch an
-   identical fingerprint unless a changed precondition is recorded.
-5. **Joint model admission test** — one function validates spec↔catalog↔family↔live
-   provider simultaneously; a second test asserts expired ids fail typed.
-6. **Structural spy test.** Driving `_run_step_with_worker` AND `run_omp_step`
-   under a production manifest hits the gate exactly once each; no other preflight.
+4. **Fingerprint redispatch block — pre-launch.** Admission refuses to launch a
+   worker whose dispatch fingerprint matches the last terminal fingerprint
+   (incident/projection.py:452-478 currently only diagnoses at the 3rd repeat)
+   unless a durable changed-precondition identity is recorded.
+5. **Joint model admission — and expired-ID proof.** One admission function
+   validates spec↔catalog↔family↔live provider membership simultaneously; a
+   test proves the discriminating case: static catalog ACCEPTS an expired id
+   (ox-alpha, workers/omp.py:98-105 / model_seam.py:502-506) while the joint
+   admission REJECTS it typedly against the live provider.
+6. **Structural spy test — three doors, gate-before-spawn.** Driving
+   `run_step_with_worker` (workers/_impl.py:7347 — NOT the underscore name)
+   and `run_omp_step` under a production manifest hits the gate exactly ONCE
+   per dispatch (the nested OMP delegation totals one hit), the babysitter
+   pre-launch door is covered, the spy intercepts only final spawn/RPC (no
+   mock early-return), and a door-bypass today would make it fail.
 
 ## In scope / non-goals
 - In scope: engine code above + their focused tests; catalog/family wiring already
