@@ -32,3 +32,9 @@ host ftrace `/sys/kernel/tracing/trace` (sig==15), local Arnold commits.
 Movement = `last_state` leaves critiqued-park AND failure fingerprint does not recur
 AND a live worker exists ≥10 min with advancing events seq. PID/prose ≠ proof.
 | 12 | 21:05–22:33 | three more silent fixer deaths (770s/1406s/124-style) + one live turn on EMPTY --model hitting `omp_rpc host_tools unavailable` ×3 | stacked regressions: G14 rewrite dropped identity-prefix tail-return AND reset-hard cycles reverted deployed fixes; hot-env ox-alpha pin overrode model all night | mixed | ftrace attribution -> wedge two-scan confirm a344ab833e; catalog+pin commits; hot-env pins rewritten to bare glm-5.3-flash id (survives resets); launcher redeployed from fresh main; bad-model turn killed for clean redispatch | IN PROGRESS |
+
+## Watch-item resolution log
+- 2026-08-27 ~11:54Z: p1 `finalized→execute` transition completed autonomously after
+  ~35 min of executor activity; chain cursor advanced into idx-1 execute. No seam
+  nudge used. Clock-frame note: container reports true UTC (`date -u`); earlier
+  ledger lines mixing local-tagged times should be normalized when computing gaps.
