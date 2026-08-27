@@ -1,23 +1,28 @@
-# Status — onboard-oracle run
+# Megado run staged — READY, not executed
 
-- Phase: PLAN (Phase 1)
-- Batch: none yet
-- Checkpoint SHA: base 370d7f6f739c27fe447060b82bc01cd45de0d535
-- Huge run: NO (estimate well under 2 weeks; single-repo feature ~2-4 days human-equivalent)
-- Model declaration: USER-PINNED — ox-alpha for EVERY role (planner, explorer, executor, oracle,
-  sense-checkers via fresh subagents for review independence). No codex/deepseek/grok invocations.
-- Resume notes: worktree ../Arnold-onboard-oracle; artifacts under .oracle/; base checkout of
-  user's active branch tip 370d7f6f (native/build-forward-epic line).
-- Phase: PLAN SETTLED (plan v3, digest post-fix; W1 synthesis accepted K1-partial,K2,K3,R1-R5; W2 STABLE)
-- Next: Phase 4 tasklist + pre-execution contract review, then freeze.
-- Phase: EXECUTE (tasklist FROZEN; contract review PASS)
-- Next: Batch 1.
-- Phase: EXECUTE batch 2
-- Checkpoint: B1 PASS committed.
-- Phase: EXECUTE batch 4
-- Checkpoints: B1 PASS b45dff9, B2 PASS 5910d23, B3 PASS.
-- Phase: COMPLETE
-- Final reviews: FinalA+FinalB FAIL -> final-attempt-1 rework (5 items) -> GateFR PASS
-  (P3 over-redaction accepted as safe-direction tradeoff, recorded).
-- Suites at close: onboarding 135 passed/1 skipped; pipeline_run_cli 50; characterization etc green.
-- Phase: COMPLETE (B3 switch landed; final-ui rework PASS)
+Location: /Users/peteromalley/Documents/Arnold-oracle-nbf (branch megado-nbf-guard-0826 @ f8725af516)
+
+## Prepared
+- .oracle/northstar.md   — durable direction + anti-patterns
+- .oracle/custody.md     — immutable baseline (base SHA f8725af516 == origin/main)
+- .oracle/agent_goal.md  — frozen contract: worker_disposition control plane,
+  three-door wiring, typed deaths, redispatch block, joint model admission,
+  structural spy; model policy pinned: Grok4.6 planner/oracle/[XHARD],
+  glm-5.3-flash everywhere else
+- .oracle/briefs/planner-grok.md — Grok deep-plan brief
+
+## Probes already green
+- glm-5.3-flash via omp: verified live ("ok")
+- grok CLI present at ~/.grok/bin/grok, headless --prompt-file supported
+- fan.py available for parallel glm investigators/executors
+
+## Fire sequence when you say go
+1. `grok --prompt-file .oracle/briefs/planner-grok.md -m grok-4.6 --reasoning-effort high`
+   → .oracle/plan.md  (the DEEP PLAN)
+2. glm sense-check wave on the plan (fan.py, 2–3 lenses)
+3. Freeze tasklist after Sol-style... no — oracle=Grok approves; then batched glm executors
+4. Per-batch grok oracle gates → rework loop until PASS each batch
+5. Final overall review (1–3 grok passes), push megado-nbf-guard-0826 branch,
+   main-merge only with your explicit approval at completion review
+
+Say "go" and I launch step 1.

@@ -1,79 +1,60 @@
-# Agent goal — first-run provider onboarding for the `arnold` custom agent
+# Agent Goal — make the 24h failure marathon structurally impossible
 
-[North Star](./northstar.md)
+[North Star](./northstar.md) — this run advances "one door per invariant" and
+"deaths speak" by shipping the systemic guard Grok specified in
+docs/nbf-grok-verdicts.md (§3), verified by structural tests.
 
 ## Objective
-When a user launches the `arnold` custom agent (agentbox launch path) for the first time on a
-machine with zero usable inference providers, Arnold offers an interactive onboarding flow that:
-1. scans the machine read-only (foreign CLI stores, env/.env vars, omp agent.db, models.yml);
-2. presents found routes first (bucketed ready / found-elsewhere / not-found), with OpenRouter
-   surfaced as the always-visible easy path;
-3. lets the user pick ONE primary provider (default model preselected per provider, changeable),
-   wires it by copying static keys into omp's credential store or generating `models.yml`
-   entries (rotating tokens referenced live, never copied), with explicit consent and provenance;
-4. verifies the wired route with a real `omp -p --no-session --model <route>` smoke test
-   (loop back into that provider's menu on failure; never exit half-wired);
-5. persists everything in omp's own stores, then resumes the user's original launch intent.
+Implement, in this repo, the typed worker-disposition control plane that makes the
+2026-08-26 NBF failure marathon (11+ failure events, docs/nbf-failure-ledger.md)
+impossible to recur:
 
-## How this run advances the North Star
-Implements the end state directly: first `arnold` launch to first verified model, once, with no
-re-prompts afterwards.
+1. **Unique admission gate.** Extend `require_production_worker_dispatch_runtime`
+   (cloud/runtime_attestation.py) into the single production worker-admission door:
+   spec translation, catalog row, model-family classification, live omp membership,
+   seed/interpreter binding, timeout budget — fail closed before any worker exists.
+2. **Wire all three launch doors.** workers/_impl.py raw pair, workers/omp.py
+   run_omp_step, cloud/babysitter/launch.py must call the gate; no other
+   refresh_/require_ preflight may execute on these paths.
+3. **Typed death dispositions.** Every terminate site appends
+   `{killer, signal, elapsed_s, disposition_id}` to the incident ledger:
+   - launcher TimeoutExpired (subagent-launcher/launch_omp_agent.py)
+   - resident/subagent.py worker.terminate()
+   - watchdog SIGTERM + wedged-signaling path (wrappers/arnold-watchdog)
+   - ensure-megaplan-watchdog restack pkill
+4. **Fingerprint redispatch block.** Recovery loop refuses to redispatch an
+   identical fingerprint unless a changed precondition is recorded.
+5. **Joint model admission test** — one function validates spec↔catalog↔family↔live
+   provider simultaneously; a second test asserts expired ids fail typed.
+6. **Structural spy test.** Driving `_run_step_with_worker` AND `run_omp_step`
+   under a production manifest hits the gate exactly once each; no other preflight.
 
-## Authoritative inputs
-- Design conversation with the user (2026-08-25): UX screens 0–5, copy-vs-reference rule,
-  persistence model, edge cases #1–#16 (esp. merge-don't-clobber models.yml (#6), $HOME
-  expansion not hardcoded paths (#7), old-pin command-not-found fallback (#16)).
-- Existing research: fork surfaces (auth-broker import CLIProxyAPI parser, AuthStorage cascade,
-  setup-wizard) and Arnold surfaces (_OMP_CREDENTIAL_ENV workers/omp.py:86–134,
-  _ENV_HINTS_BY_OMP_PROVIDER cloud/preflight.py:53, _check_required_credentials
-  agentbox_adapter.py:982, branded binary resolution agentbox/arnold_agent.py).
+## In scope / non-goals
+- In scope: engine code above + their focused tests; catalog/family wiring already
+  on main stays; hot-env pin file gets a comment pointing at the gate (no behavior).
+- Non-goals: the 22-milestone NBF chain itself (it runs independently);
+  Discord/resident features; CI rework beyond making new tests run.
 
-## In scope
-- Arnold-side Python module(s): detection adapters, interactive offer/wiring/verify flow,
-  persistence via ~/.omp/agent/models.yml generation + omp CLI mechanisms available WITHOUT
-  fork changes (e.g. `omp auth-broker import` for CLIProxyAPI JSON, omp's native login where a
-  CLI exists).
-- Trigger wiring: `arnold` agentbox launch path (primary trigger), megaplan local launch
-  preflight failure paths, `doctor` (--onboard flag). TTY-gated offers only.
-- Targeted pytest coverage for: detection adapters, models.yml merge semantics, non-TTY
-  fail-closed behavior, old-pin fallback, offer helper.
-- Docs: short onboarding section describing the flow + omp contract.
+## Settled decisions
+- Model policy (user-pinned): Planner & Oracle & `[XHARD]` = grok-4.6;
+  every other role = glm-5.3-flash (`openrouter/z-ai/glm-5.3-flash` via omp).
+- Fix delivery = fixer contract: commit in candidate tree, ship to origin/main,
+  never hotfix-by-deploy-only.
+- Single-scan supervision verdicts are banned; two-scan confirmation pattern is
+  the standard for any kill decision.
 
-## Non-goals
-- ANY change to ~/Documents/oh-my-pi unless a capability is PROVEN impossible from Arnold side
-  (record evidence first; ask user before touching the fork).
-- Cloud/agentbox/watchdog headless behavior changes beyond preserving them.
-- New credential storage formats, broker deployment, multi-machine sync.
-- Provider catalog expansion beyond what omp already supports.
+## Validation
+- pytest tests/cloud/test_runtime_attestation.py (existing 42) PLUS new
+  disposition/admission/spy suites, all green locally.
+- Structural spy asserts exactly-once gating from both doors.
+- bash -n on wrapper changes; grep proves no remaining raw refresh_/require_ pair
+  on the three doors.
 
-## Settled decisions (from user)
-- Implementation lives in the ARNOLD repo ideally; oh-my-pi fork only if impossible.
-- Flow fires when launching the `arnold` CUSTOM AGENT first time.
-- Persist everything at onboarding; reuse silently afterwards; no env-var-only option —
-  static keys are copied into omp stores by default.
-- ox-alpha performs every role this run (planner/explorer/executor/oracle); vigorous testing
-  at completion.
+## Done / stop
+Done when criteria 1–6 hold with green suites and the structural spy passes after a
+fresh `git fetch && git rebase origin/main`. Stop (blocked) only if box evidence
+needed for a disposition consumer is unavailable and user cannot grant it.
 
-## Authorization boundaries
-- Mutate: only this worktree (branch onboard-oracle). Commit after each batch.
-- Sync/push: push branch `onboard-oracle` to origin at completion. NEVER main,
-  NEVER native/build-forward-epic. No deploy/promotion.
-- Secrets: never printed, logged, or stored in receipts/artifacts.
-
-## Done criteria
-1. Fresh-launch simulation (empty credential env + clean agent dir) triggers the offer on a
-   TTY and completes to one verified route; declined/non-TTY paths produce today's typed
-   failure unchanged.
-2. Wired route survives a NEW process (persistence proof): second launch runs with zero prompts.
-3. All targeted tests pass; full affected test subset green.
-4. Every agent-goal criterion mapped to evidence; North Star disposition recorded.
-
-## Validation commands
-- Targeted: `uv run pytest tests/... -k onboard` (paths fixed in tasklist)
-- Smoke (real machine): scripted pty session exercising screens 0–5; verify exit codes 0/1/2
-  contract; models.yml merge idempotence across two runs.
-- Full-suite subset: existing preflight/credential-related tests still green.
-
-## Stop conditions
-blocked / failed / undetermined / retryable / escalate per skill contract; escalate any
-proposed fork change to the user before implementing.
+## Sync policy
+Push branch `megado-nbf-guard-0826` to origin when batches pass oracle gates.
+Merging to main requires user approval at completion review.

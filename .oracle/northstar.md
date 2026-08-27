@@ -1,29 +1,26 @@
-# North Star — Arnold first-run provider onboarding
+# North Star — Arnold self-healing supervision
 
-## End state
-A person who has just cloned Arnold launches `arnold` for the first time and, within a minute,
-is talking to a working model — without reading docs, without editing YAML by hand, and without
-ever seeing the same setup question twice.
+**End state:** An agent harness where no worker can be launched onto a spec that
+isn't live, a box that won't survive it, or a seed bound to the wrong interpreter —
+and where every worker death carries its killer's identity in a typed record that
+the recovery loop consumes before it ever retries the same fingerprint.
 
-## Principles
-- **Detect before asking.** Show what already exists on the machine (CLI logins, keys in env
-  or `.env` files) before offering anything manual. Found-first ordering beats blank menus.
-- **One verified route is success.** Optimize time-to-first-working-model; multi-provider is an
-  opt-in second visit, never first-run homework.
-- **Persist once, reuse forever.** Every accepted credential lands in omp's own stores
-  (agent.db / ~/.omp/agent/models.yml). Later launches silently reuse it. No re-prompts.
-- **Provenance everywhere.** Every stored credential records where it came from so a later
-  failure names its origin ("onboarded from ~/.codex/auth.json").
-- **Headless stays fail-closed.** Non-TTY paths (cloud chains, watchdogs, RPC) behave exactly
-  as today. Onboarding is strictly an interactive-terminal offer.
+**Enduring principles**
+- One door per invariant: admission, dispatch, and death are each enforced at
+  exactly one place; duplicate preflights are deleted, not patched around.
+- Deaths speak: SIGKILL, timeout, terminate, restack — every termination emits
+  `{killer, signal, elapsed_s}` into the failure ledger. Silent death is a bug.
+- Models are admitted, not assumed: a model id must resolve against catalog,
+  prefix map, family classifier, and live provider membership at dispatch time,
+  typedly rejecting expired or unknown ids.
+- Fixes ship on main through the fixer contract; hotfixes that live only as
+  deployed-but-uncommitted files do not exist.
 
-## Anti-patterns (hollow versions of success)
-- A wizard that asks "which provider?" with a 30-row wall and no detection.
-- Copying short-lived tokens as if static (dead in hours); or referencing static keys as if
-  they must stay put (breaks when the .env disappears).
-- Silently importing credentials without consent, or printing secrets anywhere.
-- Onboarding logic duplicated inside the oh-my-pi fork (upstream merge pain) — fork stays
-  vanilla unless something is proven impossible from the Arnold side.
-- A half-wired exit: user configures three providers, none verified, flow ends "successfully".
-- Regressing existing typed failures: any path that used to fail closed with
-  `credential_preflight_failed` must still do so byte-for-byte when non-interactive or declined.
+**Anti-patterns to avoid**
+- Single-scan verdicts treated as sustained truth (wedge kills, restacks).
+- Anonymous integer exit codes where a disposition belongs.
+- Judgment-based "healthy" claims without positive proof (live pid + advancing seq).
+- Redispatch of an identical failure fingerprint without a changed precondition.
+
+**Aligned progress feels like:** fewer incident classes over time, each new stall
+arriving with evidence attached and leaving with a root fix on main.
