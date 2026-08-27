@@ -1,16 +1,14 @@
-# Custody baseline — onboard-oracle run
+# Custody baseline — megado-nbf-guard-0826
 
-- Date: 2026-08-25
-- Repo: /Users/peteromalley/Documents/Arnold (origin https://github.com/peteromallet/Arnold.git)
-- Source ref: `native/build-forward-epic` @ `370d7f6f739c27fe447060b82bc01cd45de0d535`
-- Worktree: /Users/peteromalley/Documents/Arnold-onboard-oracle, branch `onboard-oracle`
-- Protected local work that must survive (lives ONLY in main checkout, not this worktree):
-  - Deleted: arnold_pipelines/megaplan/skills/{babysit,babysitter,babysitting-principles}/SKILL.md
-  - Modified: skills/cleanup-loose-branches/SKILL.md, skills/subagent-launcher/SKILL.md
-  - Untracked: .megaplan/initiatives/chain.yaml, skills/pipeline-babysitting/, tests/agentbox/test_standalone_runtime_attestation.py
-- Other worktrees observed: ~/Documents/arnold-oracle (oracle-run @736c08d9, prior megado wave — untouched),
-  ~/Documents/native-bf-oracle (oracle-run-2 @9744f21c), several .megaplan-worktrees entries.
-- Environment: darwin arm64, M2; omp binary /Users/peteromalley/.bun/bin/omp -> oh-my-pi fork dev checkout, omp/17.4.0;
-  fork repo /Users/peteromalley/Documents/oh-my-pi is CLEAN at baseline and must stay clean (fork changes out of scope
-  unless proven impossible without them).
-- Machine HAS live provider credentials (grok CLI login, codex OAuth, deepseek/openrouter env) — usable for verify smoke tests.
+- Worktree: /Users/peteromalley/Documents/Arnold-oracle-nbf (branch megado-nbf-guard-0826)
+- Base SHA: f8725af516da8d4249eb0d63563c37776d80daf8 (== origin/main at 2026-08-27 ~12:10Z)
+- Source ref: origin/main; remote https://github.com/peteromallet/Arnold.git
+- Base status: clean (no untracked carried)
+- Other worktrees protected, must survive:
+  - /Users/peteromalley/Documents/Arnold (primary checkout, branch native/build-forward-epic + untracked run docs)
+  - /Users/peteromalley/Documents/Arnold-oracle (PRIOR unrelated megado run — do not touch)
+- Environment identity: host mac (darwin 24.4.0, arm64); omp CLI at ~/.bun/bin/omp;
+  glm-5.3-flash probed working via `openrouter/z-ai/glm-5.3-flash`; grok CLI at ~/.grok/bin/grok.
+- Protected concurrent work: agentbox container `megaplan-cloud-agent-resident-only`
+  runs the live NBF chain — read-only evidence only from this run unless a brief
+  explicitly authorizes box mutation.
