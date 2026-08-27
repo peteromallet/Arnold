@@ -73,3 +73,14 @@ needed for a disposition consumer is unavailable and user cannot grant it.
 ## Sync policy
 Push branch `megado-nbf-guard-0826` to origin when batches pass oracle gates.
 Merging to main requires user approval at completion review.
+
+7. **Cooldown-aware scheduling conditions (T7, added via plan evolution — ledger
+   entry 13).** Treat an active same-phase/spec cgroup-OOM cooldown as a typed,
+   time-bounded `scheduling_condition`, never a worker/phase failure: shared
+   pre-dispatch seam calls `memory_cooldown_wait_secs`, emits `retry_wait`
+   evidence, sleeps via injectable clock/sleeper, reruns admission. A
+   scheduling condition increments neither deterministic-phase-failure nor
+   repeated-signature counters and cannot set the plan to `blocked`; genuine
+   repeated internal_errors still open their breakers. Foundation shipped to
+   main: a9e1c7d0d6 (death expiry) + af370f5ec6 (defer refusals; recover
+   repeated-failure blocks).
