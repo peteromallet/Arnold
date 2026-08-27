@@ -412,6 +412,68 @@ def set_omp_client_factory(factory: _OmpClientFactory | None) -> None:
     _client_factory = factory
 
 
+def _bounded_memory_client_class(base: type) -> type:
+    """Return an ``RpcClient`` subclass that does not retain the streamed
+    prompt event history in supervisor memory.
+
+    A megaplan phase runs as ONE long agent turn. The stock client retains
+    every raw streamed event (tool results, file reads, message updates) for
+    the whole turn — count-bounded only, so a long phase grew the chain-start
+    supervisor to multi-GB RSS and OOM-killed the 16 GiB container
+    (occurrence 8e4028a81152, 2026-08-27: 102MB → 13.5GB in ~40 min).
+    Megaplan consumes only the terminal assistant text and the canonical
+    session messages, so this subclass retains a constant-size terminal
+    ``agent_end`` marker instead and rebuilds the turn from the
+    authoritative ``get_messages()`` snapshot. Event listeners keep
+    receiving every parsed event: listener dispatch happens in the reader
+    loop, independent of ``_append_event`` retention (pinned omp_rpc
+    ca1411b598273702c2e67cd127d44a2c52e48aac).
+    """
+    cached = _BOUNDED_MEMORY_CLIENT_CACHE.get(id(base))
+    if cached is not None:
+        return cached
+
+    from omp_rpc.client import PromptTurn, _clone_json_object
+    from omp_rpc.protocol import assistant_text
+
+    class _NoPromptEventRetentionClient(base):  # type: ignore[misc,valid-type]
+        def _append_event(self, payload: dict[str, Any]) -> None:
+            if payload.get("type") != "agent_end":
+                # Do not retain streamed events; the reader loop still
+                # dispatches every parsed event to listeners.
+                return
+            marker: dict[str, Any] = {
+                "type": "agent_end",
+                "isTerminal": payload.get("isTerminal", True),
+                "messages": [],
+            }
+            with self._event_condition:
+                self._events.append(_clone_json_object(marker))
+                self._event_condition.notify_all()
+
+        def _build_prompt_turn(self, events: tuple[Any, ...]) -> Any:
+            messages = self.get_messages()
+            assistant_message: dict[str, Any] | None = None
+            for message in reversed(messages):
+                if isinstance(message, dict) and message.get("role") == "assistant":
+                    assistant_message = message
+                    break
+            return PromptTurn(
+                events=(),
+                messages=messages,
+                assistant_message=assistant_message,
+                assistant_text=assistant_text(assistant_message)
+                if assistant_message is not None
+                else None,
+            )
+
+    _BOUNDED_MEMORY_CLIENT_CACHE[id(base)] = _NoPromptEventRetentionClient
+    return _NoPromptEventRetentionClient
+
+
+_BOUNDED_MEMORY_CLIENT_CACHE: dict[int, type] = {}
+
+
 def _import_rpc_client() -> Any:
     try:
         from omp_rpc import RpcClient
@@ -421,7 +483,7 @@ def _import_rpc_client() -> Any:
             "omp_rpc package is not installed; install the pinned "
             "python/omp-rpc distribution",
         ) from exc
-    return RpcClient
+    return _bounded_memory_client_class(RpcClient)
 
 
 def _build_client(
