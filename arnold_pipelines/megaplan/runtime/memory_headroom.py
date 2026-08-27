@@ -94,6 +94,68 @@ def _death_age_secs(entry: dict[str, Any]) -> float | None:
     return (datetime.now(timezone.utc) - stamped).total_seconds()
 
 
+def _cooldown_wait_cap_secs(cooldown: int) -> float:
+    raw = (os.environ.get("ARNOLD_MEMORY_COOLDOWN_WAIT_CAP_SECS") or "").strip()
+    if not raw:
+        return float(cooldown + 60)
+    try:
+        value = int(raw)
+    except ValueError:
+        return float(cooldown + 60)
+    return float(value) if value >= 0 else float(cooldown + 60)
+
+
+def memory_cooldown_wait_secs(
+    plan_dir: Path | None,
+    phase: str,
+    *,
+    spec: str | None = None,
+) -> float:
+    """Return the bounded wait before re-dispatching *phase* after a
+    ``prior_cgroup_oom`` refusal, or ``0.0`` when no unexpired death applies.
+
+    A typed dispatch refusal inside the learned-death cooldown is a
+    time-bounded scheduling condition, not a phase contract failure: the
+    newest unexpired cgroup-OOM death for the phase fixes when redispatch
+    becomes safe. Callers sleep this long and retry instead of feeding the
+    refusal to the deterministic-failure / repeated-signature breakers,
+    which would permanently block the plan on a condition that expires.
+    Malformed or future-skewed timestamps return ``0.0`` (fail closed
+    through normal breaker accounting) rather than waiting forever.
+    """
+    if plan_dir is None:
+        return 0.0
+    try:
+        state_data = json.loads(
+            (Path(plan_dir) / "state.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        return 0.0
+    meta = state_data.get("meta") if isinstance(state_data, dict) else None
+    deaths = meta.get("worker_deaths") if isinstance(meta, dict) else None
+    if not isinstance(deaths, list):
+        return 0.0
+    cooldown = _oom_death_cooldown_secs()
+    newest: float | None = None
+    for entry in deaths:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("phase") != phase or entry.get("death_cause") != "cgroup_oom":
+            continue
+        if spec is not None and entry.get("selected_spec") != spec:
+            continue
+        age = _death_age_secs(entry)
+        if age is None or age < 0 or age > cooldown:
+            continue
+        newest = age if newest is None else min(newest, age)
+    if newest is None:
+        return 0.0
+    remaining = cooldown - newest
+    if remaining <= 0:
+        return 0.0
+    return min(remaining + 2.0, _cooldown_wait_cap_secs(cooldown))
+
+
 def read_cgroup_memory_snapshot() -> dict[str, Any] | None:
     """Read the current cgroup memory snapshot.
 

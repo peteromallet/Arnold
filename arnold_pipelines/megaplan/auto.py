@@ -422,6 +422,40 @@ def _is_cli_error_payload(payload: Any) -> bool:
     )
 
 
+def _memory_cooldown_refusal_wait(
+    phase: str,
+    stdout: str,
+    stderr: str,
+    plan_dir: Path | None,
+) -> float | None:
+    """Return the cooldown wait for a typed prior_cgroup_oom dispatch refusal.
+
+    Returns ``None`` unless the phase subprocess emitted the structured
+    ``insufficient_memory_headroom`` CliError payload for this phase with
+    decision reason ``prior_cgroup_oom`` (matched on the structured payload,
+    never on English message fragments). Returns ``None`` also when the
+    payload matches but no unexpired learned death applies — the caller then
+    keeps the normal breaker accounting for that single honest refusal.
+    """
+    payload = _extract_cli_error_payload(stdout, stderr)
+    details = payload.get("details") if isinstance(payload, dict) else None
+    decision = details.get("decision") if isinstance(details, dict) else None
+    if not (
+        isinstance(payload, dict)
+        and payload.get("error") == "insufficient_memory_headroom"
+        and isinstance(details, dict)
+        and details.get("phase") == phase
+        and isinstance(decision, dict)
+        and decision.get("reason") == "prior_cgroup_oom"
+    ):
+        return None
+    from arnold_pipelines.megaplan.runtime.memory_headroom import (
+        memory_cooldown_wait_secs,
+    )
+
+    return memory_cooldown_wait_secs(plan_dir, phase)
+
+
 def _predispatch_validation_failure(
     stdout: str,
     stderr: str,
@@ -7246,10 +7280,39 @@ def drive(
             # lock-wait into a terminal state — the bug that surfaced when two
             # auto drivers raced into the same phase. Treat as a no-op; the next
             # iteration's status() will see the lock released.
+            cooldown_wait = _memory_cooldown_refusal_wait(
+                next_step, out, err, plan_dir
+            )
             if "plan_locked" in ((err or "") + (out or "")):
                 deterministic_phase_failure_signature = None
                 deterministic_phase_failure_count = 0
                 log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
+            elif cooldown_wait is not None and cooldown_wait > 0.0:
+                # A prior_cgroup_oom dispatch refusal inside the learned-death
+                # cooldown is a time-bounded scheduling condition, not a phase
+                # contract failure: the precondition (recent OOM death) expires.
+                # Wait out the remaining cooldown and re-dispatch without
+                # feeding the refusal to either breaker — record_step_failure
+                # already appended an error history row, so the counters must
+                # be reset here or the top-of-loop signature breaker would
+                # still trip and permanently block the plan.
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
+                repeated_failure_signature = None
+                repeated_failure_occurrence = None
+                repeated_failure_signature_count = 0
+                log(
+                    f"phase '{next_step}' dispatch deferred by prior_cgroup_oom "
+                    f"cooldown; waiting {cooldown_wait:.1f}s before redispatch"
+                )
+                events.append(
+                    {
+                        "msg": "dispatch deferred inside OOM learned-death cooldown",
+                        "phase": next_step,
+                        "wait_s": round(cooldown_wait, 1),
+                    }
+                )
+                time.sleep(cooldown_wait)
             elif (
                 next_step == "execute"
                 and _recover_completed_execute_artifacts_after_failure(plan_dir)

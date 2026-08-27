@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.runtime.memory_headroom import (
     classify_memory_headroom,
     death_cause_from_markers,
     is_high_memory_spec,
+    memory_cooldown_wait_secs,
     prior_cgroup_oom_deaths,
     record_dispatch_memory_marker,
     select_memory_safe_spec,
@@ -235,3 +236,71 @@ def test_death_without_timestamp_fails_closed(tmp_path: Path) -> None:
     )
     assert spec is None
     assert decision["reason"] == "prior_cgroup_oom"
+
+
+def test_cooldown_wait_positive_for_fresh_death(tmp_path: Path) -> None:
+    # Default cooldown 900s, death aged 60s: remaining (840) + 2s epsilon.
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=60)
+    wait = memory_cooldown_wait_secs(tmp_path, "revise")
+    assert 840.0 <= wait <= 844.0
+
+
+def test_cooldown_wait_zero_for_expired_death(tmp_path: Path) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=901)
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0
+
+
+def test_cooldown_wait_zero_without_deaths(tmp_path: Path) -> None:
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0
+
+
+def test_cooldown_wait_fails_closed_on_malformed_timestamp(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "meta": {
+                    "worker_deaths": [
+                        {
+                            "phase": "revise",
+                            "death_cause": "cgroup_oom",
+                            "detected_at": "not-a-timestamp",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0
+
+
+def test_cooldown_wait_fails_closed_on_future_timestamp(tmp_path: Path) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=-100)
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0
+
+
+def test_cooldown_wait_ignores_unrelated_phase(tmp_path: Path) -> None:
+    _write_death(tmp_path, phase="critique", spec=FLASH, age_secs=10)
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0
+
+
+def test_cooldown_wait_spec_filter(tmp_path: Path) -> None:
+    _write_death(tmp_path, phase="revise", spec=OX_ALPHA, age_secs=10)
+    assert memory_cooldown_wait_secs(tmp_path, "revise", spec=FLASH) == 0.0
+    assert memory_cooldown_wait_secs(tmp_path, "revise", spec=OX_ALPHA) > 0.0
+
+
+def test_cooldown_wait_respects_cap_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=60)
+    monkeypatch.setenv("ARNOLD_MEMORY_COOLDOWN_WAIT_CAP_SECS", "15")
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 15.0
+
+
+def test_cooldown_wait_zero_with_cooldown_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=1)
+    monkeypatch.setenv("ARNOLD_MEMORY_OOM_DEATH_COOLDOWN_SECS", "0")
+    assert memory_cooldown_wait_secs(tmp_path, "revise") == 0.0

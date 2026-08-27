@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from arnold_pipelines.megaplan import auto
@@ -1593,3 +1594,179 @@ def test_drive_stall_preserves_original_blocked_cursor_not_recover_blocked(
     assert persisted_cursor.get("retry_strategy") == "manual_review"
     assert persisted.get("latest_failure", {}).get("kind") == "stalled"
     assert status_calls >= 2
+
+
+_GLM_SPEC = "omp:openrouter/z-ai/glm-5.3-flash"
+
+
+def _memory_refusal_stderr(phase: str = "revise", reason: str = "prior_cgroup_oom") -> str:
+    return json.dumps(
+        {
+            "success": False,
+            "error": "insufficient_memory_headroom",
+            "message": (
+                f"refusing to dispatch {_GLM_SPEC} for phase {phase}: "
+                f"{reason} — no configured fallback has safe cgroup headroom "
+                "(typed block instead of a known-OOM launch)"
+            ),
+            "details": {
+                "phase": phase,
+                "selected_spec": _GLM_SPEC,
+                "configured_specs": [_GLM_SPEC],
+                "decision": {"reason": reason},
+            },
+        }
+    )
+
+
+def _seed_plan_with_worker_death(
+    plan_dir: Path,
+    *,
+    death_age_secs: int,
+    refusal: str,
+    phases: tuple[str, ...] = ("revise", "gate"),
+) -> None:
+    message = json.loads(refusal)["message"]
+    detected_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=death_age_secs)
+    ).isoformat().replace("+00:00", "Z")
+    state = {
+        "name": "demo",
+        "current_state": "critiqued",
+        "latest_failure": {
+            "kind": "phase_failed",
+            "phase": phases[0],
+            "message": message,
+        },
+        "history": [
+            {"step": phases[0], "result": "failed", "message": message}
+        ],
+        "meta": {
+            "worker_deaths": [
+                {
+                    "phase": phase,
+                    "selected_spec": _GLM_SPEC,
+                    "death_cause": "cgroup_oom",
+                    "worker_pid": 123,
+                    "detected_at": detected_at,
+                }
+                for phase in phases
+            ]
+        },
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_drive_defers_memory_cooldown_refusal_without_breaker_trip(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    refusal = _memory_refusal_stderr()
+    _seed_plan_with_worker_death(plan_dir, death_age_secs=60, refusal=refusal)
+    sleeps: list[float] = []
+    monkeypatch.setattr(auto.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "revise",
+            "valid_next": ["revise"],
+            "progress": {},
+        },
+    )
+    monkeypatch.setattr(
+        auto,
+        "_run_planning_phase",
+        lambda args, **kwargs: (1, "", _memory_refusal_stderr(phase=args[0])),
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=4, poll_sleep=0)
+
+    # Every iteration defers inside the cooldown: neither the deterministic
+    # failure counter nor the repeated-signature breaker may trip, and the
+    # plan must stay out of blocked.
+    assert outcome.status == "cap"
+    assert sleeps and all(s > 0 for s in sleeps)
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "critiqued"
+
+
+def test_drive_still_blocks_persistent_memory_refusal_after_cooldown_expiry(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    refusal = _memory_refusal_stderr()
+    _seed_plan_with_worker_death(plan_dir, death_age_secs=901, refusal=refusal)
+    monkeypatch.setattr(auto.time, "sleep", lambda s: None)
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "revise",
+            "valid_next": ["revise"],
+            "progress": {},
+        },
+    )
+    monkeypatch.setattr(
+        auto,
+        "_run_planning_phase",
+        lambda args, **kwargs: (1, "", _memory_refusal_stderr(phase=args[0])),
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=4, poll_sleep=0)
+
+    # With the cooldown expired the deferral does not apply: a persistent
+    # refusal is still honest accounting and must reach the breaker.
+    assert outcome.status == "blocked"
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "blocked"
+
+
+def test_drive_does_not_defer_non_cooldown_memory_refusal(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    refusal = _memory_refusal_stderr(reason="insufficient_headroom")
+    _seed_plan_with_worker_death(plan_dir, death_age_secs=60, refusal=refusal)
+    sleeps: list[float] = []
+    monkeypatch.setattr(auto.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "revise",
+            "valid_next": ["revise"],
+            "progress": {},
+        },
+    )
+    monkeypatch.setattr(
+        auto,
+        "_run_planning_phase",
+        lambda args, **kwargs: (
+            1,
+            "",
+            _memory_refusal_stderr(phase=args[0], reason="insufficient_headroom"),
+        ),
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=4, poll_sleep=0)
+
+    # Low headroom is not a time-bounded cooldown condition: it must never
+    # receive the deferral counter reset.
+    assert outcome.status == "blocked"
+    assert sleeps == []

@@ -824,3 +824,137 @@ def test_adopt_execution_emits_authority_receipt_and_mismatched_evidence_fails(
     assert "SH-override_adopt_execution_authority-authority-evidence-hash-mismatch-0" in _finding_ids(
         plan_dir
     )
+
+
+def test_recover_blocked_accepts_repeated_failure_signature_without_phase_result(
+    tmp_path: Path,
+) -> None:
+    """A repeated_failure_signature block trips before any worker emits a
+    phase_result.json (e.g. a typed pre-dispatch refusal), so recovery must
+    accept the commit-bound repair without one."""
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "revise",
+        "retry_strategy": "repair_repeated_failure",
+    }
+    state["latest_failure"] = {
+        "kind": "repeated_failure_signature",
+        "phase": "revise",
+        "message": "same semantic failure repeated 3 times: revise: refusal",
+    }
+    failure_fingerprint = compact_failure_identity(state["latest_failure"])[
+        "fingerprint"
+    ]
+    _write_json(plan_dir / "state.json", state)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "validated repeated failure repair"],
+        cwd=tmp_path,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    with pytest.raises(CliError, match="does not match the target workspace HEAD"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "unbound repeated failure repair",
+                    "repair_commit": "a" * 40,
+                    "failure_fingerprint": failure_fingerprint,
+                    "root": str(tmp_path),
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+    with pytest.raises(CliError, match="exact current failure fingerprint"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "stale repeated failure repair",
+                    "repair_commit": head,
+                    "failure_fingerprint": "e" * 64,
+                    "root": str(tmp_path),
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+    result = apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="recover-blocked",
+            payload={
+                "reason": "validated repeated failure repair",
+                "repair_commit": head,
+                "failure_fingerprint": failure_fingerprint,
+                "root": str(tmp_path),
+            },
+        ),
+        "megaplan",
+        plan_dir=plan_dir,
+    )
+
+    assert result.accepted is True
+    assert result.artifacts["phase_contract_repair"]["failure_kind"] == (
+        "repeated_failure_signature"
+    )
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert persisted["current_state"] == "critiqued"
+    assert "latest_failure" not in persisted
+
+
+def test_recover_blocked_rejects_repeated_failure_signature_with_wrong_cursor(
+    tmp_path: Path,
+) -> None:
+    """The commit-bound gate stays fail-closed: a repeated_failure_signature
+    block without its dedicated repair cursor still requires phase_result."""
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {"phase": "revise", "retry_strategy": "rerun_phase"}
+    state["latest_failure"] = {
+        "kind": "repeated_failure_signature",
+        "phase": "revise",
+        "message": "same semantic failure repeated 3 times: revise: refusal",
+    }
+    _write_json(plan_dir / "state.json", state)
+
+    with pytest.raises(CliError, match="requires phase_result.json"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "wrong cursor shape",
+                    "root": str(tmp_path),
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )

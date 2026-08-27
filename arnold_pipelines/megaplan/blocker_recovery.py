@@ -65,6 +65,32 @@ def compact_failure_identity(value: object) -> dict[str, Any]:
     return compact
 
 
+_COMMIT_BOUND_PHASE_REPAIRS = {
+    "deterministic_phase_failure": "repair_phase_contract",
+    "provider_contract_failure": "repair_provider_contract",
+    "repeated_failure_signature": "repair_repeated_failure",
+}
+
+
+def commit_bound_phase_repair_required(
+    latest_failure: object,
+    resume_cursor: object,
+) -> bool:
+    """Return whether *latest_failure* requires a commit-bound phase repair.
+
+    Repeated-failure-signature blocks are commit-bound too: the signature
+    breaker can trip before any worker emits ``phase_result.json`` (for
+    example a typed pre-dispatch refusal), so recovery must authenticate the
+    exact code surface the same way as the other deterministic repair kinds.
+    """
+    return bool(
+        isinstance(latest_failure, Mapping)
+        and isinstance(resume_cursor, Mapping)
+        and _COMMIT_BOUND_PHASE_REPAIRS.get(str(latest_failure.get("kind") or ""))
+        == resume_cursor.get("retry_strategy")
+    )
+
+
 def validated_deterministic_phase_repair(
     project_dir: Path,
     state: dict[str, Any],
@@ -73,27 +99,25 @@ def validated_deterministic_phase_repair(
     failure_fingerprint: object,
     repair_scope: object = None,
 ) -> dict[str, str] | None:
-    """Validate an explicit code-repair receipt for a deterministic phase failure.
+    """Validate an explicit code-repair receipt for a commit-bound phase repair.
 
     Internal failures can stop before ``phase_result.json`` is emitted; provider
-    response-contract failures emit a typed external result.  ``recover-blocked``
-    may replay either only when its dedicated repair cursor is current and the
-    caller binds recovery to the exact code surface that contains the repair.
-    Other states keep the existing fail-closed behavior.
+    response-contract failures emit a typed external result; repeated-signature
+    blocks trip before any worker runs.  ``recover-blocked`` may replay any of
+    them only when its dedicated repair cursor is current and the caller binds
+    recovery to the exact code surface that contains the repair.  Other states
+    keep the existing fail-closed behavior.
     """
 
     latest_failure = state.get("latest_failure")
-    supported_repairs = {
-        "deterministic_phase_failure": "repair_phase_contract",
-        "provider_contract_failure": "repair_provider_contract",
-    }
     failure_kind = (
         str(latest_failure.get("kind") or "")
         if isinstance(latest_failure, dict)
         else ""
     )
     if not isinstance(latest_failure, dict) or (
-        supported_repairs.get(failure_kind) != resume_cursor.get("retry_strategy")
+        _COMMIT_BOUND_PHASE_REPAIRS.get(failure_kind)
+        != resume_cursor.get("retry_strategy")
     ):
         return None
     failure_phase = str(latest_failure.get("phase") or "").strip()

@@ -66,6 +66,7 @@ from arnold_pipelines.megaplan.control_interface import (
 )
 from arnold_pipelines.megaplan.blocker_recovery import (
     command_blocker_details,
+    commit_bound_phase_repair_required,
     compact_failure_identity,
     evaluate_blocker_recovery,
     validated_deterministic_phase_repair,
@@ -1474,18 +1475,9 @@ def _override_recover_blocked(
         )
     phase_repair_evidence: dict[str, str] | None = None
     artifact_invalidation: dict[str, Any] | None = None
-    deterministic_phase_repair_required = bool(
-        isinstance(latest_failure, dict)
-        and (
-            (
-                latest_failure.get("kind") == "deterministic_phase_failure"
-                and resume_cursor.get("retry_strategy") == "repair_phase_contract"
-            )
-            or (
-                latest_failure.get("kind") == "provider_contract_failure"
-                and resume_cursor.get("retry_strategy") == "repair_provider_contract"
-            )
-        )
+    deterministic_phase_repair_required = commit_bound_phase_repair_required(
+        latest_failure,
+        resume_cursor,
     )
     if deterministic_phase_repair_required:
         # A deterministic phase failure is recorded specifically because the
