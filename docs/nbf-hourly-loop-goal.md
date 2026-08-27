@@ -80,3 +80,24 @@ proven movement or a written external-gate handoff.
   fixer owns the occurrence.
 - Stop condition: all milestones complete AND chain exits cleanly.
 - Otherwise ALWAYS re-arm the next leg before ending the fire.
+
+## PLAN EVOLUTION — feed every failure to the plan (added 2026-08-27)
+Whenever a fire touches a failure (new fingerprint, repeated fingerprint, or a
+resolved one worth encoding):
+1. Write the incident into docs/nbf-failure-ledger.md as usual.
+2. Then update THE PLAN so the machinery improves, not just this run:
+   - Plan-of-record location: `.oracle/plan.md` in the megado worktree
+     (`/Users/peteromalley/Documents/Arnold-oracle-nbf`) — the Grok deep plan.
+     Until it exists, the same content lives in `.oracle/agent_goal.md`
+     §Objective + `docs/nbf-grok-verdicts.md` §3 (the Grok systemic-guard spec).
+   - Feed to the PLANNER (codex exec gpt-5.6-sol high, read-only — or grok-4.6
+     when codex is unavailable) a short revision brief: the new ledger entry
+     (verbatim), the current plan file (by path), and this instruction:
+     "Update the plan based on this failure: either ADD a new DEEP fix task
+     addressing the root cause class, or AMEND an existing task/acceptance
+     criterion in place. Keep batches/seams coherent. Do not widen scope beyond
+     the agent goal. If nothing material changes, answer exactly NO-CHANGE."
+3. Record the revision (digest + one-line delta) in .oracle/status.md and in
+   the ledger entry (plan-revised: yes/no + where).
+This makes every failure a permanent, planned improvement to the pipeline —
+not just a patched run.
