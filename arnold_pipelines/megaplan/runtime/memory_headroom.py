@@ -62,6 +62,37 @@ _NORMAL_MIN_HEADROOM = int(256 * 1024**2)  # 256 MiB otherwise
 # so orphan recovery can compute an honest delta.
 _MARKER_FILE = ".worker-dispatch-memory.json"
 
+# The learned-death policy must not freeze a single-spec chain forever on a
+# transient OOM: a proven death only blocks redispatch within this cooldown
+# window, after which the precondition (actual memory pressure) is
+# re-verified against CURRENT cgroup state.  Env-overridable for operators
+# and tests.
+_DEFAULT_OOM_DEATH_COOLDOWN_SECS = 15 * 60
+
+
+def _oom_death_cooldown_secs() -> int:
+    raw = (os.environ.get("ARNOLD_MEMORY_OOM_DEATH_COOLDOWN_SECS") or "").strip()
+    if not raw:
+        return _DEFAULT_OOM_DEATH_COOLDOWN_SECS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_OOM_DEATH_COOLDOWN_SECS
+    return value if value >= 0 else _DEFAULT_OOM_DEATH_COOLDOWN_SECS
+
+
+def _death_age_secs(entry: dict[str, Any]) -> float | None:
+    raw = entry.get("detected_at")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        stamped = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamped).total_seconds()
+
 
 def read_cgroup_memory_snapshot() -> dict[str, Any] | None:
     """Read the current cgroup memory snapshot.
@@ -168,8 +199,12 @@ def prior_cgroup_oom_deaths(
 ) -> list[dict[str, Any]]:
     """Return recorded ``meta.worker_deaths[]`` cgroup-OOM entries for *phase*.
 
-    The learned-death policy: a proven OOM for the same phase + spec forces
-    fallback even when current memory later dropped.
+    The learned-death policy: a RECENT proven OOM (within the
+    ``_DEFAULT_OOM_DEATH_COOLDOWN_SECS`` cooldown, env-overridable) for the
+    same phase + spec forces fallback even when current memory later
+    dropped; expired deaths re-enter normal selection so a stale block
+    cannot freeze a single-spec chain permanently.  Entries without a
+    parseable ``detected_at`` fail closed (still blocking).
     """
     if plan_dir is None:
         return []
@@ -183,6 +218,7 @@ def prior_cgroup_oom_deaths(
     deaths = meta.get("worker_deaths")
     if not isinstance(deaths, list):
         return []
+    cooldown = _oom_death_cooldown_secs()
     out: list[dict[str, Any]] = []
     for entry in deaths:
         if not isinstance(entry, dict):
@@ -192,6 +228,12 @@ def prior_cgroup_oom_deaths(
         if entry.get("selected_spec") != spec:
             continue
         if entry.get("death_cause") != "cgroup_oom":
+            continue
+        age = _death_age_secs(entry)
+        if age is not None and age > cooldown:
+            # Expired learned death: memory pressure is re-verified against
+            # current state on the next dispatch instead of being frozen at
+            # the death timestamp.
             continue
         out.append(entry)
     return out
@@ -206,9 +248,10 @@ def select_memory_safe_spec(
 ) -> tuple[str | None, dict[str, Any]]:
     """Select the first configured spec that may be safely dispatched.
 
-    Returns ``(selected_spec_or_None, decision)``.  A spec with a proven
-    prior cgroup OOM for the phase is skipped before headroom is even
-    consulted; a high-memory spec with insufficient headroom is skipped in
+    Returns ``(selected_spec_or_None, decision)``.  A spec with a recent
+    proven prior cgroup OOM for the phase (within the learned-death
+    cooldown) is skipped before headroom is even consulted; a high-memory
+    spec with insufficient headroom is skipped in
     favor of its configured fallback; no safe spec yields ``None`` so the
     caller can fail closed.
     """

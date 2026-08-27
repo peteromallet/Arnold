@@ -7,13 +7,15 @@ Covers the fail-closed/attribution contract of
 * fictional swap (``memory.swap.max > 0`` with no host swap) contributes zero;
 * insufficient headroom for a high-memory spec selects the configured fallback;
 * a scalar unsafe chain returns ``None`` so the caller fails typed;
-* a proven same-phase/same-spec cgroup OOM forces fallback (learned-death);
+* a recent proven same-phase/same-spec cgroup OOM forces fallback (learned-death
+  cooldown); an aged death expires and the spec re-enters selection;
 * an unrelated phase/spec death is never reused.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from arnold_pipelines.megaplan.runtime.memory_headroom import (
@@ -108,21 +110,28 @@ def test_sufficient_headroom_admits_ox_alpha(tmp_path: Path) -> None:
     assert decision["reason"] == "sufficient"
 
 
-def _write_death(tmp_path: Path, phase: str, spec: str, cause: str = "cgroup_oom") -> None:
+def _write_death(
+    tmp_path: Path,
+    phase: str,
+    spec: str,
+    cause: str = "cgroup_oom",
+    age_secs: int = 60,
+    with_timestamp: bool = True,
+) -> None:
+    death: dict = {
+        "phase": phase,
+        "selected_spec": spec,
+        "death_cause": cause,
+        "worker_pid": 999_999,
+    }
+    if with_timestamp:
+        death["detected_at"] = (
+            datetime.now(timezone.utc) - timedelta(seconds=age_secs)
+        ).isoformat().replace("+00:00", "Z")
     state = {
         "name": "demo",
         "current_state": "critiqued",
-        "meta": {
-            "worker_deaths": [
-                {
-                    "phase": phase,
-                    "selected_spec": spec,
-                    "death_cause": cause,
-                    "worker_pid": 999_999,
-                    "detected_at": "2026-08-26T00:00:00Z",
-                }
-            ]
-        },
+        "meta": {"worker_deaths": [death]},
     }
     (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
@@ -188,3 +197,41 @@ def test_death_cause_requires_oom_kill_delta(
 
 def test_marker_absent_means_unknown_not_oom() -> None:
     assert death_cause_from_markers(Path("/nonexistent"), "revise") == "signal_or_exit_unknown"
+
+
+def test_aged_oom_death_expires_and_spec_dispatches(tmp_path: Path) -> None:
+    # Default cooldown is 900s: a death older than the cooldown must not
+    # block dispatch forever — the precondition (memory pressure) is
+    # re-verified against current state instead of frozen at the death.
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=901)
+    assert prior_cgroup_oom_deaths(tmp_path, phase="revise", spec=FLASH) == []
+    snapshot = _snapshot(current=int(1 * 1024**3))
+    spec, decision = select_memory_safe_spec(
+        (FLASH,), phase="revise", plan_dir=tmp_path, snapshot=snapshot
+    )
+    assert spec == FLASH
+    assert decision["reason"] == "normal_memory_spec"
+
+
+def test_cooldown_env_override_disables_learned_death(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, age_secs=1)
+    monkeypatch.setenv("ARNOLD_MEMORY_OOM_DEATH_COOLDOWN_SECS", "0")
+    assert prior_cgroup_oom_deaths(tmp_path, phase="revise", spec=FLASH) == []
+    snapshot = _snapshot(current=int(1 * 1024**3))
+    spec, _ = select_memory_safe_spec(
+        (FLASH,), phase="revise", plan_dir=tmp_path, snapshot=snapshot
+    )
+    assert spec == FLASH
+
+
+def test_death_without_timestamp_fails_closed(tmp_path: Path) -> None:
+    _write_death(tmp_path, phase="revise", spec=FLASH, with_timestamp=False)
+    assert prior_cgroup_oom_deaths(tmp_path, phase="revise", spec=FLASH)
+    snapshot = _snapshot(current=int(1 * 1024**3))
+    spec, decision = select_memory_safe_spec(
+        (FLASH,), phase="revise", plan_dir=tmp_path, snapshot=snapshot
+    )
+    assert spec is None
+    assert decision["reason"] == "prior_cgroup_oom"
