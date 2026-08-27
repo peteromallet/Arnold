@@ -892,6 +892,9 @@ def _verify_completed_chain(
                 "files_in_committed_range": list(
                     details.get("files_in_committed_range") or []
                 ),
+                "files_claimed_worktree_only": list(
+                    details.get("files_claimed_worktree_only") or []
+                ),
                 "evidence_window": dict(details.get("evidence_window") or {}),
                 "diff_source": details.get("diff_source"),
             }
@@ -4817,13 +4820,6 @@ def _chain_completion_shadow_disagreements(
                 f"{label_source} status={status!r} disagrees with "
                 "dispatch-grant/accepted-attempt authority "
                 f"({authority_sources}): {reason}"
-            )
-        elif status not in _CHAIN_SHADOW_TERMINAL_STATUSES and accepted:
-            diagnostics.append(
-                f"chain_authority_shadow[{task_id}]: {label_kind} source "
-                f"{label_source} status={status!r} disagrees with "
-                "dispatch-grant/accepted-attempt authority "
-                f"({authority_sources}): accepted dependency-closed attempt"
             )
 
     if completion_record is not None and incomplete_task_sources:

@@ -259,7 +259,9 @@ def _validate_execution_evidence_code(
         return {
             "findings": findings,
             "files_in_diff": [],
+            "files_in_committed_range": [],
             "files_claimed": files_claimed,
+            "files_claimed_worktree_only": [],
             "skipped": True,
             "reason": "Project directory is not a git repository.",
             "evidence_window": _evidence_window(project_dir, base_ref),
@@ -297,7 +299,9 @@ def _validate_execution_evidence_code(
         return {
             "findings": findings,
             "files_in_diff": [],
+            "files_in_committed_range": [],
             "files_claimed": files_claimed,
+            "files_claimed_worktree_only": [],
             "skipped": True,
             "reason": status_error,
             "evidence_window": _evidence_window(project_dir, base_ref),
@@ -313,14 +317,25 @@ def _validate_execution_evidence_code(
     dir_prefixes = [path for path in diff_set if path.endswith("/")]
 
     def _covered_by_diff(claimed: str) -> bool:
-        if claimed in authority_set:
+        # Claim existence = committed evidence range OR working-tree status.
+        # The 14:16 incident shape: milestone work present on disk but not yet
+        # committed (the auto-publish lands seconds later) — status shows it,
+        # the committed range does not, and a committed-range-only authority
+        # set misreported it as a phantom claim.
+        if claimed in authority_set or claimed in diff_set:
             return True
         return any(claimed.startswith(prefix) or claimed == prefix.rstrip("/") for prefix in dir_prefixes)
 
+    files_claimed_worktree_only = sorted(
+        claimed
+        for claimed in claimed_set
+        if declared_authoritative and claimed in diff_set and claimed not in committed_paths
+    )
     phantom_claims = sorted(claimed for claimed in claimed_set if not _covered_by_diff(claimed))
     if phantom_claims:
         findings.append(
-            "Executor claimed changed files not present in git status: "
+            "Executor claimed changed files absent from both the committed "
+            "evidence range and working-tree status: "
             + _summarize_advisory_paths(
                 phantom_claims,
                 plan_dir=plan_dir,
@@ -343,8 +358,13 @@ def _validate_execution_evidence_code(
         if diff_path not in claimed_set and not _dir_is_claimed(diff_path)
     )
     if unclaimed_changes:
+        unclaimed_message = (
+            "Declared committed evidence range contains files not claimed by any task: "
+            if declared_authoritative
+            else "Git status shows changed files not claimed by any task: "
+        )
         findings.append(
-            "Git status shows changed files not claimed by any task: "
+            unclaimed_message
             + _summarize_advisory_paths(
                 unclaimed_changes,
                 plan_dir=plan_dir,
@@ -424,6 +444,7 @@ def _validate_execution_evidence_code(
         "files_in_diff": files_in_diff,
         "files_in_committed_range": sorted(committed_paths),
         "files_claimed": files_claimed,
+        "files_claimed_worktree_only": files_claimed_worktree_only,
         "skipped": False,
         "reason": "",
         "evidence_window": _evidence_window(project_dir, base_ref),

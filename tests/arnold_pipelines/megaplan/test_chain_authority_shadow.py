@@ -73,7 +73,13 @@ def _records(task_id: str):
     return evidence, fence, grant, attempt, IdempotencyKey(claim.idempotency_key, claim.payload_hash), claim
 
 
-def _write_accepted_batch_overlay(plan_dir: Path, *, task_id: str) -> None:
+def _write_accepted_batch_overlay(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    status: str = "done",
+    include_payload: bool = True,
+) -> None:
     evidence, fence, grant, attempt, _claim_key, claim = _records(task_id)
     dispatch = DispatchIdentity.from_records(
         grant,
@@ -96,9 +102,12 @@ def _write_accepted_batch_overlay(plan_dir: Path, *, task_id: str) -> None:
                 "task_updates": [
                     {
                         "task_id": task_id,
-                        "status": "done",
-                        "files_changed": [f"src/{task_id}.py"],
-                        "authority": {"envelope_digest": envelope.digest()},
+                        "status": status,
+                        **(
+                            {"files_changed": [f"src/{task_id}.py"]}
+                            if include_payload
+                            else {}
+                        ),
                         "authority_validation": {
                             "outcome": "accepted",
                             "entry_kind": "task_update",
@@ -155,3 +164,54 @@ def test_chain_completion_shadow_names_disagreeing_authority_sources(tmp_path: P
     assert "chain_authority_shadow[m1]" in reason
     assert "chain state source chain_state.completed[m1]" in reason
     assert "incomplete sources: T2 from finalize.json" in reason
+
+
+def test_chain_completion_accepts_stale_nonterminal_finalize_with_accepted_attempt(
+    tmp_path: Path,
+) -> None:
+    """A stale non-terminal finalize row must not veto an authority-accepted task.
+    Regression for occurrence 944dd380108d (chain native-build-forward,
+    milestone p1-custody-m11-admission): execute published T3 status='blocked'
+    (declared test-budget bookkeeping) while the accepted-attempt authority
+    recorded the task done (VJ2 rechecks passed, 50/50). The second branch of
+    _chain_completion_shadow_disagreements treated the stale row as a completion
+    veto ("accepted dependency-closed attempt") and the chain parked at
+    authority_divergence instead of adopting the done plan.
+    """
+    (tmp_path / "state.json").write_text(
+        json.dumps({"current_state": "done", "config": {}, "meta": {}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "blocked",
+                        "depends_on": [],
+                        # Mirror the real T3 shape: evidence-bearing row whose
+                        # only defect is the stale non-terminal status.
+                        "commands_run": [
+                            "timeout 120 python3 -m pytest tests/test_t1.py -q"
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Incident shape: the batch row itself is non-terminal and carries no
+    # payload fields, so _task_record_can_override_finalize is False and no
+    # batch overlay fires — only the accepted-attempt authority exists.
+    _write_accepted_batch_overlay(
+        tmp_path,
+        task_id="T1",
+        status="blocked",
+        include_payload=False,
+    )
+
+    ok, reason = _latest_execution_batch_all_tasks_done(tmp_path)
+
+    assert ok is True, reason
+    assert reason == "finalize.json"

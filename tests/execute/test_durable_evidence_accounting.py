@@ -386,3 +386,57 @@ def test_terminal_task_write_set_counts_as_claimed_paths(tmp_path: Path) -> None
     claimed = _collect_finalized_task_claimed_paths(plan_dir, tmp_path)
     assert "astrid/core/conformance/kit.py" in claimed
     assert "tests/v10/conftest.py" in claimed
+
+
+def test_execution_evidence_declared_range_accepts_untracked_present_claim(
+    tmp_path: Path,
+) -> None:
+    """A claimed file present in the working tree is not a phantom claim.
+
+    Regression for occurrence 944dd380108d: under a declared base_ref the
+    landed-diff coverage set was narrowed to the committed range, so the
+    milestone's untracked-but-present work (committed only by the later
+    auto-publish) was reported as "not present in git status" — false, since
+    git status did show it — and the chain refused milestone adoption.
+    """
+    from arnold_pipelines.megaplan.orchestration.execution_evidence import (
+        validate_execution_evidence,
+    )
+
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    # Committed after base: stays an unclaimed committed-range finding.
+    (repo / "other.py").write_text("OTHER = 1\n", encoding="utf-8")
+    _commit(repo, "unrelated implementation")
+    # Untracked but present on disk: claimed by the task, must not be phantom.
+    (repo / "generated.py").write_text("GENERATED = 1\n", encoding="utf-8")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["generated.py", "missing.py"],
+                "commands_run": ["pytest -q"],
+            }
+        ]
+    }
+
+    result = validate_execution_evidence(
+        finalize_data,
+        repo,
+        plan_dir=plan_dir,
+        base_ref=base_sha,
+    )
+
+    findings = result["findings"]
+    assert result["files_claimed_worktree_only"] == ["generated.py"]
+    assert not any("generated.py" in finding for finding in findings), findings
+    phantom = [f for f in findings if "missing.py" in f]
+    assert len(phantom) == 1, findings
+    assert "absent from both the committed evidence range and working-tree status" in phantom[0]
+    unclaimed = [f for f in findings if "other.py" in f]
+    assert len(unclaimed) == 1, findings
+    assert "Declared committed evidence range contains files not claimed" in unclaimed[0]

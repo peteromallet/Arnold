@@ -751,7 +751,12 @@ def project_execution_audit_context(
             for item in findings[:MAX_AUDIT_FINDINGS]
         ]
 
-    for key in ("files_in_diff", "files_claimed", "auto_attribution"):
+    for key in (
+        "files_in_diff",
+        "files_claimed",
+        "files_claimed_worktree_only",
+        "auto_attribution",
+    ):
         value = audit_data.get(key)
         if isinstance(value, list):
             projected[key] = value[:MAX_AUDIT_FILES]

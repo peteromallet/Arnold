@@ -845,6 +845,9 @@ class LandedDiffProvider:
             "files_in_diff": files_in_diff,
             "files_in_committed_range": result.get("files_in_committed_range") or [],
             "files_claimed": result.get("files_claimed") or [],
+            "files_claimed_worktree_only": (
+                result.get("files_claimed_worktree_only") or []
+            ),
             "skipped": bool(result.get("skipped")),
             "skip_reason": result.get("reason") or "",
             "diff_source": diff_source,
