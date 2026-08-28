@@ -84,3 +84,18 @@ Merging to main requires user approval at completion review.
    repeated internal_errors still open their breakers. Foundation shipped to
    main: a9e1c7d0d6 (death expiry) + af370f5ec6 (defer refusals; recover
    repeated-failure blocks).
+
+8. **Typed `provider_degraded` scheduling condition (T8, plan evolution — ledger
+   entry 14).** Consecutive upstream idle-timeouts/availability errors for one
+   spec become a typed, time-bounded `scheduling_condition`
+   (`reason=provider_degraded`, carrying `phase`/`spec`/`retry_after_s`) —
+   never a worker/phase failure. Breaker-exempt like T7. If a configured
+   fallback exists (same-family alternate or last-known-good), flip through the
+   existing fallback-chain door (`fallback_chains.py`,
+   `_advance_configured_spec_fallback`) with the flip target passing joint
+   admission (criterion 5); if the pin is scalar, hold with a bounded health
+   probe and redispatch once after recovery. Flip AND return-to-primary append
+   ledger evidence. Files: fallback_chains.py, workers/_impl.py,
+   handlers/shared.py, orchestration/phase_result.py, recovery_policy.py,
+   auto.py breakers, incident/ledger.py. DEEP verdict (Grok 4.6, full spec in
+   .oracle/findings/evolution-entry14.txt).

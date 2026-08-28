@@ -1,0 +1,31 @@
+I'll read the northstar, plan-of-record, and ledger entry 14 first so the ADD / AMEND / NO-CHANGE call is grounded in the existing criteria.Entry 13 already added T7; I'll read the entry-14 brief, Grok verdicts, and T7 shape so this call is consistent with that evolution.I’ll inspect T7’s scheduling-condition shape and the dispatch/failover seams so T8 (if added) names real files and doesn’t duplicate T7.Fallback chains already exist; I’ll check whether idle-timeout is classified as retryable and how T7’s planner verdict was written.Decision: **ADD** — new task **T8**. Do not amend T7 or criteria 1–6.
+
+T7 stays cgroup-OOM only: sleep the same spec for a known remaining cooldown. This failure is a different member of that temporal class. The degraded OpenRouter/z-ai/glm-5.3-flash route had no known remaining time; sleep-and-retry-same-spec is the 3h ×126 storm. Existing criteria also miss it: joint admission (5) is identity, not health; fingerprint redispatch (4) would park the plan instead of rotating; fallback chains only advance when a chain longer than one spec is configured, and the user pin is a scalar glm spec.
+
+### T8 — Typed `provider_degraded` scheduling condition
+
+**Objective:** Consecutive upstream idle-timeouts / availability flaps for a spec become a typed, time-bounded `scheduling_condition` (`reason=provider_degraded`), never a worker/phase failure. Join T7’s breaker-exemption class and the existing fallback-chain door: if a configured same-family alternate or last-known-good exists, flip to it after consecutive evidence; otherwise hold for a bounded health probe. Joint model admission (criterion 5) still gates every flip target. Return to the primary when the probe recovers. Emit flip/return evidence. Do not invent a second rotator.
+
+**Files:**
+
+- `arnold_pipelines/megaplan/fallback_chains.py` (`classify_retryability`, chain advancement)
+- `arnold_pipelines/megaplan/workers/_impl.py` (`_advance_configured_spec_fallback`, `_initial_fallback_metadata`)
+- `arnold_pipelines/megaplan/handlers/shared.py`
+- `arnold_pipelines/megaplan/orchestration/phase_result.py`
+- `arnold_pipelines/megaplan/orchestration/recovery_policy.py`
+- `arnold_pipelines/megaplan/auto.py` (deterministic / repeated-signature breakers)
+- `arnold_pipelines/megaplan/incident/ledger.py` (flip/return evidence)
+- Focused tests beside `tests/arnold_pipelines/megaplan/test_plan_circuit.py`, fallback-chain tests, and T7’s scheduling-condition suite
+
+**Acceptance criteria:**
+
+1. Consecutive `server_error` / `Upstream idle timeout exceeded` (or equivalent availability classification) for one spec produce a typed `scheduling_condition` with at least `reason=provider_degraded`, `phase`, `spec`, and `retry_after_s`. A single timeout does not flip (no single-scan verdict).
+2. That condition increments neither `deterministic_phase_failure_count` nor repeated-failure-signature/circuit counters and cannot set the plan to `blocked`. The `invalid_transition` retry cascade after a blocked revise does not occur. Genuine repeated `internal_error` / malformed-output still open their breakers.
+3. When a configured fallback exists (profile/TOML chain, same-family alternate, or last-known-good), consecutive degradation advances through `_advance_configured_spec_fallback` / `fallback_chains.py`. The flip target must pass criterion 5 joint admission. User-pinned glm-5.3-flash is not silently replaced by a different role (planner/oracle/codex).
+4. When no fallback is configured (scalar pin, the entry-14 shape), dispatch does not hammer the degraded spec unbounded and does not block: bounded hold + injectable health probe, then one redispatch after recovery or a typed skip until the probe passes.
+5. Flip and return-to-primary each append ledger evidence (`from_spec`, `to_spec`, `reason`, `disposition_id`). A later successful probe of the primary returns the route; that return is also a scheduling condition, not a phase failure.
+6. Execute / loop_execute still honor `ExecuteFallbackUnsafe`. Logic lives at the shared dispatch/recovery seam; no revise-only duplicate preflight.
+
+**DEEP vs ADHERENCE:** **DEEP** — the control plane has no `provider_degraded` scheduling type, so a transient upstream flap is treated as a phase failure and the scalar pin is re-targeted until the breaker fires; a timeout-string catch or TOML chain pin would be adherence.
+
+Planning note: this checkout’s ledger still ends at entry 13; the supplied verbatim entry 14 was treated as authoritative. No files were modified (planner is read-only).

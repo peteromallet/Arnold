@@ -26,3 +26,10 @@ Location: /Users/peteromalley/Documents/Arnold-oracle-nbf (branch megado-nbf-gua
    main-merge only with your explicit approval at completion review
 
 Say "go" and I launch step 1.
+
+## Plan evolution log
+- Entry 13 -> T7 cooldown-aware scheduling conditions (codex ADD; criterion 7)
+- Entry 14 -> T8 typed provider_degraded scheduling condition (grok ADD;
+  criterion 8; full spec .oracle/findings/evolution-entry14.txt)
+- Foundation commits on main: a9e1c7d0d6, af370f5ec6 (cooldown/deferral), plus
+  catalog/pin/timeout fixes f8725af516..ff4c64835b
