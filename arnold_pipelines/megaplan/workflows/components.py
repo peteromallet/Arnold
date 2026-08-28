@@ -2308,6 +2308,12 @@ OVERRIDE = _step(
             "target_ref": "finalize",
         },
         {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
+        {
+            "id": "override:cap-revise-once",
+            "label": "cap_revise_once",
+            "condition_ref": "cap_revise_once",
+            "target_ref": "revise",
+        },
     ),
     metadata={
         "policy_refs": (

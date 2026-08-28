@@ -53,8 +53,12 @@ from arnold_pipelines.megaplan.profiles.policy import (
     resolve_prep_models,
 )
 from arnold_pipelines.megaplan.replan_state import (
+    CAP_REVISE_ONCE_GRANT_KEY,
     REPLAN_STATE_KEYS_TO_CLEAR,
     blocked_iterate_gate_replan_allowed,
+    cap_revise_once_override_allowed,
+    events_max_seq,
+    gate_signals_baseline,
     reset_replan_loop_state,
 )
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
@@ -1437,6 +1441,103 @@ class PlanningControlBinding:
                     _replace_delta(state, "current_state", next_state["current_state"]),
                     _replace_delta(state, "last_gate", next_state["last_gate"]),
                     _replace_delta(state, "meta", next_state["meta"]),
+                ),
+            )
+
+        if action == "cap-revise-once":
+            current_state = state["current_state"]
+            if not cap_revise_once_override_allowed(state):
+                raise CliError(
+                    "invalid_transition",
+                    (
+                        "cap-revise-once requires a critique-cap blocked park "
+                        "(state 'blocked', last_gate ITERATE with passed=false, "
+                        "cap termination as the newest history entry, no resume "
+                        "cursor or failure record, no unconsumed grant); got "
+                        f"'{current_state}'"
+                    ),
+                )
+            expected_state = transition.payload.get("expected_state")
+            if (
+                expected_state is not None
+                and current_state != expected_state
+            ):
+                raise CliError(
+                    "state_drift",
+                    "cap-revise-once fence: expected state "
+                    f"'{expected_state}', found '{current_state}'",
+                )
+            expected_iteration = transition.payload.get("expected_iteration")
+            if (
+                expected_iteration is not None
+                and state.get("iteration") != expected_iteration
+            ):
+                raise CliError(
+                    "iteration_drift",
+                    "cap-revise-once fence: expected iteration "
+                    f"{expected_iteration}, found {state.get('iteration')}",
+                )
+            expected_seq = transition.payload.get("expected_max_event_seq")
+            if expected_seq is not None:
+                live_seq = events_max_seq(_plan_dir(state, transition))
+                if live_seq is None or live_seq > int(expected_seq):
+                    raise CliError(
+                        "event_seq_drift",
+                        "cap-revise-once fence: events advanced past the "
+                        f"fenced seq (expected max {expected_seq}, found "
+                        f"{live_seq})",
+                    )
+            try:
+                baseline = gate_signals_baseline(
+                    _plan_dir(state, transition),
+                    state.get("iteration"),
+                )
+            except ValueError as error:
+                raise CliError("cap_revise_once_baseline_missing", str(error))
+            reason = (
+                transition.payload.get("reason")
+                or transition.payload.get("note")
+                or "Grant one bounded revise round after critique-cap block"
+            )
+            occurrence = transition.payload.get("occurrence")
+            timestamp = now_utc()
+            prior_grants = 0
+            existing_meta = state.get("meta")
+            if isinstance(existing_meta, Mapping):
+                prior = existing_meta.get(CAP_REVISE_ONCE_GRANT_KEY)
+                if isinstance(prior, Mapping):
+                    prior_grants = int(prior.get("grant_seq") or 0)
+            grant = {
+                "schema": "megaplan.cap_revise_once_grant.v1",
+                "grant_seq": prior_grants + 1,
+                "granted_at": timestamp,
+                "reason": reason,
+                "occurrence": occurrence,
+                "iteration_at_grant": state.get("iteration"),
+                "consumed": False,
+                **baseline,
+            }
+            next_meta = _next_meta(
+                state,
+                override_entry={
+                    "action": "cap-revise-once",
+                    "timestamp": timestamp,
+                    "reason": reason,
+                    "from_state": current_state,
+                    "occurrence": occurrence,
+                    "baseline_flag_count": baseline["baseline_flag_count"],
+                    "baseline_digest": baseline["baseline_digest"],
+                },
+            )
+            next_meta[CAP_REVISE_ONCE_GRANT_KEY] = grant
+            return ControlTransitionResult(
+                accepted=True,
+                mutated=True,
+                reason="cap-revise-once",
+                artifacts={"grant": dict(grant)},
+                state_deltas=(
+                    _replace_delta(state, "current_state", STATE_CRITIQUED),
+                    _replace_delta(state, "meta", next_meta),
                 ),
             )
 

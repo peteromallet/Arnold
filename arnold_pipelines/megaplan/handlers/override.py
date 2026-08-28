@@ -87,7 +87,11 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     read_phase_result,
 )
 from arnold_pipelines.megaplan.replan_state import (
+    CAP_REVISE_ONCE_GRANT_KEY,
     blocked_iterate_gate_replan_allowed,
+    cap_revise_once_override_allowed,
+    events_max_seq,
+    gate_signals_baseline,
     invalidate_replan_derived_artifacts,
     reset_replan_loop_state,
 )
@@ -612,6 +616,9 @@ def _handle_routed_override(
             "effort": getattr(args, "effort", None),
             "vendor": getattr(args, "vendor", None),
             "user_approved": getattr(args, "user_approved", False),
+            "expected_state": getattr(args, "expected_state", None),
+            "expected_iteration": getattr(args, "expected_iteration", None),
+            "expected_max_event_seq": getattr(args, "expected_max_event_seq", None),
             "root": str(root),
             "plan_dir": str(plan_dir),
         },
@@ -1113,6 +1120,133 @@ def _override_replan(
     if artifact_invalidation is not None:
         response["artifact_invalidation"] = artifact_invalidation
     return response
+
+
+def _override_cap_revise_once(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    """Grant exactly one revise round after a critique-cap blocked park.
+
+    Sol-adjudicated bounded operator correction seam (occurrence
+    7ce9c04b5100): the override lands in ``critiqued`` with the gate/critique
+    custody PRESERVED so ordinary revise authors the next revision; the global
+    critique cap, the terminate guard, and every flag stay untouched. The
+    grant is one-shot, CAS-fenced via the --expected-* flags, and records the
+    open-significant baseline the consuming gate must strictly decrease.
+    """
+
+    if not cap_revise_once_override_allowed(state):
+        raise CliError(
+            "invalid_transition",
+            (
+                "cap-revise-once requires a critique-cap blocked park: state "
+                "'blocked', last_gate recommendation 'ITERATE' with passed=false, "
+                "cap termination as the newest history entry, no resume cursor "
+                "or failure record, and no unconsumed grant; got state "
+                f"'{state.get('current_state')}'"
+            ),
+            valid_next=infer_next_steps(state),
+        )
+    expected_state = getattr(args, "expected_state", None)
+    if expected_state is not None and state.get("current_state") != expected_state:
+        raise CliError(
+            "state_drift",
+            f"cap-revise-once fence: expected state '{expected_state}', found "
+            f"'{state.get('current_state')}'",
+        )
+    expected_iteration = getattr(args, "expected_iteration", None)
+    if (
+        expected_iteration is not None
+        and state.get("iteration") != expected_iteration
+    ):
+        raise CliError(
+            "iteration_drift",
+            f"cap-revise-once fence: expected iteration {expected_iteration}, "
+            f"found {state.get('iteration')}",
+        )
+    expected_seq = getattr(args, "expected_max_event_seq", None)
+    if expected_seq is not None:
+        live_seq = events_max_seq(plan_dir)
+        if live_seq is None or live_seq > int(expected_seq):
+            raise CliError(
+                "event_seq_drift",
+                "cap-revise-once fence: events advanced past the fenced seq "
+                f"(expected max {expected_seq}, found {live_seq})",
+            )
+    try:
+        baseline = gate_signals_baseline(plan_dir, state.get("iteration"))
+    except ValueError as error:
+        raise CliError("cap_revise_once_baseline_missing", str(error))
+    reason = (
+        getattr(args, "reason", None)
+        or "Grant one bounded revise round after critique-cap block"
+    )
+    occurrence = getattr(args, "occurrence", None)
+    timestamp = now_utc()
+    prior_grants = 0
+    meta = state.get("meta")
+    if isinstance(meta, Mapping):
+        prior = meta.get(CAP_REVISE_ONCE_GRANT_KEY)
+        if isinstance(prior, Mapping):
+            prior_grants = int(prior.get("grant_seq") or 0)
+    grant = {
+        "schema": "megaplan.cap_revise_once_grant.v1",
+        "grant_seq": prior_grants + 1,
+        "granted_at": timestamp,
+        "reason": reason,
+        "occurrence": occurrence,
+        "iteration_at_grant": state.get("iteration"),
+        "consumed": False,
+        **baseline,
+    }
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "cap-revise-once",
+            "timestamp": timestamp,
+            "reason": reason,
+            "from_state": state["current_state"],
+            "occurrence": occurrence,
+            "baseline_flag_count": baseline["baseline_flag_count"],
+            "baseline_digest": baseline["baseline_digest"],
+        },
+    )
+    state["meta"][CAP_REVISE_ONCE_GRANT_KEY] = grant
+    state["current_state"] = STATE_CRITIQUED
+    save_state_merge_meta(plan_dir, state)
+    try:
+        from arnold_pipelines.megaplan.observability.events import emit, EventKind
+
+        emit(
+            EventKind.OVERRIDE_APPLIED,
+            plan_dir=plan_dir,
+            payload={"action": "cap-revise-once", "reason": reason},
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_CAP_REVISE_ONCE",
+            action="override-cap-revise-once",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+        )
+    return {
+        "success": True,
+        "step": "override",
+        "summary": (
+            "Granted exactly one revise → critique → gate round after the "
+            f"critique-cap block (baseline {baseline['baseline_flag_count']} "
+            f"open significant flags, digest {baseline['baseline_digest']}). "
+            "The cap still applies at the consuming gate; without a strict "
+            "significant-flag decrease it blocks as cap_revise_no_progress."
+        ),
+        "state": STATE_CRITIQUED,
+        "grant": grant,
+        "message": (
+            "Ordinary revise authors the next revision from the preserved "
+            "critique custody; the consuming gate re-blocks unless it proceeds."
+        ),
+    }
 
 
 _EXTERNAL_ERROR_RETRY_STRATEGIES = {"wait_and_retry", "check_provider_and_retry"}
@@ -2403,6 +2537,7 @@ _OVERRIDE_ACTIONS: dict[
     "adopt-execution": _override_adopt_execution,
     "cutover": _override_cutover,
     "replan": _override_replan,
+    "cap-revise-once": _override_cap_revise_once,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,
     "set-robustness": _override_set_robustness,

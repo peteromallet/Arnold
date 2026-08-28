@@ -35,6 +35,7 @@ from arnold_pipelines.megaplan.schema_projection import (
 from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
+from arnold_pipelines.megaplan.replan_state import significant_flag_ids
 from arnold_pipelines.megaplan.north_star_actions import (
     operator_disposition_for_action,
     resolved_by_operator_disposition,
@@ -620,6 +621,8 @@ def _critique_terminate_branch(
     state: PlanState,
     gate_summary: dict[str, Any],
     reason: str,
+    *,
+    block_kind: str = "correctness_or_security_flags",
 ) -> dict[str, Any]:
     """Severity-gated termination shared by the hard cap and the stall stop.
 
@@ -655,7 +658,7 @@ def _critique_terminate_branch(
             "blocking_unresolved_ids": [],
             "fallback_payload": {
                 "kind": "critique_cap",
-                "reason": "correctness_or_security_flags",
+                "reason": block_kind,
             },
         }
     apply_state_projection(state, STATE_GATED, route_signal="proceed")
@@ -676,6 +679,37 @@ def _critique_terminate_branch(
     }
 
 
+def _consume_cap_revise_once_grant(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Consume an active cap-revise-once grant at the first gate after it.
+
+    Bookkeeping only: the grant never changes whether the gate blocks. It
+    records the one-round contract's consumption and whether this round
+    strictly decreased the open significant flag set versus the granted
+    baseline. A cap terminate while the consuming round shows no strict
+    decrease is typed ``cap_revise_no_progress`` by the caller.
+    """
+
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    grant = meta.get("cap_revise_once_grant")
+    if not isinstance(grant, dict) or grant.get("consumed"):
+        return None
+    baseline_ids = set(grant.get("baseline_flag_ids") or [])
+    current_ids = significant_flag_ids(gate_summary.get("unresolved_flags"))
+    grant["consumed"] = True
+    grant["consumed_at"] = now_utc()
+    grant["consumed_at_iteration"] = state.get("iteration")
+    grant["consuming_gate_open_significant_ids"] = sorted(current_ids)
+    grant["strict_significant_decrease"] = (
+        bool(baseline_ids) and len(current_ids) < len(baseline_ids)
+    )
+    return grant
+
+
 def _build_gate_route_signal(
     state: PlanState,
     gate_summary: dict[str, Any],
@@ -687,6 +721,7 @@ def _build_gate_route_signal(
     summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
     route_signal = str(gate_summary["recommendation"]).lower()
     fallback_payload: dict[str, Any] | None = None
+    cap_grant = _consume_cap_revise_once_grant(state, gate_summary)
 
     # Process explicit flag resolutions when the gate recommends PROCEED.
     if gate_summary["recommendation"] == "PROCEED":
@@ -833,6 +868,18 @@ def _build_gate_route_signal(
             str(no_progress_cap["config_key"]),
         )
         if prior_rounds >= max_iter:
+            if cap_grant is not None and not cap_grant.get(
+                "strict_significant_decrease"
+            ):
+                return _critique_terminate_branch(
+                    state,
+                    gate_summary,
+                    (
+                        "Critique-cap revise grant spent without a strict "
+                        "significant-flag decrease"
+                    ),
+                    block_kind="cap_revise_no_progress",
+                )
             return _critique_terminate_branch(
                 state,
                 gate_summary,

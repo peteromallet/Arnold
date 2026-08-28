@@ -13,6 +13,11 @@ _OVERRIDE_ACTION_KEYS: frozenset[str] = frozenset(
     {
         "abort",
         "add-note",
+        # Sol-adjudicated bounded correction seam (occurrence 7ce9c04b5100):
+        # cap-revise-once grants exactly one agent-authored revise round after
+        # a critique-cap blocked park. One-shot, CAS-fenced, strict-decrease
+        # enforced at the consuming gate; never raises the global cap.
+        "cap-revise-once",
         "adopt-execution",
         # CL5 (Plan Step 8a): cutover is a terminal, control-routed override
         # action bound to the cutover handler via workflow.route_binding. It
@@ -64,6 +69,21 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "route_signal": "abort",
         "target_ref": "halt",
         "declared_target_ref": "halt",
+        "dispatch_surface": "workflow.route_binding",
+        "control_routed": True,
+    },
+    "cap-revise-once": {
+        "family": "terminal_route",
+        "description": (
+            "Grant exactly one agent-authored revise round after a "
+            "critique-cap blocked park. One-shot, CAS-fenced, and consumed at "
+            "the next gate; a strict significant-flag decrease is required to "
+            "avoid the typed cap_revise_no_progress block. Never raises the "
+            "global cap, clears history, or waives a flag."
+        ),
+        "route_signal": "cap_revise_once",
+        "target_ref": "revise",
+        "declared_target_ref": "revise",
         "dispatch_surface": "workflow.route_binding",
         "control_routed": True,
     },

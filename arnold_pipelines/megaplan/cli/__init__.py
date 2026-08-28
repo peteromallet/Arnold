@@ -280,6 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
             "add-note",
             "abort",
             "adopt-execution",
+            "cap-revise-once",
             "force-proceed",
             "recover-blocked",
             "reconcile-plan-ledger",
@@ -292,6 +293,29 @@ def build_parser() -> argparse.ArgumentParser:
         ],
     )
     override_parser.add_argument("--plan-version", dest="plan_version", type=int)
+    override_parser.add_argument(
+        "--expected-state",
+        dest="expected_state",
+        help=(
+            "cap-revise-once CAS fence: fail closed unless the live "
+            "current_state matches this value"
+        ),
+    )
+    override_parser.add_argument(
+        "--expected-iteration",
+        dest="expected_iteration",
+        type=int,
+        help="cap-revise-once CAS fence: fail closed unless the plan iteration matches",
+    )
+    override_parser.add_argument(
+        "--expected-max-event-seq",
+        dest="expected_max_event_seq",
+        type=int,
+        help=(
+            "cap-revise-once CAS fence: fail closed if events.ndjson has "
+            "advanced past this seq"
+        ),
+    )
     override_parser.add_argument("--replacement-sha256", dest="replacement_sha256")
     override_parser.add_argument("--repair-ref", dest="repair_ref")
     override_parser.add_argument("--plan", required=False)

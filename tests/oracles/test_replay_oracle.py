@@ -932,7 +932,8 @@ def test_routed_override_registry_covers_all_characterized_actions() -> None:
         set(override_handler._OVERRIDE_ACTIONS) - {"adopt-execution"}
     ) | {"force-proceed"}
     assert "force-proceed" not in override_handler._OVERRIDE_ACTIONS
-    assert len(routed_actions) == 12
+    # 12 characterized actions + cap-revise-once (occurrence 7ce9c04b5100).
+    assert len(routed_actions) == 13
 
 
 @pytest.mark.replay_oracle

@@ -389,6 +389,25 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
         return recommendation == "PROCEED" and not gate.get("passed", False)
     if condition == "gate_proceed":
         return recommendation == "PROCEED" and gate.get("passed", False)
+    if condition == "blocked_iterate_cap_grant":
+        # Advertise cap-revise-once only for the critique-cap shape: an
+        # ITERATE gate that did not pass parked the plan. The override handler
+        # re-validates the full predicate fail closed.
+        return recommendation == "ITERATE" and gate.get("passed") is False
+    if condition == "blocked_agent_availability_preflight":
+        # Advertise force-proceed from blocked only for the one shape the
+        # control binding accepts: a PROCEED gate blocked solely by agent
+        # availability preflight.
+        preflight = gate.get("preflight_results", {})
+        if not isinstance(preflight, dict):
+            preflight = {}
+        failed = {name for name, passed in preflight.items() if not passed}
+        return (
+            recommendation == "PROCEED"
+            and not gate.get("passed", False)
+            and bool(failed)
+            and failed <= {"claude_available", "codex_available"}
+        )
     return False
 
 

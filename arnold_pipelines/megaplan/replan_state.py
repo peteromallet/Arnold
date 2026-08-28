@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import Any
+
+from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES
 
 from arnold_pipelines.megaplan._core.io import atomic_write_json
 
@@ -210,6 +213,141 @@ def blocked_iterate_gate_replan_allowed(state: Mapping[str, Any]) -> bool:
         and recommendation.upper() == "ITERATE"
         and last_gate.get("passed") is False
     )
+
+
+CAP_REVISE_ONCE_GRANT_KEY = "cap_revise_once_grant"
+_CAP_REVISE_ONCE_SIGNIFICANT_SEVERITIES = ("significant", "likely-significant")
+
+
+def cap_revise_once_override_allowed(state: Mapping[str, Any]) -> bool:
+    """Return whether a critique-cap blocked park may grant one revise round.
+
+    Accepts ONLY the exact cap-terminated shape: blocked on an ITERATE gate
+    that did not pass, with the cap termination recorded as the newest history
+    entry, no resume cursor or failure record, and no unconsumed grant. Every
+    other blocked shape stays fail closed.
+    """
+
+    if state.get("current_state") != "blocked":
+        return False
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, Mapping):
+        return False
+    recommendation = last_gate.get("recommendation")
+    if not (
+        isinstance(recommendation, str)
+        and recommendation.upper() == "ITERATE"
+        and last_gate.get("passed") is False
+    ):
+        return False
+    if (
+        state.get("resume_cursor") is not None
+        or state.get("latest_failure") is not None
+    ):
+        return False
+    history = state.get("history")
+    if not isinstance(history, list) or not history:
+        return False
+    newest = history[-1]
+    if (
+        not isinstance(newest, Mapping)
+        or newest.get("step") != "gate"
+        or newest.get("result") != "blocked"
+    ):
+        return False
+    meta = state.get("meta")
+    if isinstance(meta, Mapping):
+        grant = meta.get(CAP_REVISE_ONCE_GRANT_KEY)
+        if isinstance(grant, Mapping) and not grant.get("consumed"):
+            return False
+    return True
+
+
+def significant_flag_ids(flags: Any) -> set[str]:
+    """Open significant flag IDs from a gate ``unresolved_flags`` list.
+
+    Mirrors the cap-termination policy's significant severities; the result is
+    used only for cap-revise-once bookkeeping (baseline capture and the
+    strict-decrease check), never to change whether a gate blocks.
+    """
+
+    ids: set[str] = set()
+    if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes)):
+        return ids
+    for flag in flags:
+        if not isinstance(flag, Mapping):
+            continue
+        if flag.get("status") not in FLAG_BLOCKING_STATUSES:
+            continue
+        if flag.get("severity") not in _CAP_REVISE_ONCE_SIGNIFICANT_SEVERITIES:
+            continue
+        flag_id = flag.get("id")
+        if isinstance(flag_id, str) and flag_id:
+            ids.add(flag_id)
+    return ids
+
+
+def gate_signals_baseline(plan_dir: Path, iteration: Any) -> dict[str, Any]:
+    """Baseline open-significant flags from the blocking gate's artifact.
+
+    Reads ``gate_signals_v{iteration}.json`` (falling back to the newest gate
+    signals artifact) so the grant records exactly the flag set the blocking
+    gate saw. Fails closed when the artifact is missing, unreadable, or shows
+    no open significant flag — a block without one is not a critique-cap flag
+    park.
+    """
+
+    artifact = plan_dir / f"gate_signals_v{iteration}.json"
+    if not artifact.exists():
+        candidates = sorted(plan_dir.glob("gate_signals_v*.json"))
+        if not candidates:
+            raise ValueError(
+                "cap-revise-once requires the blocking gate's signals artifact "
+                f"gate_signals_v{iteration}.json to record the flag baseline"
+            )
+        artifact = candidates[-1]
+    try:
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as error:
+        raise ValueError(
+            f"cap-revise-once could not read gate signals artifact {artifact.name}: {error}"
+        ) from error
+    unresolved = payload.get("unresolved_flags") if isinstance(payload, dict) else None
+    ids = significant_flag_ids(unresolved)
+    if not ids:
+        raise ValueError(
+            "cap-revise-once requires at least one open significant flag in "
+            f"{artifact.name}; this block shape is not a critique-cap flag park"
+        )
+    digest = hashlib.sha256("\n".join(sorted(ids)).encode("utf-8")).hexdigest()[:16]
+    return {
+        "artifact": artifact.name,
+        "baseline_flag_ids": sorted(ids),
+        "baseline_flag_count": len(ids),
+        "baseline_digest": f"sha256:{digest}",
+    }
+
+
+def events_max_seq(plan_dir: Path) -> int | None:
+    """Newest ``seq`` in the plan's ``events.ndjson`` (None when absent)."""
+
+    events_path = plan_dir / "events.ndjson"
+    if not events_path.exists():
+        return None
+    with events_path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - 65536))
+        tail = handle.read().decode("utf-8", errors="replace")
+    lines = [line for line in tail.splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        payload = json.loads(lines[-1])
+    except ValueError:
+        return None
+    seq = payload.get("seq") if isinstance(payload, dict) else None
+    return seq if isinstance(seq, int) else None
 
 
 def reset_replan_loop_state(

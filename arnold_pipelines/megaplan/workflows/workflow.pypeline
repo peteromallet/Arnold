@@ -269,6 +269,7 @@ DECLARED_STEP_INTERFACES = {
             "abort",
             "add-note",
             "adopt-execution",
+            "cap-revise-once",
             "cutover",
             "force-proceed",
             "reconcile-plan-ledger",
@@ -289,6 +290,12 @@ DECLARED_STEP_INTERFACES = {
                 "target_ref": "finalize",
             },
             {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
+            {
+                "id": "override:cap-revise-once",
+                "label": "cap_revise_once",
+                "condition_ref": "cap_revise_once",
+                "target_ref": "revise",
+            },
         ),
     },
 }
