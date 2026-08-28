@@ -1,0 +1,21 @@
+# Muse Spark 1.2 Contributor via OpenRouter — every slot on the same model.
+# Created per user directive 2026-08-28: main run on Muse Spark 1.2 Contributor
+# via OpenRouter; fallback to partnered-codex if provider degrades.
+# Every phase uses the identical model; tiered execute/critique not needed
+# because the model is uniform. Profile is intentionally flat.
+
+[profiles.all-muse-spark-openrouter]
+plan     = "openrouter/meta/muse-spark-1.2-contributor"
+prep     = "openrouter/meta/muse-spark-1.2-contributor"
+critique = "openrouter/meta/muse-spark-1.2-contributor"
+critique_evaluator = "openrouter/meta/muse-spark-1.2-contributor"
+revise   = "openrouter/meta/muse-spark-1.2-contributor"
+gate     = "openrouter/meta/muse-spark-1.2-contributor"
+finalize = "openrouter/meta/muse-spark-1.2-contributor"
+execute  = "openrouter/meta/muse-spark-1.2-contributor"
+feedback = "openrouter/meta/muse-spark-1.2-contributor"
+loop_plan    = "openrouter/meta/muse-spark-1.2-contributor"
+loop_execute = "openrouter/meta/muse-spark-1.2-contributor"
+review   = "openrouter/meta/muse-spark-1.2-contributor"
+tiebreaker_researcher = "openrouter/meta/muse-spark-1.2-contributor"
+tiebreaker_challenger = "openrouter/meta/muse-spark-1.2-contributor"
