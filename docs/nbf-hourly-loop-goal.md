@@ -101,3 +101,12 @@ resolved one worth encoding):
    the ledger entry (plan-revised: yes/no + where).
 This makes every failure a permanent, planned improvement to the pipeline —
 not just a patched run.
+
+## ADMIN DISCORD NOTIFY (added 2026-08-27)
+On any fire that touches a failure, after the ledger append, send a concise
+admin alert: `python3 scripts/discord_admin_notify.py "MESSAGE"` (run on the
+agentbox container with hot-env sourced; script reads DISCORD_BOT_TOKEN /
+DISCORD_DM_USER_ID from env, falls back to posting <@admin> in the configured
+guild channel on DM-403). Message shape: `NBF chain alert (ledger #N): <what
+failed> <status/action> <pointer to ledger>`. Also used for pinned-model
+decisions requiring approval.
