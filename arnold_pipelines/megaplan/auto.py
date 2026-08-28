@@ -4694,6 +4694,18 @@ def _project_auto_dispatch(
         if metadata.get("actionable", True) is False:
             continue
         if _projection_uses_recovery(state):
+            if (
+                state.get("current_state") == STATE_BLOCKED
+                and target_id in PHASE_NAMES
+            ):
+                # A blocked plan cannot raw-dispatch an ordinary phase:
+                # require_state rejects every raw dispatch from blocked
+                # (invalid_transition). Only recovery/control targets are
+                # actionable from blocked; promoting a phase cursor here made
+                # the driver kick the blocked state until the deterministic
+                # breaker masked the original external failure (occurrence
+                # 81827f38514f, 2026-08-28).
+                continue
             valid_targets.append(target_id)
             continue
         if metadata.get("dispatch_surface") == "workflow.native_policy":
@@ -4727,6 +4739,10 @@ def _project_auto_dispatch(
         cursor_dispatch_phase is not None
         and _is_auto_supported_target(cursor_dispatch_phase)
         and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+        and not (
+            state.get("current_state") == STATE_BLOCKED
+            and cursor_dispatch_phase in PHASE_NAMES
+        )
     ):
         return _AutoDispatchProjection(
             next_step=cursor_dispatch_phase,
@@ -6654,6 +6670,37 @@ def drive(
                 last_phase=str(control_mismatch["action"]),
                 blocking_reasons=["control_binding_mismatch"],
             )
+        if state == STATE_BLOCKED and next_step in PHASE_NAMES:
+            # Defense-in-depth: a raw phase dispatch from a blocked state is
+            # always refused by require_state (invalid_transition) — an
+            # ordinary phase can only run again after a recovery seam rewinds
+            # the state. Terminal-exit with the existing latest_failure
+            # intact; recording a fresh failure here would replace the
+            # original causal failure with a synthetic one (occurrence
+            # 81827f38514f, 2026-08-28).
+            reason = (
+                f"plan is blocked; refusing raw phase dispatch of '{next_step}' "
+                "— recovery must run through the resume/recover seams"
+            )
+            log(
+                "blocked-state phase dispatch refused — terminal exit without "
+                "replacing latest_failure",
+                next_step=next_step,
+            )
+            events.append(
+                {
+                    "msg": "refused raw phase dispatch from blocked state",
+                    "phase": next_step,
+                }
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase=next_step,
+                blocking_reasons=["blocked_state_phase_dispatch_refused"],
+            )
 
         cmd = _command_for_auto_target(next_step) + ["--plan", plan]
         cmd = _append_live_phase_models(cmd, str(next_step))
@@ -7206,6 +7253,27 @@ def drive(
                     "resume_command": resume_command,
                     "suggested_recovery_commands": [resume_command],
                 },
+            )
+            # A generic external dependency failure has already blocked the
+            # plan with a resume_cursor aimed at the resume seam. Falling
+            # through here let the next loop iteration re-dispatch the same
+            # phase from the blocked state: require_state refuses every raw
+            # phase dispatch from blocked, the identical rejections fed the
+            # deterministic breaker, and the recorded failure became
+            # deterministic_phase_failure — masking the provider outage that
+            # was the actual cause (occurrence 81827f38514f, 2026-08-28).
+            # Terminal-exit with the external_error record intact, exactly
+            # like the provider-contract sibling above.
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=(
+                    f"phase '{next_step}' external dependency failure: "
+                    f"[{provider}] {error_kind}{code_hint}{retry_hint}"
+                ),
+                last_phase=next_step,
+                blocking_reasons=["external_error"],
             )
         infra_payload = _non_retryable_infrastructure_error_payload(out, err)
         if (

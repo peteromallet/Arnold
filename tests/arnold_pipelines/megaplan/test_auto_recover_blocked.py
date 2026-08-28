@@ -11,6 +11,7 @@ from arnold_pipelines.megaplan._core.phase_runtime import current_runner_incarna
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     ExitKind,
+    ExternalError,
     PhaseResult,
     atomic_write_phase_result,
 )
@@ -1770,3 +1771,105 @@ def test_drive_does_not_defer_non_cooldown_memory_refusal(
     # receive the deferral counter reset.
     assert outcome.status == "blocked"
     assert sleeps == []
+
+
+def test_drive_external_error_exits_without_redispatching_blocked_phase(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A generic external_error blocks the plan and must terminal-exit.
+
+    Occurrence 81827f38514f: the driver recorded the external_error but fell
+    through, re-dispatched the same phase three times from the blocked state,
+    and the deterministic breaker replaced the provider outage with a
+    synthetic deterministic_phase_failure. The external record must survive
+    and the phase must be dispatched exactly once.
+    """
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "revise",
+            "valid_next": ["revise"],
+            "progress": {},
+        },
+    )
+
+    def fail_external(args, **kwargs):
+        dispatched_phase = str(args[0]) if args else "revise"
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase=dispatched_phase,
+                invocation_id="test",
+                exit_kind=ExitKind.external_error.value,
+                external_error=ExternalError(
+                    provider="openrouter",
+                    error_kind="network",
+                    provider_error_code="timeout",
+                    error_layer="transport_timeout",
+                ),
+            ),
+        )
+        return 1, "external dependency failure", ""
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_external)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=6, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    # Exactly one phase invocation: no re-dispatch from the blocked state.
+    assert outcome.iterations == 1
+    kinds = [str(f.get("kind")) for f in failures]
+    assert kinds == ["external_error"]
+    assert "deterministic_phase_failure" not in kinds
+    assert "phase_failed" not in kinds
+    terminal = failures[-1]
+    metadata = terminal.get("metadata") or {}
+    assert isinstance(metadata, dict)
+    assert metadata.get("provider_error_code") == "timeout"
+
+
+def test_project_auto_dispatch_does_not_promote_blocked_phase_cursor(
+    tmp_path: Path,
+) -> None:
+    """A blocked plan's resume-cursor phase must not be promoted for raw dispatch.
+
+    Raw phase dispatch from blocked is refused by require_state; the projection
+    must offer only control/recovery targets (or nothing) so the drive exits at
+    its terminal check instead of kicking the blocked state.
+    """
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "revise",
+                    "retry_strategy": "repair_phase_contract",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    projection = auto._project_auto_dispatch("demo", plan_dir=plan_dir, status={})
+
+    assert projection.next_step not in auto.PHASE_NAMES
+    assert all(target not in auto.PHASE_NAMES for target in projection.valid_next)
