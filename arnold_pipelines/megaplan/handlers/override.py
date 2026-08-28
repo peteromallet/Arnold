@@ -1122,6 +1122,48 @@ def _override_replan(
     return response
 
 
+def _verify_cap_revise_once_fence(
+    state: PlanState, plan_dir: Path, args: argparse.Namespace
+) -> None:
+    """CAS fences for ``cap-revise-once``: state, iteration, events seq.
+
+    The events fence tolerates exactly one self-write: handle_override
+    persists preflight isolation metadata via ``save_state_merge_meta``
+    BEFORE the handler runs, recording one ``state_written`` event per
+    invocation. A concurrent driver/worker produces far more journal
+    progress than one event, so the fence still fails closed on genuine
+    third-party mutation.
+    """
+
+    expected_state = getattr(args, "expected_state", None)
+    if expected_state is not None and state.get("current_state") != expected_state:
+        raise CliError(
+            "state_drift",
+            f"cap-revise-once fence: expected state '{expected_state}', found "
+            f"'{state.get('current_state')}'",
+        )
+    expected_iteration = getattr(args, "expected_iteration", None)
+    if (
+        expected_iteration is not None
+        and state.get("iteration") != expected_iteration
+    ):
+        raise CliError(
+            "iteration_drift",
+            f"cap-revise-once fence: expected iteration {expected_iteration}, "
+            f"found {state.get('iteration')}",
+        )
+    expected_seq = getattr(args, "expected_max_event_seq", None)
+    if expected_seq is not None:
+        live_seq = events_max_seq(plan_dir)
+        if live_seq is None or live_seq > int(expected_seq) + 1:
+            raise CliError(
+                "event_seq_drift",
+                "cap-revise-once fence: events advanced past the fenced seq "
+                f"(expected max {expected_seq} (+1 self-write), found "
+                f"{live_seq})",
+            )
+
+
 def _override_cap_revise_once(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -1147,32 +1189,7 @@ def _override_cap_revise_once(
             ),
             valid_next=infer_next_steps(state),
         )
-    expected_state = getattr(args, "expected_state", None)
-    if expected_state is not None and state.get("current_state") != expected_state:
-        raise CliError(
-            "state_drift",
-            f"cap-revise-once fence: expected state '{expected_state}', found "
-            f"'{state.get('current_state')}'",
-        )
-    expected_iteration = getattr(args, "expected_iteration", None)
-    if (
-        expected_iteration is not None
-        and state.get("iteration") != expected_iteration
-    ):
-        raise CliError(
-            "iteration_drift",
-            f"cap-revise-once fence: expected iteration {expected_iteration}, "
-            f"found {state.get('iteration')}",
-        )
-    expected_seq = getattr(args, "expected_max_event_seq", None)
-    if expected_seq is not None:
-        live_seq = events_max_seq(plan_dir)
-        if live_seq is None or live_seq > int(expected_seq):
-            raise CliError(
-                "event_seq_drift",
-                "cap-revise-once fence: events advanced past the fenced seq "
-                f"(expected max {expected_seq}, found {live_seq})",
-            )
+    _verify_cap_revise_once_fence(state, plan_dir, args)
     try:
         baseline = gate_signals_baseline(plan_dir, state.get("iteration"))
     except ValueError as error:

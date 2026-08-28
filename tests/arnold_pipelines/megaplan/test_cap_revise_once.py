@@ -151,6 +151,40 @@ def test_predicate_allows_new_grant_after_consumption() -> None:
     assert cap_revise_once_override_allowed(state) is True
 
 
+def test_fence_allows_exactly_one_self_write_event(tmp_path: Path) -> None:
+    """handle_override's preflight persist records one state_written event
+    before the handler runs; the fence must tolerate exactly that delta and
+    nothing more."""
+
+    from arnold_pipelines.megaplan.handlers.override import (
+        _verify_cap_revise_once_fence,
+    )
+    from arnold_pipelines.megaplan.types import CliError
+
+    state = _cap_blocked_state()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(exist_ok=True)
+    _gate_signals(plan_dir, 5, ["CF-A", "CF-B"])
+    _write_events(plan_dir, 632)
+    args = argparse.Namespace(
+        expected_state=None, expected_iteration=None, expected_max_event_seq=None
+    )
+
+    def fenced(expected: int) -> str | None:
+        args.expected_max_event_seq = expected
+        try:
+            _verify_cap_revise_once_fence(state, plan_dir, args)
+        except CliError as error:
+            return error.code
+        return None
+
+    assert fenced(632) is None  # live == expected: no writes yet
+    assert fenced(631) is None  # live == expected + 1: the self-write
+    assert fenced(630) == "event_seq_drift"  # 632 > 631: third-party progress
+    args.expected_max_event_seq = None
+    _verify_cap_revise_once_fence(state, plan_dir, args)  # fence disabled
+
+
 # ---------------------------------------------------------------------------
 # baseline helpers
 # ---------------------------------------------------------------------------

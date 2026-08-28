@@ -1480,12 +1480,16 @@ class PlanningControlBinding:
             expected_seq = transition.payload.get("expected_max_event_seq")
             if expected_seq is not None:
                 live_seq = events_max_seq(_plan_dir(state, transition))
-                if live_seq is None or live_seq > int(expected_seq):
+                # handle_override persists preflight isolation metadata
+                # before the routed transition is constructed: exactly one
+                # self-write event. Only third-party journal progress
+                # (a concurrent driver/worker) may exceed the fence + 1.
+                if live_seq is None or live_seq > int(expected_seq) + 1:
                     raise CliError(
                         "event_seq_drift",
                         "cap-revise-once fence: events advanced past the "
-                        f"fenced seq (expected max {expected_seq}, found "
-                        f"{live_seq})",
+                        f"fenced seq (expected max {expected_seq} (+1 "
+                        f"self-write), found {live_seq})",
                     )
             try:
                 baseline = gate_signals_baseline(
