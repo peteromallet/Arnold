@@ -1100,6 +1100,78 @@ def test_reducer_reassigns_duplicate_worker_local_ids_deterministically() -> Non
     ]
 
 
+def test_unverifiable_check_flagged_findings_do_not_wedge_mapping() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "scope",
+                "question": "Is it bounded?",
+                "status": "unverifiable",
+                "findings": [
+                    {"detail": "Stale metadata persists into Revision 9.", "flagged": True}
+                ],
+            },
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [{"detail": "Correctness evidence.", "flagged": True}],
+            },
+        ],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "Correctness concern.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+                "evidence": "Correctness evidence.",
+                "source_check_id": "correctness",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    flags = prepare_critique_payload(
+        payload, expected_check_ids=["correctness", "scope"]
+    )
+
+    assert [flag["source_check_id"] for flag in flags] == ["correctness"]
+
+
+def test_unverifiable_check_findings_stay_evidence_visible_without_flags() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "scope",
+                "question": "Is it bounded?",
+                "status": "unverifiable",
+                "findings": [
+                    {"detail": "Stale metadata persists into Revision 9.", "flagged": True}
+                ],
+            },
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [{"detail": "Correctness evidence.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    flags = prepare_critique_payload(
+        payload, expected_check_ids=["correctness", "scope"]
+    )
+
+    assert [flag["source_check_id"] for flag in flags] == ["correctness"]
+    scope_check = payload["checks"][0]
+    assert scope_check["findings"][0]["flagged"] is True
+    assert scope_check["findings"][0]["detail"] == (
+        "Stale metadata persists into Revision 9."
+    )
+
+
 def test_reducer_preserves_ambiguous_canonical_reference_for_registry_validation() -> None:
     prior_id = "CF-E2E56F8ACC6B03976EA9"
     payload = {

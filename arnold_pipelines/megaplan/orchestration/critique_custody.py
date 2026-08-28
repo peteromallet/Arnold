@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.flags import synthesize_critique_flags
 from arnold_pipelines.megaplan.orchestration.task_feasibility import task_contract_hash
+from arnold_pipelines.megaplan.orchestration.critique_status import is_unverifiable_check
 from arnold_pipelines.megaplan.types import PlanState
 from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
     query_worker_dispatch_manifest,
@@ -725,6 +726,15 @@ def prepare_critique_payload(
     expected = list(expected_check_ids)
     observed: list[str] = []
     flagged_findings: list[tuple[str, str]] = []
+    # Degraded (unverifiable) checks deliberately mint no durable flags:
+    # _synthesize_flags_from_checks skips them wholesale so unverifiable
+    # evidence never reaches the flag registry. Demanding flag coverage for
+    # their flagged findings here contradicted that skip and wedged every
+    # critique whose degraded check still emitted a flagged finding
+    # (critique_finding_mapping_invalid with 0 candidate flags). The finding
+    # text stays in the stored checks array and the degraded warning carries
+    # the operator-attention signal instead.
+    unverifiable_check_ids: set[str] = set()
     for check_index, check in enumerate(checks):
         if not isinstance(check, dict):
             issues.append(f"checks[{check_index}] is not an object")
@@ -734,6 +744,8 @@ def prepare_critique_payload(
             issues.append(f"checks[{check_index}].id is missing")
             continue
         observed.append(check_id)
+        if is_unverifiable_check(check):
+            unverifiable_check_ids.add(check_id)
         findings = check.get("findings")
         if not isinstance(findings, list):
             issues.append(f"check {check_id!r} findings is not an array")
@@ -772,6 +784,8 @@ def prepare_critique_payload(
     flags = payload["flags"]
     coverage_issues: list[str] = []
     for check_id, detail in flagged_findings:
+        if check_id in unverifiable_check_ids:
+            continue
         matches = [
             flag
             for flag in flags
