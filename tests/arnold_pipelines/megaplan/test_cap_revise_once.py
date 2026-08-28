@@ -123,6 +123,24 @@ def test_predicate_rejects_other_blocked_shapes(
     assert cap_revise_once_override_allowed(state) is False, label
 
 
+
+def test_events_max_seq_handles_oversized_final_event(tmp_path: Path) -> None:
+    """A terminal state_written event embeds the full state snapshot and can
+    exceed a fixed 64 KiB tail window; the reader must grow the window and
+    still return the final seq instead of failing closed with None."""
+
+    big_state = json.dumps({"blob": "x" * 200_000})
+    lines = [
+        json.dumps({"seq": 630, "kind": "phase_end"}),
+        json.dumps({"seq": 631, "kind": "state_written", "state": big_state}),
+        json.dumps({"seq": 632, "kind": "phase_end"}),
+    ]
+    (tmp_path / "events.ndjson").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    assert events_max_seq(tmp_path) == 632
+
+
 def test_predicate_allows_new_grant_after_consumption() -> None:
     state = _cap_blocked_state()
     state["meta"][CAP_REVISE_ONCE_GRANT_KEY] = {

@@ -329,25 +329,43 @@ def gate_signals_baseline(plan_dir: Path, iteration: Any) -> dict[str, Any]:
 
 
 def events_max_seq(plan_dir: Path) -> int | None:
-    """Newest ``seq`` in the plan's ``events.ndjson`` (None when absent)."""
+    """Newest ``seq`` in the plan's ``events.ndjson`` (None when absent).
+
+    Tail reads use a growing byte window: terminal ``state_written`` events
+    embed the full state snapshot and routinely exceed a fixed 64 KiB tail,
+    so a bounded read can land mid-JSON and fail closed with None. Doubling
+    the window until the final line parses keeps the fence O(final-line) and
+    still reads at most a few hundred KiB for realistic journals.
+    """
 
     events_path = plan_dir / "events.ndjson"
     if not events_path.exists():
         return None
+    size = events_path.stat().st_size
+    window = 262144
     with events_path.open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        size = handle.tell()
-        handle.seek(max(0, size - 65536))
-        tail = handle.read().decode("utf-8", errors="replace")
-    lines = [line for line in tail.splitlines() if line.strip()]
-    if not lines:
-        return None
-    try:
-        payload = json.loads(lines[-1])
-    except ValueError:
-        return None
-    seq = payload.get("seq") if isinstance(payload, dict) else None
-    return seq if isinstance(seq, int) else None
+        while True:
+            start = max(0, size - window)
+            handle.seek(start)
+            raw = handle.read()
+            lines = raw.split(b"\n")
+            if start > 0:
+                # The first element is a mid-line fragment unless the window
+                # happens to start on a line boundary.
+                lines = lines[1:]
+            lines = [line for line in lines if line.strip()]
+            if lines:
+                try:
+                    payload = json.loads(lines[-1].decode("utf-8", errors="replace"))
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict):
+                    seq = payload.get("seq")
+                    if isinstance(seq, int):
+                        return seq
+            if start == 0 or window > (1 << 24):
+                return None
+            window *= 4
 
 
 def reset_replan_loop_state(
