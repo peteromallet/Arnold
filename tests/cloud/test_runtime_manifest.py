@@ -35,6 +35,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     load_manifest_by_epic,
     main,
     manifest_present,
+    refresh_legacy_session_copy,
     set_state,
     validate_dependency_generation,
     validate_deviation,
@@ -3242,3 +3243,71 @@ def test_verify_rollback_receipt_rejects_bad_schema_and_digest(
     path.write_text(json.dumps(tampered), encoding="utf-8")
     with pytest.raises(ValueError, match="digest is invalid"):
         verify_runtime_manifest_cutover_rollback_receipt(path)
+
+
+def test_refresh_legacy_session_copy_updates_same_runtime_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A creation-time session copy that lags the advanced generation is
+    refreshed through the sanctioned flock-protected writer (occurrence
+    c2f73c7ddcef): after the advance, the mirror binds the same runtime at
+    the new generation/head instead of silently lagging it."""
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path))
+    head = "f" * 40
+    authoritative_path = tmp_path / "runtime-manifests" / "runtime-test-1.json"
+    authoritative_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path = tmp_path / "epic-demo.json"
+    write_manifest(_make_manifest_obj(generation=13), legacy_path)
+    advanced = _make_manifest_obj(
+        generation=14, epic={"expected_head": head}
+    )
+    write_manifest(advanced, authoritative_path)
+
+    refreshed = refresh_legacy_session_copy(advanced, authoritative_path)
+
+    assert refreshed == legacy_path
+    assert load_manifest(legacy_path).generation == advanced.generation
+    assert load_manifest(legacy_path).epic.get("expected_head") == head
+
+
+def test_refresh_legacy_session_copy_leaves_unrelated_files_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the mirror this seam created is touched: a different runtime's
+    file, an unparseable file, a missing file, and the authoritative path
+    itself are all left byte-identical (or absent)."""
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST_DIR", str(tmp_path))
+    authoritative_path = tmp_path / "runtime-manifests" / "runtime-test-1.json"
+    authoritative_path.parent.mkdir(parents=True, exist_ok=True)
+    advanced = _make_manifest_obj(
+        generation=14, epic={"expected_head": "f" * 40}
+    )
+    write_manifest(advanced, authoritative_path)
+
+    # different runtime_id
+    other = tmp_path / "epic-demo.json"
+    other_manifest = _make_manifest_obj(runtime_id="runtime-other-2")
+    write_manifest(other_manifest, other)
+    before = other.read_bytes()
+    assert (
+        refresh_legacy_session_copy(advanced, authoritative_path) is None
+    )
+    assert other.read_bytes() == before
+
+    # unparseable file
+    junk = tmp_path / "epic-demo.json"
+    junk.write_text("{not json", encoding="utf-8")
+    assert (
+        refresh_legacy_session_copy(advanced, authoritative_path) is None
+    )
+    assert junk.read_text(encoding="utf-8") == "{not json"
+
+    # no file at all
+    junk.unlink()
+    assert (
+        refresh_legacy_session_copy(advanced, authoritative_path) is None
+    )
+
+    # the authoritative path itself is never treated as its own mirror
+    same_path = refresh_legacy_session_copy(advanced, authoritative_path)
+    assert same_path is None

@@ -56,7 +56,16 @@ def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> Non
     assert spec.backend == "codex"
     assert spec.model == "codex:gpt-5.6-luna"
     assert spec.stdin_path == goal
-    assert spec.argv[:2] == ("codex", "exec")
+    # The controller boundary strips ambient runtime-identity env (occurrence
+    # c2f73c7ddcef) before codex exec.
+    assert spec.argv[:5] == (
+        "/usr/bin/env",
+        "-u",
+        "MEGAPLAN_RUNTIME_LAUNCH_SEED",
+        "-u",
+        "ARNOLD_RUNTIME_MANIFEST",
+    )
+    assert spec.argv[5:7] == ("codex", "exec")
     assert "gpt-5.6-luna" in spec.argv
     assert all("deepseek" not in arg for arg in spec.argv)
     assert spec.links["routing"] == route.as_dict()

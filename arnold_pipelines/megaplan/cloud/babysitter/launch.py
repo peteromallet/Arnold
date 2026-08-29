@@ -435,7 +435,15 @@ def _managed_spec(
         # Codex reads the sealed goal from stdin.  Keeping the goal out of argv
         # also makes the managed manifest's stdin hash the exact controller
         # input used for this occurrence.
+        # Strip ambient runtime-identity env (occurrence c2f73c7ddcef,
+        # 2026-08-28): a launch seed or manifest inherited from the firing
+        # parent silently lags generation advances and made every phase CLI
+        # fail admission with source_revision_mismatch. The controller binds
+        # identity explicitly from the marker/authoritative manifest instead.
         worker_argv = [
+            "/usr/bin/env",
+            "-u", "MEGAPLAN_RUNTIME_LAUNCH_SEED",
+            "-u", "ARNOLD_RUNTIME_MANIFEST",
             "codex",
             "exec",
             "--sandbox", "danger-full-access",
@@ -468,6 +476,8 @@ def _managed_spec(
             "-u", "ARNOLD_MANAGED_AGENT_RUN_ID",
             "-u", "ARNOLD_MANAGED_AGENT_MANIFEST",
             "-u", "ARNOLD_MANAGED_AGENT_ORIGIN",
+            "-u", "MEGAPLAN_RUNTIME_LAUNCH_SEED",
+            "-u", "ARNOLD_RUNTIME_MANIFEST",
             sys.executable,
             str(launcher),
             f"--model={ctx['model']}",

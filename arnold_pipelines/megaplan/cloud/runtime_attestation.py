@@ -910,8 +910,9 @@ def _regenerate_relaunch_command(
     *,
     old_revision: str,
     new_revision: str,
+    expected_manifest_path: str | None = None,
 ) -> str:
-    """Rewire a persisted relaunch command to a new runtime revision.
+    """Rewire a persisted relaunch command to the active runtime identity.
 
     A content-addressed marker relaunch must bind the runtime it restarts.
     When the manifest head advances on the SAME runtime root the only token
@@ -919,11 +920,31 @@ def _regenerate_relaunch_command(
     ``MEGAPLAN_BOUND_RUNTIME_REVISION=<rev>``, ``RUNTIME_REVISION=<rev>``,
     or a bare ``<rev>`` token.  The swap is word-boundary guarded so a
     revision that also appears as a prefix/suffix of another token is left
-    untouched.  When the old revision is absent the command is returned
-    unchanged and the caller fails closed (the CAS cutover still refuses a
-    command that does not bind the active runtime).
+    untouched.
+
+    When *expected_manifest_path* is given, a stale
+    ``ARNOLD_RUNTIME_MANIFEST=<path>`` assignment is rebound to it as well
+    (occurrence c2f73c7ddcef, 2026-08-28: the marker command kept selecting
+    the creation-time gen-13 session copy after the gen-19 advance, so
+    marker-only relaunches failed admission with ``source_revision_mismatch``).
+    A command with no such assignment is returned unchanged in that
+    dimension (fail-closed admission still validates the resulting bind).
+    When the old revision is absent the revision swap is skipped and the
+    caller fails closed (the CAS cutover still refuses a command that does
+    not bind the active runtime).
     """
-    if not command or not old_revision or not new_revision:
+    if not command:
+        return command
+    if expected_manifest_path:
+        expected = str(expected_manifest_path)
+        match = re.search(r"(ARNOLD_RUNTIME_MANIFEST=)(\S+)", command)
+        if match and match.group(2) != expected:
+            command = (
+                command[: match.start(2)]
+                + expected
+                + command[match.end(2) :]
+            )
+    if not old_revision or not new_revision:
         return command
     if old_revision == new_revision or len(old_revision) != 40:
         return command
@@ -940,6 +961,7 @@ def _rebind_marker_if_stale(
     *,
     live_identity: Mapping[str, Any],
     source_branch: str,
+    expected_manifest_path: str | None = None,
 ) -> None:
     """CAS-rebind the cloud-session marker when its runtime identity is stale.
 
@@ -952,7 +974,6 @@ def _rebind_marker_if_stale(
         marker_runtime_identity,
         update_marker_runtime,
     )
-
     marker_identity = marker_runtime_identity(marker)
     if marker_identity is None:
         raise CliError(
@@ -963,16 +984,30 @@ def _rebind_marker_if_stale(
     # consult, d58701026410): digest agrees across writers but diagnostic
     # shape (editable/pth/imports) legitimately differs; full-dict compare
     # would rebind every launch.
-    if (
+    same_runtime = (
         str(marker_identity.get("import_root") or "").rstrip("/")
         == str(live_identity.get("import_root") or "").rstrip("/")
         and str(marker_identity.get("source_revision") or "")
         == str(live_identity.get("source_revision") or "")
-    ):
-        return
+    )
     relaunch_command = str(
         marker.get("relaunch_command") or marker.get("launch_command") or ""
     ).strip()
+    # A same-runtime marker can still carry a STALE LAUNCH SELECTOR: a
+    # command that pins ARNOLD_RUNTIME_MANIFEST to the creation-time session
+    # copy lags every manifest generation advance and fails admission on the
+    # next marker-only relaunch (occurrence c2f73c7ddcef). When the expected
+    # authoritative path is known, an equal root+rev marker with a stale
+    # selector must still rebind — the early return below fires only when the
+    # command binds the authoritative manifest (or none is expected).
+    command_manifest_stale = False
+    if expected_manifest_path and relaunch_command:
+        match = re.search(r"ARNOLD_RUNTIME_MANIFEST=(\S+)", relaunch_command)
+        command_manifest_stale = bool(
+            match and match.group(1) != str(expected_manifest_path)
+        )
+    if same_runtime and not command_manifest_stale:
+        return
     if not relaunch_command:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
@@ -981,13 +1016,15 @@ def _rebind_marker_if_stale(
     # The persisted command was authored for the marker's CURRENT runtime;
     # on a same-root revision advance it still names the OLD revision and
     # the CAS cutover would refuse it (runtime_marker_relaunch_mismatch).
-    # Regenerate the revision pin(s) so the cutover binds the LIVE runtime;
-    # a command that does not name the old revision at all is passed
-    # through unchanged and still fails closed in update_marker_runtime.
+    # Regenerate the revision pin(s) — and any stale manifest selector — so
+    # the cutover binds the LIVE runtime; a command that does not name the
+    # old revision at all is passed through unchanged and still fails
+    # closed in update_marker_runtime.
     relaunch_command = _regenerate_relaunch_command(
         relaunch_command,
         old_revision=str(marker_identity.get("source_revision") or ""),
         new_revision=str(live_identity.get("source_revision") or ""),
+        expected_manifest_path=expected_manifest_path,
     )
     update_marker_runtime(
         marker_path,
@@ -1834,6 +1871,7 @@ def ensure_runtime_launch_seed(
         marker,
         live_identity=live_identity,
         source_branch=str(epic.get("branch") or ""),
+        expected_manifest_path=str(manifest_path),
     )
     # Codex fix 2026-08-17: content-address the accepted generation. The seed
     # lives at runtime-launch-seeds/<runtime-id>/<generation>-<head>-<sha>.json

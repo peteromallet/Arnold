@@ -872,6 +872,45 @@ def _reconstruct(
     return RuntimeManifest(**values)
 
 
+def refresh_legacy_session_copy(
+    manifest: RuntimeManifest, authoritative_path: Path
+) -> Path | None:
+    """Refresh the creation-time legacy session-copy mirror, if one exists.
+
+    ``arnold-runtime-create`` wrote ``{manifest_dir}/{epic_id}.json`` once at
+    creation, and generation advances historically never refreshed it —
+    leaving a SECOND identity surface that silently lagged the authoritative
+    per-slug manifest (occurrence c2f73c7ddcef, 2026-08-28: gen-19 advance
+    left the gen-13 copy behind, and the cloud-session marker
+    ``relaunch_command`` still selected it, so every launch admitted through
+    that copy failed with ``source_revision_mismatch``).
+
+    The authoritative per-slug manifest is the only launch selector; this
+    copy is a compatibility mirror. Best-effort: unknown/unrelated files are
+    left untouched and write failures are reported, never fatal — the
+    advance itself has already succeeded when this runs.
+
+    Returns the refreshed path, or ``None`` when there was nothing to do.
+    """
+    session_dir = Path(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST_DIR", "/workspace/.megaplan")
+    )
+    legacy = (session_dir / f"{manifest.epic_id}.json").resolve(strict=False)
+    authoritative = Path(authoritative_path).expanduser().resolve(strict=False)
+    if legacy == authoritative or not legacy.is_file():
+        return None
+    try:
+        stale = load_manifest(legacy)
+    except ManifestError:
+        # Not a parseable manifest: an unrelated file owns that name; never
+        # overwrite what this seam did not create.
+        return None
+    if str(stale.runtime_id) != str(manifest.runtime_id):
+        return None
+    write_manifest(manifest, legacy)
+    return legacy
+
+
 def advance_generation(
     manifest: RuntimeManifest,
     new_commit: str,
@@ -2023,17 +2062,44 @@ def main(argv: list[str] | None = None) -> int:
                     else None
                 ),
             )
-            pointer = active_manifest_path()
-            if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
-                # The caller passed the pointer itself — the switch IS the write.
-                write_active_pointer(advanced, pointer)
-            else:
-                # Pointer switch FIRST (atomic, retains the previous generation
-                # for rollback), then the per-slug manifest: a retry after a
-                # mid-write failure re-reads the pre-advance slug and lands on
-                # the same generation + commit (idempotent).
-                write_active_pointer(advanced, pointer)
-                write_manifest(advanced, args.path)
+            # Same-slug publication serialization (occurrence c2f73c7ddcef):
+            # pointer + per-slug manifest + legacy mirror must move as one
+            # promotion; the watchdog promotion path takes the identical lock.
+            promotion_lock_path = (
+                Path(args.path).expanduser().resolve(strict=False)
+                .with_name(Path(args.path).name + ".promotion.lock")
+            )
+            lock_fd = os.open(promotion_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                pointer = active_manifest_path()
+                if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
+                    # The caller passed the pointer itself — the switch IS the write.
+                    write_active_pointer(advanced, pointer)
+                else:
+                    # Pointer switch FIRST (atomic, retains the previous generation
+                    # for rollback), then the per-slug manifest: a retry after a
+                    # mid-write failure re-reads the pre-advance slug and lands on
+                    # the same generation + commit (idempotent).
+                    write_active_pointer(advanced, pointer)
+                    write_manifest(advanced, args.path)
+                try:
+                    refreshed = refresh_legacy_session_copy(advanced, Path(args.path))
+                    if refreshed is not None:
+                        print(
+                            f"refreshed legacy session copy: {refreshed}",
+                            file=sys.stderr,
+                        )
+                except OSError as exc:  # hygiene failure must not mask the advance
+                    print(
+                        f"warning: legacy session copy refresh failed: {exc}",
+                        file=sys.stderr,
+                    )
+            finally:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             print(json.dumps(advanced.to_dict(), sort_keys=True))
         elif args.action == "cutover":
             result = apply_runtime_manifest_cutover(

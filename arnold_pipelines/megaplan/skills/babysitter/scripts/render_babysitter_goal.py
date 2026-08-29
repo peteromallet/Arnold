@@ -334,6 +334,15 @@ Mandatory flow — follow the five steps exactly:
   source_revision, binding drift, stale seed), DO NOT hand the rebind back:
   re-run step (c) (manifest -> marker -> chain -> seed resync) and retry the
   resume.  Iterate until the resume runs or you hit a genuinely external gate.
+  DRIVE SELECTOR RULE (occurrence c2f73c7ddcef, 2026-08-28): the chain drive
+  goes through the wrapper with the AUTHORITATIVE per-slug manifest explicitly
+  pinned —
+  ``env -u MEGAPLAN_RUNTIME_LAUNCH_SEED ARNOLD_RUNTIME_MANIFEST=<per-slug
+  manifest path> bash arnold_pipelines/megaplan/cloud/wrappers/arnold-chain
+  <chain spec> --one`` — never through an inherited/ambient launch seed, and
+  never through the creation-time session-copy manifest
+  ``{{manifest_dir}}/{{slug}}.json`` (it silently lags generation advances; the
+  marker ``relaunch_command`` that names it is rebind-healed at chain start).
   IMMUTABLE-GENERATION ENGINE FIX (2026-08-17, c0d430668e): a plan blocked
   with ``runtime_launch_attestation_mismatch`` / ``source_revision_mismatch``
   whose failure was RECORDED BEFORE the immutable-seed engine deployed is a

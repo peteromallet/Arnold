@@ -3232,6 +3232,13 @@ else:
     write_active_pointer(advanced, pointer)
     from arnold_pipelines.megaplan.cloud.runtime_manifest import write_manifest
     write_manifest(advanced, Path(manifest_path))
+try:
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import refresh_legacy_session_copy
+    refreshed = refresh_legacy_session_copy(advanced, Path(manifest_path))
+    if refreshed is not None:
+        print("refreshed legacy session copy:", refreshed)
+except OSError as exc:
+    print("warning: legacy session copy refresh failed:", exc)
 print("promotion advanced to generation", advanced.generation, "head", new_commit)
 PY
         rc=$?

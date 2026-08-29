@@ -1936,3 +1936,168 @@ def test_launch_seed_current_rejects_cross_interpreter_ready_seed(
         marker_path=paths["marker"],
         manifest_path=manifest_pointer,
     ) is False
+
+
+def test_regenerate_relaunch_command_rebinds_stale_manifest_path() -> None:
+    """A marker command that still selects the creation-time session-copy
+    manifest is rebound to the authoritative per-slug manifest (occurrence
+    c2f73c7ddcef: the gen-19 advance left the gen-13 copy in the command)."""
+    command = (
+        "cd /ws && env -u MEGAPLAN_RUNTIME_LAUNCH_SEED "
+        "ARNOLD_RUNTIME_MANIFEST=/workspace/.megaplan/epic-demo.json "
+        f"MEGAPLAN_BOUND_RUNTIME_REVISION={'a' * 40} chain start"
+    )
+    regenerated = attestation._regenerate_relaunch_command(
+        command,
+        old_revision="a" * 40,
+        new_revision="b" * 40,
+        expected_manifest_path="/workspace/.megaplan/runtime-manifests/epic-demo.json",
+    )
+    assert "ARNOLD_RUNTIME_MANIFEST=/workspace/.megaplan/runtime-manifests/epic-demo.json" in regenerated
+    assert "epic-demo.json " not in regenerated.replace(
+        "runtime-manifests/epic-demo.json", ""
+    )
+    assert "MEGAPLAN_BOUND_RUNTIME_REVISION=" + "b" * 40 in regenerated
+
+
+def test_regenerate_relaunch_command_keeps_authoritative_manifest_path() -> None:
+    """A command already binding the authoritative manifest is unchanged in
+    that dimension (idempotent rebind)."""
+    command = (
+        "env ARNOLD_RUNTIME_MANIFEST=/workspace/.megaplan/runtime-manifests/epic-demo.json "
+        "chain start"
+    )
+    assert (
+        attestation._regenerate_relaunch_command(
+            command,
+            old_revision="",
+            new_revision="b" * 40,
+            expected_manifest_path="/workspace/.megaplan/runtime-manifests/epic-demo.json",
+        )
+        == command
+    )
+
+
+def test_rebind_marker_stale_command_manifest_path_still_rebinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equal root+revision with a STALE manifest selector in the relaunch
+    command must NOT early-return: the selector is what fails admission on
+    the next marker-only relaunch."""
+    from arnold_pipelines.megaplan.cloud import runtime_cutover
+
+    identity = {"import_root": "/ws/runtime", "source_revision": "a" * 40}
+    marker = {
+        "runtime_binding": {"current_identity": dict(identity)},
+        "relaunch_command": (
+            "env ARNOLD_RUNTIME_MANIFEST=/legacy/epic-demo.json "
+            f"MEGAPLAN_BOUND_RUNTIME_REVISION={'a' * 40} chain start"
+        ),
+    }
+    calls: list[dict[str, object]] = []
+    marker_path = tmp_path / "marker.json"
+    marker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_cutover,
+        "marker_runtime_identity",
+        lambda _marker: {**identity, "content_sha256": "d" * 64},
+    )
+
+    def fake_update(_path, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(runtime_cutover, "update_marker_runtime", fake_update)
+    attestation._rebind_marker_if_stale(
+        marker_path,
+        marker,
+        live_identity=dict(identity),
+        source_branch="main",
+        expected_manifest_path="/auth/epic-demo.json",
+    )
+    assert len(calls) == 1
+    command = calls[0]["relaunch_command"]
+    assert "ARNOLD_RUNTIME_MANIFEST=/auth/epic-demo.json" in command
+    assert "/legacy/epic-demo.json" not in command
+
+
+def test_rebind_marker_equal_identity_authoritative_command_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equal root+revision AND the command binding the authoritative manifest
+    is the true no-op case — no CAS write is attempted."""
+    from arnold_pipelines.megaplan.cloud import runtime_cutover
+
+    identity = {"import_root": "/ws/runtime", "source_revision": "a" * 40}
+    marker = {
+        "runtime_binding": {"current_identity": dict(identity)},
+        "relaunch_command": (
+            "env ARNOLD_RUNTIME_MANIFEST=/auth/epic-demo.json chain start"
+        ),
+    }
+    monkeypatch.setattr(
+        runtime_cutover,
+        "marker_runtime_identity",
+        lambda _marker: {**identity, "content_sha256": "d" * 64},
+    )
+
+    def fail_update(*_a, **_k):
+        raise AssertionError("rebind must not fire for a clean marker")
+
+    monkeypatch.setattr(runtime_cutover, "update_marker_runtime", fail_update)
+    attestation._rebind_marker_if_stale(
+        tmp_path / "marker.json",
+        marker,
+        live_identity=dict(identity),
+        source_branch="main",
+        expected_manifest_path="/auth/epic-demo.json",
+    )
+
+
+def test_rebind_marker_revision_advance_still_rewrites_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard for the pre-existing behavior: a revision advance on
+    the same root still regenerates the revision pin(s) — and now also the
+    manifest selector — in one pass."""
+    from arnold_pipelines.megaplan.cloud import runtime_cutover
+
+    marker_identity = {
+        "import_root": "/ws/runtime",
+        "source_revision": "a" * 40,
+    }
+    live_identity = {
+        "import_root": "/ws/runtime",
+        "source_revision": "b" * 40,
+    }
+    marker = {
+        "runtime_binding": {"current_identity": dict(marker_identity)},
+        "relaunch_command": (
+            "env ARNOLD_RUNTIME_MANIFEST=/legacy/epic-demo.json "
+            f"MEGAPLAN_BOUND_RUNTIME_REVISION={'a' * 40} chain start"
+        ),
+    }
+    calls: list[dict[str, object]] = []
+    marker_path = tmp_path / "marker.json"
+    marker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_cutover,
+        "marker_runtime_identity",
+        lambda _marker: {**marker_identity, "content_sha256": "d" * 64},
+    )
+    monkeypatch.setattr(
+        runtime_cutover,
+        "update_marker_runtime",
+        lambda _path, **kwargs: calls.append(kwargs),
+    )
+    attestation._rebind_marker_if_stale(
+        marker_path,
+        marker,
+        live_identity=live_identity,
+        source_branch="main",
+        expected_manifest_path="/auth/epic-demo.json",
+    )
+    assert len(calls) == 1
+    command = calls[0]["relaunch_command"]
+    assert "MEGAPLAN_BOUND_RUNTIME_REVISION=" + "b" * 40 in command
+    assert "ARNOLD_RUNTIME_MANIFEST=/auth/epic-demo.json" in command
+    assert calls[0]["active_runtime_identity"] == live_identity
