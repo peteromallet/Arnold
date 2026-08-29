@@ -51,8 +51,11 @@ impossible to recur:
   Discord/resident features; CI rework beyond making new tests run.
 
 ## Settled decisions
-- Model policy (user-pinned): Planner & Oracle & `[XHARD]` = grok-4.6;
-  every other role = glm-5.3-flash (`openrouter/z-ai/glm-5.3-flash` via omp).
+- Model policy (user-pinned, superseding the earlier staged declaration):
+  Planner, Oracle, and any justified `[XHARD]` task = GPT-5.6 Sol
+  (`gpt-5.6-sol`, high reasoning); every normal exploration, critique,
+  execution, and independent review task = GPT-5.6 Luna (`gpt-5.6-luna`).
+  No model switch is authorized without user approval.
 - Fix delivery = fixer contract: commit in candidate tree, ship to origin/main,
   never hotfix-by-deploy-only.
 - Single-scan supervision verdicts are banned; two-scan confirmation pattern is
@@ -73,6 +76,13 @@ needed for a disposition consumer is unavailable and user cannot grant it.
 ## Sync policy
 Push branch `megado-nbf-guard-0826` to origin when batches pass oracle gates.
 Merging to main requires user approval at completion review.
+
+## Source custody for resumed execution
+
+Build on refreshed `origin/main` at immutable source SHA
+`798c50619204010ed3f4297fbb57988fe9381924`; preserve the five branch-only
+planning/evolution commits and the protected untracked artifacts named in
+`custody.md`. The source update does not widen scope or authorize a main merge.
 
 7. **Cooldown-aware scheduling conditions (T7, added via plan evolution — ledger
    entry 13).** Treat an active same-phase/spec cgroup-OOM cooldown as a typed,
