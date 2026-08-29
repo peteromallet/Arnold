@@ -5120,6 +5120,92 @@ def _remote_branch_head(root: Path, branch: str) -> str | None:
     return None
 
 
+def _advance_runtime_manifest_after_publish(
+    *,
+    root: Path,
+    plan: str,
+    commit_sha: str,
+    head_sha_before: str,
+) -> dict[str, Any] | None:
+    """Advance the bound runtime manifest pin onto the auto-publish commit.
+
+    Occurrence d51891b51841: the auto-publish commit moves the runtime root
+    HEAD, but nothing moved the ``ARNOLD_RUNTIME_MANIFEST`` pin with it, so
+    the NEXT worker launch failed closed with
+    ``runtime_launch_attestation_mismatch`` (pin lagging live HEAD). While a
+    manifest is bound to this exact runtime root and the publish produced a
+    NEW local commit, advance the pin through the shared lock+CAS producer
+    (forward ancestry only). The launch attestation stays the fail-closed
+    backstop: any refusal here is RECORDED as
+    ``manifest_advance.status="refused"`` and never flips the outer publish
+    result.
+    """
+    if not commit_sha or commit_sha == head_sha_before:
+        return None
+    result: dict[str, Any] = {
+        "schema": "megaplan.auto_publish.manifest_advance",
+        "plan": plan,
+        "commit_sha": commit_sha,
+        "status": "skipped",
+    }
+    manifest_env = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "").strip()
+    if not manifest_env:
+        result["reason"] = "no_manifest_bound"
+        return result
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+            ManifestError,
+            advance_generation_at_path,
+            load_manifest,
+        )
+
+        manifest_path = Path(manifest_env)
+        pre = load_manifest(manifest_path)
+        bound_root = str(pre.epic.get("runtime_root") or "").strip()
+        if (
+            not bound_root
+            or Path(bound_root).expanduser().resolve(strict=False)
+            != Path(root).resolve(strict=False)
+        ):
+            result["reason"] = "runtime_root_mismatch"
+            result["runtime_root"] = bound_root
+            return result
+        pin = str(pre.epic.get("expected_head") or "")
+        result["pin"] = pin
+        if pin != commit_sha:
+            ancestry = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", pin, commit_sha],
+                cwd=str(root),
+                check=False,
+                timeout=60,
+            )
+            if ancestry.returncode != 0:
+                result["status"] = "refused"
+                result["reason"] = "pin_not_ancestor"
+                return result
+        advanced, status = advance_generation_at_path(
+            manifest_path,
+            commit_sha,
+            reason=f"auto publish {plan}",
+            expected=(str(pre.runtime_id), int(pre.generation), pin),
+            idempotent_when_pinned=True,
+        )
+        result["status"] = status
+        result["generation"] = advanced.generation
+        result["expected_head"] = advanced.epic.get("expected_head")
+        return result
+    except (
+        ManifestError,
+        CliError,
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:
+        result["status"] = "refused"
+        result["reason"] = type(exc).__name__
+        result["error"] = str(exc)
+        return result
+
+
 def _publish_done_plan(
     *,
     plan: str,
@@ -5197,6 +5283,12 @@ def _publish_done_plan(
             remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
         except CliError:
             remote_url = ""
+    manifest_advance = _advance_runtime_manifest_after_publish(
+        root=root,
+        plan=plan,
+        commit_sha=commit_sha,
+        head_sha_before=head_sha_before,
+    )
     payload = {
         "schema": "megaplan.auto_publish",
         "schema_version": 1,
@@ -5213,6 +5305,8 @@ def _publish_done_plan(
         "host": socket.gethostname(),
         "published_at": datetime.now(timezone.utc).isoformat(),
     }
+    if manifest_advance is not None:
+        payload["manifest_advance"] = manifest_advance
     _atomic_write_text(plan_dir / "publish.json", json.dumps(payload, indent=2) + "\n")
     writer(
         f"[auto {plan}] publish {payload['status']}: "

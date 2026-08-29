@@ -3311,3 +3311,166 @@ def test_refresh_legacy_session_copy_leaves_unrelated_files_alone(
     # the authoritative path itself is never treated as its own mirror
     same_path = refresh_legacy_session_copy(advanced, authoritative_path)
     assert same_path is None
+
+
+# ── advance_generation_at_path: shared lock+CAS producer (d51891b51841) ─────
+
+from arnold_pipelines.megaplan.cloud.install_sync import (  # noqa: E402
+    compute_venv_digest,
+    frozen_spec_sha256,
+)
+from arnold_pipelines.megaplan.cloud.runtime_manifest import (  # noqa: E402
+    advance_generation_at_path,
+)
+
+
+def _spec_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A REAL git repo WITH the frozen dependency spec (pyproject.toml +
+    uv.lock) the strict frozen-spec gate requires. Returns (root, head)."""
+    root = tmp_path / "spec-repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    (root / "uv.lock").write_text(
+        'version = 1\nrequires-python = ">=3.11"\n', encoding="utf-8"
+    )
+    (root / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "seed"], check=True)
+    sha = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return root, sha
+
+
+def _bound_manifest(
+    tmp_path: Path, root: Path, head: str, **overrides: object
+) -> RuntimeManifest:
+    """A manifest bound to *root* at *head* whose dependency-generation proof
+    ACTUALLY binds: frozen-spec digest recomputed from the repo, interpreter
+    inside the generation dir named by that digest, digest-consistent venv."""
+    frozen = frozen_spec_sha256(root)
+    gen_dir = tmp_path / "runtime-venvs" / frozen
+    (gen_dir / "bin").mkdir(parents=True, exist_ok=True)
+    interpreter = gen_dir / "bin" / "python"
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    interpreter.chmod(0o755)
+    (gen_dir / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    return _make_manifest_obj(
+        epic={
+            "runtime_root": str(root),
+            "expected_head": head,
+            "dependency_generation": {
+                "id": frozen,
+                "frozen_spec_sha256": frozen,
+                "interpreter_path": str(interpreter),
+                "venv_digest": compute_venv_digest(interpreter),
+                "created": "2026-08-07T00:00:00+00:00",
+            },
+        },
+        indirection={"verified_head": head},
+        **overrides,
+    )
+
+
+def test_advance_generation_at_path_advances_pointer_and_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, head = _spec_repo(tmp_path)
+    pointer = tmp_path / "pointer" / "runtime-manifest.json"
+    slug = tmp_path / "manifests" / "native-demo.json"
+    manifest = _bound_manifest(tmp_path, root, head, generation=26)
+    write_manifest(manifest, slug)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    advanced, status = advance_generation_at_path(
+        slug, head, reason="test advance"
+    )
+    assert status == "advanced"
+    assert advanced.generation == 27
+    assert advanced.epic["expected_head"] == head
+    assert len(advanced.promotions) == 1
+    assert advanced.promotions[0]["previous_commit"] == head
+    assert load_manifest(slug).generation == 27
+    assert load_manifest(pointer).generation == 27
+
+
+def test_advance_generation_at_path_cas_refuses_concurrent_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, head = _spec_repo(tmp_path)
+    pointer = tmp_path / "pointer" / "runtime-manifest.json"
+    slug = tmp_path / "manifests" / "native-demo.json"
+    manifest = _bound_manifest(tmp_path, root, head, generation=26)
+    write_manifest(manifest, slug)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    # a concurrent writer advances the file between our snapshot and the call
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "--allow-empty", "-m", "next"], check=True)
+    head2 = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    concurrent = _bound_manifest(tmp_path, root, head2, generation=27)
+    write_manifest(concurrent, slug)
+    with pytest.raises(ManifestError, match="changed under the caller"):
+        advance_generation_at_path(
+            slug,
+            head2,
+            reason="stale caller",
+            expected=(str(manifest.runtime_id), 26, head),
+        )
+    assert load_manifest(slug).generation == 27  # zero mutation: untouched
+
+
+def test_advance_generation_at_path_idempotent_only_when_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, head = _spec_repo(tmp_path)
+    pointer = tmp_path / "pointer" / "runtime-manifest.json"
+    slug = tmp_path / "manifests" / "native-demo.json"
+    manifest = _bound_manifest(tmp_path, root, head, generation=26)
+    write_manifest(manifest, slug)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    # flag ON (auto-driver publish hook): already-pinned is a no-op
+    current, status = advance_generation_at_path(
+        slug, head, reason="hook retry", idempotent_when_pinned=True
+    )
+    assert status == "current"
+    assert current.generation == 26
+    assert load_manifest(slug).generation == 26
+    # flag OFF (module CLI): re-promotion of the same commit still bumps
+    advanced, status = advance_generation_at_path(slug, head, reason="re-promote")
+    assert status == "advanced"
+    assert advanced.generation == 27
+    assert load_manifest(slug).generation == 27
+
+
+def test_advance_generation_at_path_requires_bound_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, head = _spec_repo(tmp_path)
+    pointer = tmp_path / "pointer" / "runtime-manifest.json"
+    slug = tmp_path / "manifests" / "native-demo.json"
+    # default fixture proof ("a"*64 frozen spec) does NOT bind to the repo
+    manifest = _make_manifest_obj(
+        epic={"runtime_root": str(root), "expected_head": head},
+        indirection={"verified_head": head},
+        generation=26,
+    )
+    write_manifest(manifest, slug)
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(pointer))
+    before = slug.read_bytes()
+    with pytest.raises(ManifestError, match="frozen_spec_sha256"):
+        advance_generation_at_path(slug, head, reason="unbound proof")
+    assert slug.read_bytes() == before  # zero mutation on refusal

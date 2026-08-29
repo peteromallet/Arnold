@@ -983,6 +983,111 @@ def advance_generation(
         timestamps=dict(manifest.timestamps, updated=now),
     )
 
+def advance_generation_at_path(
+    manifest_path: Path,
+    new_commit: str,
+    *,
+    reason: str,
+    dependency_generation: Mapping[str, Any] | None = None,
+    expected: tuple[str, int, str] | None = None,
+    idempotent_when_pinned: bool = False,
+) -> tuple[RuntimeManifest, str]:
+    """Advance the manifest at *manifest_path* to *new_commit* under lock+CAS.
+
+    Shared producer for the module CLI and the auto-driver publish hook
+    (occurrence d51891b51841: the auto-publish commit moves the runtime root
+    HEAD, and the bound manifest pin must move with it before the next
+    worker launch, or the launch attestation fails closed with
+    ``runtime_launch_attestation_mismatch``).
+
+    Discipline (single writer seam, Sol stage-2 d51891b51841):
+
+    1. Acquire ``<manifest_path>.promotion.lock`` exclusively — the same
+       lock the module CLI, cutover, and watchdog promotion paths take.
+    2. Re-load the manifest INSIDE the lock.
+    3. CAS-check ``(runtime_id, generation, expected_head)`` against the
+       caller's *expected* snapshot when given: a concurrent advance
+       between the caller's read and this lock refuses with
+       :class:`ManifestError` (ZERO mutation) instead of clobbering it.
+    4. With *idempotent_when_pinned* (set by the auto-driver publish hook),
+       a pin already at *new_commit* returns ``(current, "current")``
+       without bumping the generation; the module CLI keeps its
+       re-promotion semantics (a same-commit advance still bumps — its
+       committed CLI contract).
+    5. Run :func:`advance_generation` inside the lock — the frozen-spec
+       dependency-generation proof binding and the resolvable-head guard
+       are enforced there.
+    6. Persist in the module CLI order: pointer switch first (atomic,
+       retains the previous generation for rollback), then the per-path
+       manifest when distinct, then best-effort legacy session-copy
+       refresh (a hygiene failure is a warning, never a masked advance).
+
+    Returns ``(manifest, status)`` with status ``"advanced"`` or
+    ``"current"``.
+    """
+    path = Path(manifest_path).expanduser().resolve(strict=False)
+    promotion_lock_path = path.with_name(path.name + ".promotion.lock")
+    lock_fd = os.open(promotion_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        current = load_manifest(path)
+        if expected is not None:
+            snapshot = (
+                str(current.runtime_id),
+                int(current.generation),
+                str(current.epic.get("expected_head") or ""),
+            )
+            if snapshot != (
+                str(expected[0]),
+                int(expected[1]),
+                str(expected[2]),
+            ):
+                raise ManifestError(
+                    "advance_generation_at_path refused: manifest changed under "
+                    f"the caller (snapshot runtime_id={expected[0]} "
+                    f"generation={expected[1]} expected_head={expected[2]}; live "
+                    f"runtime_id={snapshot[0]} generation={snapshot[1]} "
+                    f"expected_head={snapshot[2]})"
+                )
+        pin = str(current.epic.get("expected_head") or "")
+        if pin == str(new_commit) and idempotent_when_pinned:
+            return current, "current"
+        advanced = advance_generation(
+            current,
+            new_commit,
+            reason=reason,
+            dependency_generation=dependency_generation,
+        )
+        pointer = active_manifest_path()
+        if path == pointer.expanduser().resolve(strict=False):
+            # The caller passed the pointer itself — the switch IS the write.
+            write_active_pointer(advanced, pointer)
+        else:
+            # Pointer switch FIRST (atomic, retains the previous generation
+            # for rollback), then the per-path manifest: a retry after a
+            # mid-write failure re-reads the pre-advance manifest and lands
+            # on the same generation + commit (idempotent).
+            write_active_pointer(advanced, pointer)
+            write_manifest(advanced, path)
+        try:
+            refreshed = refresh_legacy_session_copy(advanced, path)
+            if refreshed is not None:
+                print(
+                    f"refreshed legacy session copy: {refreshed}",
+                    file=sys.stderr,
+                )
+        except OSError as exc:  # hygiene failure must not mask the advance
+            print(
+                f"warning: legacy session copy refresh failed: {exc}",
+                file=sys.stderr,
+            )
+        return advanced, "advanced"
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
 
 def _verify_dependency_generation_binding(
     proof: Mapping[str, Any],
@@ -2051,9 +2156,15 @@ def main(argv: list[str] | None = None) -> int:
             write_manifest(updated, args.path)
             print(json.dumps(updated.to_dict(), sort_keys=True))
         elif args.action == "advance_generation":
-            manifest = load_manifest(args.path)
-            advanced = advance_generation(
-                manifest,
+            # CAS snapshot read OUTSIDE the lock; advance_generation_at_path
+            # re-loads INSIDE the lock and refuses a concurrent advance
+            # (occurrence d51891b51841) instead of clobbering it. Same-slug
+            # publication serialization (occurrence c2f73c7ddcef): pointer +
+            # per-slug manifest + legacy mirror move as one promotion; the
+            # watchdog promotion path takes the identical lock.
+            pre = load_manifest(args.path)
+            advanced, _status = advance_generation_at_path(
+                args.path,
                 args.new_commit,
                 reason=args.reason,
                 dependency_generation=(
@@ -2061,45 +2172,12 @@ def main(argv: list[str] | None = None) -> int:
                     if args.dependency_generation
                     else None
                 ),
+                expected=(
+                    str(pre.runtime_id),
+                    int(pre.generation),
+                    str(pre.epic.get("expected_head") or ""),
+                ),
             )
-            # Same-slug publication serialization (occurrence c2f73c7ddcef):
-            # pointer + per-slug manifest + legacy mirror must move as one
-            # promotion; the watchdog promotion path takes the identical lock.
-            promotion_lock_path = (
-                Path(args.path).expanduser().resolve(strict=False)
-                .with_name(Path(args.path).name + ".promotion.lock")
-            )
-            lock_fd = os.open(promotion_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                pointer = active_manifest_path()
-                if Path(args.path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
-                    # The caller passed the pointer itself — the switch IS the write.
-                    write_active_pointer(advanced, pointer)
-                else:
-                    # Pointer switch FIRST (atomic, retains the previous generation
-                    # for rollback), then the per-slug manifest: a retry after a
-                    # mid-write failure re-reads the pre-advance slug and lands on
-                    # the same generation + commit (idempotent).
-                    write_active_pointer(advanced, pointer)
-                    write_manifest(advanced, args.path)
-                try:
-                    refreshed = refresh_legacy_session_copy(advanced, Path(args.path))
-                    if refreshed is not None:
-                        print(
-                            f"refreshed legacy session copy: {refreshed}",
-                            file=sys.stderr,
-                        )
-                except OSError as exc:  # hygiene failure must not mask the advance
-                    print(
-                        f"warning: legacy session copy refresh failed: {exc}",
-                        file=sys.stderr,
-                    )
-            finally:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(lock_fd)
             print(json.dumps(advanced.to_dict(), sort_keys=True))
         elif args.action == "cutover":
             result = apply_runtime_manifest_cutover(
