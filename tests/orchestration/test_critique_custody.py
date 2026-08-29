@@ -10,9 +10,10 @@ from typing import Any, Sequence
 
 import pytest
 
-from arnold_pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold_pipelines.megaplan._core import atomic_write_json, atomic_write_text, load_flag_registry
 from arnold_pipelines.megaplan import auto
 from arnold_pipelines.megaplan.flags import (
+    apply_flag_verifications,
     update_flags_after_critique,
     update_flags_after_gate,
     update_flags_after_revise,
@@ -2406,3 +2407,493 @@ def test_finalize_custody_rejects_bridge_mode_mismatch_with_clearance(
         CritiqueCustodyError, match="bridge_mode differs from clearance"
     ):
         assert_finalize_custody(plan_dir, graph)
+
+
+# ---------------------------------------------------------------------------
+# Custody acceptance: verified findings cleared without a revise fixed-claim
+# ---------------------------------------------------------------------------
+
+_ACCEPTANCE_FINDING_DETAIL = (
+    "Step 10 refuse-ambiguous conversion needs an atomic temp+fsync+rename migration."
+)
+_ACCEPTANCE_FLAG_CONCERN = (
+    "Refuse-ambiguous conversion leaves mixed-import pypelines unconvertible."
+)
+_ACCEPTANCE_GATE_EVIDENCE = (
+    "Plan v2 Step 10B.1 writes a temp file, fsyncs, then renames; EXDEV uses "
+    "copy+fsync+unlink with a checksum; ambiguous input is refused with "
+    "S2F_CONVERTER_AMBIGUOUS and converter quarantine."
+)
+
+
+def _acceptance_payload(*, flagged: bool, verified: list[str]) -> dict[str, Any]:
+    findings = [{"detail": _ACCEPTANCE_FINDING_DETAIL, "flagged": True}] if flagged else []
+    return {
+        "checks": [{"id": "scope", "question": "Are tasks bounded?", "findings": findings}],
+        "flags": [
+            {
+                "id": "scope-conv-ambiguous",
+                "concern": _ACCEPTANCE_FLAG_CONCERN,
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+                "evidence": _ACCEPTANCE_FINDING_DETAIL,
+                "source_check_id": "scope",
+            }
+        ]
+        if flagged
+        else [],
+        "verified_flag_ids": list(verified),
+        "disputed_flag_ids": [],
+    }
+
+
+def _advance_iteration(
+    plan_dir: Path,
+    state: dict[str, Any],
+    *,
+    iteration: int,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    next_state = deepcopy(state)
+    next_state["iteration"] = iteration
+    next_state["current_state"] = "critiqued"
+    next_state["plan_versions"] = [
+        {"version": version, "file": f"plan_v{version}.md"}
+        for version in range(1, iteration + 1)
+    ]
+    next_state["meta"]["current_invocation_id"] = f"critique-invocation-{iteration}"
+    atomic_write_text(
+        plan_dir / f"plan_v{iteration}.md",
+        f"# Plan v{iteration}\n\nBounded work slice {iteration}.\n",
+    )
+    atomic_write_text(plan_dir / f"critique_raw_v{iteration}.txt", "raw producer critique")
+    prepare_critique_payload(payload, expected_check_ids=["scope"])
+    atomic_write_json(plan_dir / f"critique_v{iteration}.json", payload)
+    write_critique_production_receipt(
+        plan_dir,
+        next_state,
+        payload,
+        expected_check_ids=["scope"],
+        producer_binding=_producer_binding(next_state["meta"]["current_invocation_id"]),
+    )
+    update_flags_after_critique(plan_dir, payload, iteration=iteration)
+    return next_state
+
+
+def test_clearance_accepts_finding_verified_by_current_critique(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[flag_id]),
+    )
+    flag = load_flag_registry(plan_dir)["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["verified_in"] == "critique_v2.json"
+    assert "resolution" not in flag
+
+    clearance = write_critique_clearance(plan_dir, next_state)
+    assert clearance["finding_count"] == 1
+    resolution = clearance["resolutions"][0]
+    assert resolution["disposition"] == "verified_by_current_critique"
+    assert resolution["verified_in"] == "critique_v2.json"
+    assert resolution["plan_artifact"] == "plan_v2.md"
+    assert resolution["verification_receipt"] == "critique_custody_v2.json"
+    assert resolution["evidence"].strip()
+
+
+def test_clearance_still_rejects_verification_receipt_bound_to_older_plan(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[flag_id]),
+    )
+    final_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=3,
+        payload=_acceptance_payload(flagged=False, verified=[]),
+    )
+    with pytest.raises(CritiqueCustodyError, match="critique_finding_unresolved"):
+        write_critique_clearance(plan_dir, final_state)
+
+
+def test_clearance_still_rejects_finding_recurring_in_verification_iteration(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=True, verified=[]),
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": flag_id, "action": "verify_fixed", "evidence": _ACCEPTANCE_GATE_EVIDENCE}],
+    )
+    with pytest.raises(CritiqueCustodyError, match="critique_finding_unresolved"):
+        write_critique_clearance(plan_dir, next_state)
+
+
+def test_clearance_accepts_gate_verify_fixed_with_concrete_evidence(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[]),
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": flag_id, "action": "verify_fixed", "evidence": _ACCEPTANCE_GATE_EVIDENCE}],
+    )
+    flag = load_flag_registry(plan_dir)["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["verified_in"] == "gate.json"
+    assert flag["gate_resolution"]["action"] == "verify_fixed"
+
+    clearance = write_critique_clearance(plan_dir, next_state)
+    resolution = clearance["resolutions"][0]
+    assert resolution["disposition"] == "verified_by_gate_evidence"
+    assert resolution["evidence"] == _ACCEPTANCE_GATE_EVIDENCE
+
+
+def test_clearance_still_rejects_gate_verify_fixed_with_empty_evidence(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[]),
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": flag_id, "action": "verify_fixed", "evidence": None}],
+    )
+    with pytest.raises(CritiqueCustodyError, match="critique_finding_unresolved"):
+        write_critique_clearance(plan_dir, next_state)
+
+
+def test_clearance_still_rejects_gate_verify_fixed_with_rubber_stamp_evidence(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[]),
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": flag_id, "action": "verify_fixed", "evidence": "looks good"}],
+    )
+    with pytest.raises(CritiqueCustodyError, match="critique_finding_unresolved"):
+        write_critique_clearance(plan_dir, next_state)
+
+
+def test_clearance_still_rejects_gate_verify_fixed_restating_the_concern(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[]),
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": flag_id, "action": "verify_fixed", "evidence": _ACCEPTANCE_FLAG_CONCERN}],
+    )
+    with pytest.raises(CritiqueCustodyError, match="critique_finding_unresolved"):
+        write_critique_clearance(plan_dir, next_state)
+
+
+def test_revise_typo_reaches_clearance_through_fixed_claim_without_registry_surgery(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    _persist_critique(plan_dir, state, _acceptance_payload(flagged=True, verified=[]))
+    flag_id = load_flag_registry(plan_dir)["flags"][0]["id"]
+    typo_id = flag_id[:-1]
+
+    update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": typo_id,
+                "resolution": "addressed",
+                "reason": "Migration is now atomic.",
+                "where": "plan_v2.md Step 10B",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="split",
+    )
+    next_state = _advance_iteration(
+        plan_dir,
+        state,
+        iteration=2,
+        payload=_acceptance_payload(flagged=False, verified=[flag_id]),
+    )
+    flag = load_flag_registry(plan_dir)["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["resolution"]["kind"] == "fixed"
+    assert flag["id_correction"]["from"] == typo_id
+    assert flag["id_correction"]["to"] == flag_id
+
+    clearance = write_critique_clearance(plan_dir, next_state)
+    assert clearance["resolutions"][0]["disposition"] == "verified_plan_mutation"
+
+
+# ---------------------------------------------------------------------------
+# Producer honesty: exact-first flag reference resolution
+# ---------------------------------------------------------------------------
+
+
+def _seed_registry(plan_dir: Path, flag_ids: list[str]) -> None:
+    atomic_write_json(
+        plan_dir / "faults.json",
+        {
+            "flags": [
+                {
+                    "id": flag_id,
+                    "concern": f"Concern for {flag_id}.",
+                    "category": "correctness",
+                    "severity_hint": "likely-significant",
+                    "evidence": f"Evidence for {flag_id}.",
+                    "status": "open",
+                    "severity": "significant",
+                    "verified": False,
+                }
+                for flag_id in flag_ids
+            ]
+        },
+    )
+
+
+def test_revise_corrects_unique_dropped_character_flag_reference(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_id = "CF-0123456789ABCDEF0123"
+    typo_id = "CF-0123456789ABCDEF012"
+    _seed_registry(plan_dir, [flag_id])
+
+    registry = update_flags_after_revise(
+        plan_dir,
+        [
+            {
+                "id": typo_id,
+                "resolution": "addressed",
+                "reason": "Migration is now atomic.",
+                "where": "plan_v2.md Step 10B",
+            }
+        ],
+        plan_file="plan_v2.md",
+        summary="split",
+    )
+    flag = registry["flags"][0]
+    assert flag["status"] == "addressed"
+    assert flag["addressed_in"] == "plan_v2.md"
+    assert flag["resolution"] == {
+        "kind": "fixed",
+        "claim": "Migration is now atomic.",
+        "where": "plan_v2.md Step 10B",
+    }
+    assert flag["id_correction"] == {
+        "from": typo_id,
+        "to": flag_id,
+        "recorded_in": "revise",
+        "reference_kind": "addressed",
+        "at_iteration": 2,
+    }
+    assert registry.get("unmatched_flag_references") is None
+
+
+def test_revise_ambiguous_flag_reference_records_typed_row_and_mutates_nothing(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_a = "CF-0123456789ABCDEF0123"
+    flag_b = "CF-0123456789ABCDEF0124"
+    typo_id = "CF-0123456789ABCDEF012"
+    _seed_registry(plan_dir, [flag_a, flag_b])
+
+    registry = update_flags_after_revise(
+        plan_dir,
+        [typo_id],
+        plan_file="plan_v2.md",
+        summary="split",
+    )
+    unmatched = registry["unmatched_flag_references"]
+    assert unmatched == [
+        {
+            "source": "revise",
+            "reference": typo_id,
+            "reference_kind": "addressed",
+            "reason": "ambiguous",
+            "candidates": [flag_a, flag_b],
+        }
+    ]
+    for flag in registry["flags"]:
+        assert flag["status"] == "open"
+        assert "id_correction" not in flag
+        assert "resolution" not in flag
+        assert "addressed_in" not in flag
+
+
+def test_revise_unknown_flag_reference_records_typed_row(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_id = "CF-0123456789ABCDEF0123"
+    _seed_registry(plan_dir, [flag_id])
+
+    registry = update_flags_after_revise(
+        plan_dir,
+        ["CF-99999999999999999999"],
+        plan_file="plan_v2.md",
+        summary="split",
+    )
+    assert registry["unmatched_flag_references"] == [
+        {
+            "source": "revise",
+            "reference": "CF-99999999999999999999",
+            "reference_kind": "addressed",
+            "reason": "no_match",
+            "candidates": [],
+        }
+    ]
+    assert registry["flags"][0]["status"] == "open"
+
+
+def test_exact_flag_reference_creates_no_correction_metadata(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_id = "CF-0123456789ABCDEF0123"
+    _seed_registry(plan_dir, [flag_id])
+
+    registry = update_flags_after_revise(
+        plan_dir,
+        [flag_id],
+        plan_file="plan_v2.md",
+        summary="split",
+    )
+    flag = registry["flags"][0]
+    assert flag["status"] == "addressed"
+    assert "id_correction" not in flag
+    assert registry.get("unmatched_flag_references") is None
+
+
+def test_critique_verified_reference_corrects_and_honors_skip(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_id = "CF-0123456789ABCDEF0123"
+    typo_id = "CF-0123456789ABCDEF012"
+    _seed_registry(plan_dir, [flag_id])
+
+    payload = {
+        "checks": [],
+        "flags": [],
+        "verified_flag_ids": [typo_id],
+        "disputed_flag_ids": [],
+    }
+    registry = update_flags_after_critique(plan_dir, payload, iteration=2)
+    flag = registry["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["verified_in"] == "critique_v2.json"
+    assert flag["id_correction"]["recorded_in"] == "critique"
+    assert flag["id_correction"]["reference_kind"] == "verified"
+    assert flag["id_correction"]["at_iteration"] == 2
+    assert registry.get("unmatched_flag_references") is None
+
+    _seed_registry(plan_dir, [flag_id])
+    registry = update_flags_after_critique(
+        plan_dir,
+        dict(payload),
+        iteration=2,
+        skip_flag_ids=frozenset({flag_id}),
+    )
+    flag = registry["flags"][0]
+    assert flag["status"] == "open"
+    assert flag["id_correction"]["to"] == flag_id
+    assert registry.get("unmatched_flag_references") is None
+
+
+def test_gate_and_evaluator_references_correct_or_record_typed_rows(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    flag_id = "CF-0123456789ABCDEF0123"
+    typo_id = "CF-0123456789ABCDEF012"
+
+    _seed_registry(plan_dir, [flag_id])
+    registry = update_flags_after_gate(
+        plan_dir,
+        [{"flag_id": typo_id, "action": "verify_fixed", "evidence": "Step 10B concrete evidence."}],
+    )
+    flag = registry["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["verified_in"] == "gate.json"
+    assert flag["id_correction"] == {
+        "from": typo_id,
+        "to": flag_id,
+        "recorded_in": "gate",
+        "reference_kind": "resolution",
+    }
+
+    _seed_registry(plan_dir, [flag_id])
+    adjudicated = apply_flag_verifications(
+        plan_dir,
+        [{"flag_id": typo_id, "outcome": "verified", "rationale": "Confirmed atomic."}],
+    )
+    assert adjudicated == {flag_id}
+    registry = load_flag_registry(plan_dir)
+    flag = registry["flags"][0]
+    assert flag["status"] == "verified"
+    assert flag["verified_in"] == "evaluator_verdict.json"
+    assert flag["id_correction"]["recorded_in"] == "evaluator"
+    assert flag["id_correction"]["reference_kind"] == "verification"
+
+    _seed_registry(plan_dir, [flag_id])
+    adjudicated = apply_flag_verifications(
+        plan_dir,
+        [{"flag_id": "CF-99999999999999999999", "outcome": "verified", "rationale": "Confirmed."}],
+    )
+    assert adjudicated == set()
+    registry = load_flag_registry(plan_dir)
+    assert registry["unmatched_flag_references"] == [
+        {
+            "source": "evaluator",
+            "reference": "CF-99999999999999999999",
+            "reference_kind": "verification",
+            "reason": "no_match",
+            "candidates": [],
+        }
+    ]
+    assert registry["flags"][0]["status"] == "open"

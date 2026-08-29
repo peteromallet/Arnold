@@ -253,10 +253,13 @@ class FlagRecord(_FlagRecordRequired, total=False):
     settled_by_tiebreaker: str
     resolution: dict[str, Any]
     verify_rationale: str
+    gate_resolution: dict[str, Any]
+    id_correction: dict[str, Any]
 
 
 class FlagRegistry(TypedDict):
     flags: list[FlagRecord]
+    unmatched_flag_references: NotRequired[list[dict[str, Any]]]
 
 
 class GateCheckResult(TypedDict):

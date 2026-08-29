@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.flags import synthesize_critique_flags
 from arnold_pipelines.megaplan.orchestration.task_feasibility import task_contract_hash
 from arnold_pipelines.megaplan.orchestration.critique_status import is_unverifiable_check
+from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold_pipelines.megaplan.types import PlanState
 from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import (
     query_worker_dispatch_manifest,
@@ -1444,6 +1445,114 @@ def _receipt_paths(plan_dir: Path) -> list[Path]:
     return sorted(plan_dir.glob("critique_custody_v*.json"), key=iteration)
 
 
+_PLAN_DIGEST_RE = re.compile(r"^(?:sha256:)?([0-9a-fA-F]{64})$")
+
+
+def _normalized_digest(value: Any) -> str | None:
+    """Bare hex for an optionally ``sha256:``-prefixed digest; ``None`` otherwise."""
+    if not isinstance(value, str):
+        return None
+    match = _PLAN_DIGEST_RE.fullmatch(value.strip())
+    return match.group(1).lower() if match else None
+
+
+def _verified_by_current_critique(
+    *,
+    flag: Mapping[str, Any],
+    finding: Mapping[str, Any],
+    verified_in: str,
+    verified_iteration: int,
+    plan_dir: Path,
+    receipts: Sequence[tuple[str, Mapping[str, Any], str]],
+    occurrence_receipt: Mapping[str, Any],
+    current_plan_name: str,
+    current_plan_sha256: str,
+) -> dict[str, Any] | None:
+    """Accept a ``verified`` finding cleared by the current-iteration critique.
+
+    Every precondition is required; any miss returns ``None`` so the caller
+    stays fail-closed. The receipt set must already be validated by
+    ``_validate_receipt_at_path`` — this helper never rescans receipts.
+    """
+    # 1. Exactly one validated receipt binds the named critique artifact to the
+    #    CURRENT plan byte-identically (name + normalized sha equality).
+    bound: tuple[str, Mapping[str, Any], str] | None = None
+    for receipt_name, receipt, receipt_sha256 in receipts:
+        if (
+            receipt.get("iteration") == verified_iteration
+            and receipt.get("critique_artifact") == verified_in
+            and receipt.get("plan_artifact") == current_plan_name
+            and _normalized_digest(receipt.get("plan_sha256"))
+            == _normalized_digest(current_plan_sha256)
+        ):
+            if bound is not None:
+                return None
+            bound = (receipt_name, receipt, receipt_sha256)
+    if bound is None:
+        return None
+    bound_name, bound_receipt, bound_sha256 = bound
+    # 2. The bound critique artifact must be the digest the receipt recorded,
+    #    and must actually verify this flag.
+    critique_path = plan_dir / verified_in
+    if not critique_path.is_file():
+        return None
+    critique_digest = _normalized_digest(sha256_file(critique_path))
+    if critique_digest is None or critique_digest != _normalized_digest(
+        bound_receipt.get("critique_sha256")
+    ):
+        return None
+    critique = read_json(critique_path)
+    bound_references = critique.get("verified_flag_ids")
+    if not isinstance(bound_references, list):
+        return None
+    flag_id = str(flag.get("id"))
+    correction = flag.get("id_correction") if isinstance(flag.get("id_correction"), dict) else {}
+    referenced = False
+    for reference in bound_references:
+        if not isinstance(reference, str):
+            continue
+        if reference == flag_id:
+            referenced = True
+            break
+        if (
+            correction.get("from") == reference
+            and correction.get("to") == flag_id
+            and correction.get("recorded_in") == "critique"
+            and correction.get("reference_kind") == "verified"
+            and correction.get("at_iteration") == verified_iteration
+        ):
+            referenced = True
+            break
+    if not referenced:
+        return None
+    # 3. The verification must postdate this finding's occurrence.
+    try:
+        occurrence_iteration = int(occurrence_receipt.get("iteration"))
+    except (TypeError, ValueError):
+        return None
+    if occurrence_iteration >= verified_iteration:
+        return None
+    # 4. Selected evidence must be non-empty.
+    evidence = ""
+    for candidate in (flag.get("verify_rationale"), finding.get("evidence"), flag.get("evidence")):
+        if isinstance(candidate, str) and candidate.strip():
+            evidence = candidate
+            break
+    if not evidence.strip():
+        return None
+    return {
+        "finding_id": finding["finding_id"],
+        "flag_id": str(finding.get("flag_id")),
+        "disposition": "verified_by_current_critique",
+        "verified_in": verified_in,
+        "verification_receipt": bound_name,
+        "verification_receipt_sha256": bound_sha256,
+        "plan_artifact": current_plan_name,
+        "plan_sha256": current_plan_sha256,
+        "evidence": evidence,
+    }
+
+
 def _resolution_for_finding(
     flag: Mapping[str, Any],
     finding: Mapping[str, Any],
@@ -1454,6 +1563,9 @@ def _resolution_for_finding(
     source_plan_sha256: str,
     plan_version_order: Mapping[str, int],
     gate_expected: bool,
+    plan_dir: Path,
+    receipts: Sequence[tuple[str, Mapping[str, Any], str]],
+    occurrence_receipt: Mapping[str, Any],
 ) -> dict[str, Any]:
     flag_id = str(finding.get("flag_id"))
     status = flag.get("status")
@@ -1506,6 +1618,44 @@ def _resolution_for_finding(
             "plan_sha256": current_plan_sha256,
             "evidence": gate_resolution.get("evidence") or flag.get("verify_rationale") or resolution.get("claim"),
         }
+    if status == "verified" and not fixed_claim and plan_mutated:
+        verified_in = str(flag.get("verified_in") or "")
+        verified_match = re.fullmatch(r"critique_v([1-9][0-9]*)\.json", verified_in)
+        if verified_match is not None:
+            acceptance = _verified_by_current_critique(
+                flag=flag,
+                finding=finding,
+                verified_in=verified_in,
+                verified_iteration=int(verified_match.group(1)),
+                plan_dir=plan_dir,
+                receipts=receipts,
+                occurrence_receipt=occurrence_receipt,
+                current_plan_name=current_plan_name,
+                current_plan_sha256=current_plan_sha256,
+            )
+            if acceptance is not None:
+                return acceptance
+        if (
+            gate_expected
+            and verified_in == "gate.json"
+            and gate_resolution.get("action") == "verify_fixed"
+        ):
+            gate_evidence = gate_resolution.get("evidence")
+            if (
+                isinstance(gate_evidence, str)
+                and gate_evidence.strip()
+                and not is_rubber_stamp(gate_evidence, strict=True)
+                and " ".join(gate_evidence.split()).casefold()
+                != " ".join(str(flag.get("concern") or "").split()).casefold()
+            ):
+                return {
+                    "finding_id": finding["finding_id"],
+                    "flag_id": flag_id,
+                    "disposition": "verified_by_gate_evidence",
+                    "plan_artifact": current_plan_name,
+                    "plan_sha256": current_plan_sha256,
+                    "evidence": gate_evidence,
+                }
     if status == "gate_disputed" and gate_expected:
         evidence = gate_resolution.get("evidence")
         if isinstance(evidence, str) and evidence.strip():
@@ -1592,6 +1742,7 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
     }
     resolutions: list[dict[str, Any]] = []
     source_receipts: list[dict[str, Any]] = []
+    validated_receipts: list[tuple[str, Mapping[str, Any], str]] = []
     latest_occurrences: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
     # Aggregate BRIDGE provenance across every joined receipt.  The clearance is
     # BRIDGE when any bound production receipt carries bridge_mode=true, and it
@@ -1602,7 +1753,9 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
     for path in receipt_paths:
         receipt = read_json(path)
         _validate_receipt_at_path(plan_dir, path, receipt)
-        source_receipts.append({"artifact": path.name, "sha256": sha256_file(path)})
+        receipt_sha256 = sha256_file(path)
+        source_receipts.append({"artifact": path.name, "sha256": receipt_sha256})
+        validated_receipts.append((path.name, receipt, receipt_sha256))
         if receipt.get("bridge_mode") is True:
             clearance_bridge_mode = True
         for blocker in receipt.get("carried_blockers", []) or []:
@@ -1659,6 +1812,9 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
                 source_plan_sha256=str(receipt.get("plan_sha256")),
                 plan_version_order=plan_version_order,
                 gate_expected=gate_expected,
+                plan_dir=plan_dir,
+                receipts=validated_receipts,
+                occurrence_receipt=receipt,
             )
         )
     clearance = {

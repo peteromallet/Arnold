@@ -176,6 +176,108 @@ def synthesize_critique_flags(critique: dict[str, Any]) -> list[dict[str, Any]]:
     return raw_flags
 
 
+_NEAR_CF_REFERENCE_RE = re.compile(r"^CF-[0-9A-F]{18,22}$")
+_CF_CANDIDATE_RE = re.compile(r"^CF-[0-9A-F]{20}$")
+_FLAG_REFERENCE_EDIT_RADIUS = 2
+
+
+def _bounded_edit_distance(source: str, target: str, *, cap: int) -> int | None:
+    """Case-sensitive Levenshtein distance, or ``None`` once it exceeds ``cap``."""
+    if abs(len(source) - len(target)) > cap:
+        return None
+    previous = list(range(len(target) + 1))
+    for i, src_char in enumerate(source, start=1):
+        current = [i]
+        row_min = i
+        for j, tgt_char in enumerate(target, start=1):
+            cost = 0 if src_char == tgt_char else 1
+            value = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+            current.append(value)
+            if value < row_min:
+                row_min = value
+        if row_min > cap:
+            return None
+        previous = current
+    distance = previous[-1]
+    return distance if distance <= cap else None
+
+
+def _record_unmatched_reference(
+    registry: FlagRegistry,
+    *,
+    reference: str,
+    recorded_in: str,
+    reference_kind: str,
+    reason: str,
+    candidates: list[str],
+) -> None:
+    """Append a deterministic typed row for a flag reference no flag matched."""
+    rows = registry.setdefault("unmatched_flag_references", [])
+    rows.append(
+        {
+            "source": recorded_in,
+            "reference": reference,
+            "reference_kind": reference_kind,
+            "reason": reason,
+            "candidates": sorted(candidates),
+        }
+    )
+
+
+def resolve_flag_reference(
+    reference: str,
+    registry: FlagRegistry,
+    by_id: dict[str, FlagRecord],
+    *,
+    recorded_in: str,
+    reference_kind: str,
+    at_iteration: int | None = None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Exact-first flag reference resolution with bounded unique near-miss correction.
+
+    Returns ``(resolved_id, correction_record)``. An exact registry match always
+    wins and produces no correction metadata. Otherwise a canonical ``CF-``
+    near-reference corrects to the UNIQUE registry candidate within edit radius
+    2, and the matched flag records ``id_correction`` provenance (first
+    correction wins). Zero or ambiguous near-misses mutate nothing and append a
+    typed ``unmatched_flag_references`` row to the registry — never silent.
+    """
+    if reference in by_id:
+        return reference, None
+    candidates: list[str] = []
+    if _NEAR_CF_REFERENCE_RE.fullmatch(reference):
+        for candidate_id in by_id:
+            if not _CF_CANDIDATE_RE.fullmatch(candidate_id):
+                continue
+            if _bounded_edit_distance(reference, candidate_id, cap=_FLAG_REFERENCE_EDIT_RADIUS) is not None:
+                candidates.append(candidate_id)
+    if len(candidates) == 1:
+        matched_id = candidates[0]
+        correction: dict[str, Any] = {
+            "from": reference,
+            "to": matched_id,
+            "recorded_in": recorded_in,
+            "reference_kind": reference_kind,
+        }
+        if at_iteration is not None:
+            correction["at_iteration"] = at_iteration
+        matched_flag = by_id[matched_id]
+        existing = matched_flag.get("id_correction")
+        if not isinstance(existing, dict) or not existing:
+            matched_flag["id_correction"] = correction
+        return matched_id, correction
+    reason = "ambiguous" if len(candidates) > 1 else "no_match"
+    _record_unmatched_reference(
+        registry,
+        reference=reference,
+        recorded_in=recorded_in,
+        reference_kind=reference_kind,
+        reason=reason,
+        candidates=candidates,
+    )
+    return None, None
+
+
 def _apply_flag_updates(
     payload: dict[str, Any],
     *,
@@ -191,18 +293,36 @@ def _apply_flag_updates(
     _skip = skip_flag_ids or frozenset()
 
     for verified_id in payload.get("verified_flag_ids", []):
-        if verified_id in _skip:
+        if not isinstance(verified_id, str) or not verified_id:
             continue
-        if verified_id in by_id:
-            by_id[verified_id]["status"] = "verified"
-            by_id[verified_id]["verified"] = True
-            by_id[verified_id]["verified_in"] = f"{artifact_prefix}_v{iteration}.json"
+        resolved_id, _correction = resolve_flag_reference(
+            verified_id,
+            registry,
+            by_id,
+            recorded_in=artifact_prefix,
+            reference_kind="verified",
+            at_iteration=iteration,
+        )
+        if resolved_id is None or resolved_id in _skip:
+            continue
+        by_id[resolved_id]["status"] = "verified"
+        by_id[resolved_id]["verified"] = True
+        by_id[resolved_id]["verified_in"] = f"{artifact_prefix}_v{iteration}.json"
 
     for disputed_id in payload.get("disputed_flag_ids", []):
-        if disputed_id in _skip:
+        if not isinstance(disputed_id, str) or not disputed_id:
             continue
-        if disputed_id in by_id:
-            by_id[disputed_id]["status"] = "disputed"
+        resolved_id, _correction = resolve_flag_reference(
+            disputed_id,
+            registry,
+            by_id,
+            recorded_in=artifact_prefix,
+            reference_kind="disputed",
+            at_iteration=iteration,
+        )
+        if resolved_id is None or resolved_id in _skip:
+            continue
+        by_id[resolved_id]["status"] = "disputed"
 
     for raw_flag in payload.get("flags", []):
         proposed_id = raw_flag.get("id")
@@ -257,9 +377,18 @@ def apply_flag_verifications(
         fid = fv.get("flag_id", "")
         outcome = fv.get("outcome", "")
         rationale = fv.get("rationale", "")
-        if not fid or fid not in by_id:
+        if not isinstance(fid, str) or not fid:
             continue
-        flag = by_id[fid]
+        resolved_id, _correction = resolve_flag_reference(
+            fid,
+            registry,
+            by_id,
+            recorded_in="evaluator",
+            reference_kind="verification",
+        )
+        if resolved_id is None:
+            continue
+        flag = by_id[resolved_id]
         flag["verify_rationale"] = rationale
         if outcome == "verified":
             flag["status"] = "verified"
@@ -271,7 +400,7 @@ def apply_flag_verifications(
             flag.pop("verified_in", None)
         elif outcome == "accepted_tradeoff":
             flag["status"] = "accepted_tradeoff"
-        adjudicated.add(fid)
+        adjudicated.add(resolved_id)
     save_flag_registry(plan_dir, registry)
     return adjudicated
 
@@ -315,43 +444,61 @@ def update_flags_after_revise(
     plan_file: str,
     summary: str,
 ) -> FlagRegistry:
-    addressed_ids: set[str] = set()
-    # Collect per-item resolution info for both addressed and rejected items.
-    item_resolutions: dict[str, dict[str, Any]] = {}
+    plan_match = re.fullmatch(r"plan_v([1-9][0-9]*)\.md", str(plan_file))
+    revise_iteration = int(plan_match.group(1)) if plan_match else None
+    raw_items: list[tuple[str, dict[str, Any] | None]] = []
     for item in flags_addressed:
         if isinstance(item, str) and item:
-            addressed_ids.add(item)
+            raw_items.append((item, None))
             continue
         if not isinstance(item, dict):
             continue
         flag_id = item.get("id")
-        resolution = item.get("resolution", "addressed")
         if not isinstance(flag_id, str) or not flag_id:
             continue
+        raw_items.append((flag_id, item))
+
+    registry = load_flag_registry(plan_dir)
+    by_id: dict[str, FlagRecord] = {flag["id"]: flag for flag in registry["flags"]}
+    addressed_ids: set[str] = set()
+    item_resolutions: dict[str, dict[str, Any]] = {}
+    for reference, item in raw_items:
+        resolved_id, _correction = resolve_flag_reference(
+            reference,
+            registry,
+            by_id,
+            recorded_in="revise",
+            reference_kind="addressed",
+            at_iteration=revise_iteration,
+        )
+        if resolved_id is None:
+            continue
+        if item is None:
+            addressed_ids.add(resolved_id)
+            continue
+        resolution = item.get("resolution", "addressed")
         reason = item.get("reason", "")
         where = item.get("where", "")
+        # Write resolution for any matched flag (addressed or rejected).
+        # Rejected items do NOT get status flipped to addressed.
         if resolution == "rejected":
-            item_resolutions[flag_id] = {
+            item_resolutions[resolved_id] = {
                 "kind": "rejected",
                 "claim": reason,
                 "where": where if isinstance(where, str) else "",
             }
         else:
-            addressed_ids.add(flag_id)
-            item_resolutions[flag_id] = {
+            addressed_ids.add(resolved_id)
+            item_resolutions[resolved_id] = {
                 "kind": "fixed",
                 "claim": reason,
                 "where": where if isinstance(where, str) else "",
             }
-
-    registry = load_flag_registry(plan_dir)
     for flag in registry["flags"]:
         fid = flag["id"]
         if fid in addressed_ids:
             flag["status"] = "addressed"
             flag["addressed_in"] = plan_file
-        # Write resolution for any matched flag (addressed or rejected).
-        # Rejected items do NOT get status flipped to addressed.
         if fid in item_resolutions:
             flag["resolution"] = item_resolutions[fid]
     save_flag_registry(plan_dir, registry)
@@ -378,10 +525,20 @@ def update_flags_after_gate(
     registry = load_flag_registry(plan_dir)
     by_id: dict[str, FlagRecord] = {flag["id"]: flag for flag in registry["flags"]}
     for res in resolutions:
-        flag_id = res.get("flag_id", "")
+        raw_flag_id = res.get("flag_id", "")
         action = res.get("action", "")
-        if flag_id not in by_id:
+        if not isinstance(raw_flag_id, str) or not raw_flag_id:
             continue
+        resolved_id, _correction = resolve_flag_reference(
+            raw_flag_id,
+            registry,
+            by_id,
+            recorded_in="gate",
+            reference_kind="resolution",
+        )
+        if resolved_id is None:
+            continue
+        flag_id = resolved_id
         if action == "dispute":
             by_id[flag_id]["status"] = "gate_disputed"
         elif action == "accept_tradeoff":
