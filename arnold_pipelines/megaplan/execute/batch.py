@@ -145,6 +145,7 @@ from arnold_pipelines.megaplan.orchestration.validation_jobs import (
     classify_selector_lifecycle,
     declared_task_output_paths,
     deferred_selector_evidence,
+    direct_validator_command,
     graph_declared_output_paths,
     normalize_selector_path,
 )
@@ -4570,6 +4571,14 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 _recompiled_command = _recompile_legacy_narrow_recheck_command(
                     job.get("command"), job.get("selectors")
                 )
+            if _recompiled_command is None:
+                # Direct-validator projection: a persisted compiled pytest
+                # shape over a single CLI-validator selector can never pass
+                # (pytest collects zero tests and exits 5).  The declared
+                # intent is the selector's own exit code, so the gate
+                # projects the effective command IN MEMORY — the persisted
+                # contract and its finalize custody hash stay untouched.
+                _recompiled_command = direct_validator_command(job)
             _delta_policy = _detected_delta_policy and not force_strict_gate
             if _delta_policy or comparison_ceiling_override is not None:
                 _comparison_ceiling = (

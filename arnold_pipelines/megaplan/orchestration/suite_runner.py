@@ -310,7 +310,13 @@ def _pytest_command(command: str | None) -> str:
     elif first.startswith("pytest"):
         parts = [sys.executable, "-m", "pytest", *parts[1:]]
     elif first in {"python", "python3"} or first.startswith("python"):
-        pass
+        if "pytest" not in command:
+            # A direct non-pytest validator run: its own exit code and
+            # output ARE the result.  Appending the pytest parsing flags
+            # would make the validator's argparse exit 2 (unrecognized
+            # arguments) and can never produce a pytest collection
+            # (occurrence e252f47b761e: VJ2's direct validator run).
+            return command
     elif "pytest" not in command:
         return command
     elif "pytest" in parts:

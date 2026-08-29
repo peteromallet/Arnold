@@ -290,6 +290,71 @@ def _is_ambiguous_selector(selector: str) -> bool:
     return not stripped or stripped in _AMBIGUOUS_SELECTOR_PATTERNS
 
 
+import re
+
+_PYTEST_TEST_FILE_RE = re.compile(r"^(?:test_.*|.*_test)\.py$")
+
+
+def is_pytest_collectible_selector(selector: str) -> bool:
+    """True when pytest can deterministically collect *selector*.
+
+    A single ``.py`` file outside pytest's default ``python_files``
+    convention (``test_*.py`` / ``*_test.py``, plus ``conftest.py``) is a
+    CLI validator, not a test module: pytest collects zero tests from it
+    and always exits 5. Directories and ``::node`` selectors always
+    compile as pytest.
+    """
+    stripped = selector.strip()
+    if "::" in stripped:
+        return True
+    name = stripped.rsplit("/", 1)[-1]
+    if name == "conftest.py":
+        return True
+    return bool(_PYTEST_TEST_FILE_RE.fullmatch(name))
+
+
+def direct_validator_command(job: Mapping[str, Any]) -> str | None:
+    """Recompile a persisted pytest narrow-recheck into a direct validator run.
+
+    Compiled narrow-recheck jobs historically always built
+    ``pytest <selectors> ...``.  For a CLI validator selector (single ``.py``
+    file outside pytest's ``python_files`` convention), that compiled command
+    deterministically collects zero tests and exits 5 — it can never pass,
+    so any plan whose recheck names a validator wedges execute pre-dispatch
+    forever.  The declared intent is the selector's own exit code as the
+    validation result, so the admission gate projects the command to a
+    direct run IN MEMORY.  This never rewrites plan artifacts: finalize
+    custody verifies the persisted contract, which stays unchanged.
+
+    Returns ``None`` unless the persisted command is exactly the compiled
+    pytest shape over exactly the job's single validator selector (fail
+    closed on any drift).
+    """
+    if job.get("kind") != "narrow_recheck":
+        return None
+    command = job.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    selectors = job.get("selectors")
+    if not isinstance(selectors, list) or len(selectors) != 1:
+        return None
+    selector = selectors[0]
+    if not isinstance(selector, str) or not selector.strip():
+        return None
+    if is_pytest_collectible_selector(selector):
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if not parts or parts[0] != "pytest":
+        return None
+    non_option = [tok.strip("'\"") for tok in parts[1:] if not tok.startswith("-")]
+    if non_option != [selector]:
+        return None
+    return f"python3 {shlex.quote(selector)}"
+
+
 def _build_pytest_command(
     selectors: Sequence[str],
     *,
@@ -375,10 +440,14 @@ def _compile_narrow_recheck(
         "id": jid,
         "kind": "narrow_recheck",
         "scope": f"narrow_recheck:{task_id}",
-        "command": _build_pytest_command(
-            selectors,
-            timeout_seconds=max_seconds,
-            embed_timeout=False,
+        "command": (
+            f"python3 {shlex.quote(selectors[0])}"
+            if len(selectors) == 1 and not is_pytest_collectible_selector(selectors[0])
+            else _build_pytest_command(
+                selectors,
+                timeout_seconds=max_seconds,
+                embed_timeout=False,
+            )
         ),
         "environment": {},
         "expected_exit_codes": [0],

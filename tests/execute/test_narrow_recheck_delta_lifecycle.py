@@ -1712,3 +1712,215 @@ def test_pre_dispatch_subtest_failure_captures_envelope_and_dispatches(
     # Durable pre-envelope artifact exists for resume reuse.
     artifact = _pre_envelope_artifact_path(plan_dir / "verification", "VJ12")
     assert artifact.exists()
+
+
+# ---------------------------------------------------------------------------
+# Direct-validator projection (occurrence e252f47b761e)
+# ---------------------------------------------------------------------------
+
+from arnold_pipelines.megaplan.execute.batch import (
+    NARROW_RECHECK_DELTA_ACCEPTANCE,
+)
+from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+    compile_validation_jobs,
+    direct_validator_command,
+)
+
+SEL_VALIDATOR = "scripts/validate_pype_schemas.py"
+
+
+def test_direct_validator_projection_recompiles_validator_selector() -> None:
+    job = {
+        "id": "VJ2",
+        "kind": "narrow_recheck",
+        "command": f"pytest {SEL_VALIDATOR} --tb=short -q",
+        "selectors": [SEL_VALIDATOR],
+    }
+    assert direct_validator_command(job) == f"python3 {SEL_VALIDATOR}"
+
+
+def test_direct_validator_projection_drift_fails_closed() -> None:
+    # Drifted selector list never projects.
+    assert direct_validator_command(
+        {
+            "kind": "narrow_recheck",
+            "command": f"pytest {SEL_VALIDATOR} --tb=short -q",
+            "selectors": [SEL_VALIDATOR, SEL_A],
+        }
+    ) is None
+    # Test-file selectors keep the compiled pytest shape.
+    assert direct_validator_command(
+        {
+            "kind": "narrow_recheck",
+            "command": f"pytest {SEL_A} --tb=short -q",
+            "selectors": [SEL_A],
+        }
+    ) is None
+    # Legacy embedded-timeout shape belongs to the legacy recompile path.
+    assert direct_validator_command(
+        {
+            "kind": "narrow_recheck",
+            "command": f"timeout 120s pytest {SEL_VALIDATOR} --tb=short -q",
+            "selectors": [SEL_VALIDATOR],
+        }
+    ) is None
+    # Command drift (a selector-like extra token) never projects.
+    assert direct_validator_command(
+        {
+            "kind": "narrow_recheck",
+            "command": f"pytest {SEL_VALIDATOR} {SEL_A} --tb=short -q",
+            "selectors": [SEL_VALIDATOR],
+        }
+    ) is None
+    # Non-narrow kinds and non-pytest commands never project.
+    assert direct_validator_command(
+        {
+            "kind": "post_execute_suite",
+            "command": f"pytest {SEL_VALIDATOR} --tb=short -q",
+            "selectors": [SEL_VALIDATOR],
+        }
+    ) is None
+    assert direct_validator_command(
+        {
+            "kind": "narrow_recheck",
+            "command": f"python3 {SEL_VALIDATOR}",
+            "selectors": [SEL_VALIDATOR],
+        }
+    ) is None
+
+
+def test_compiler_produces_direct_validator_command() -> None:
+    payload: dict = {
+        "tasks": [
+            {
+                "id": "T1",
+                "write_set": {"paths": [SEL_VALIDATOR], "complete": True},
+                "narrow_tests": {
+                    "selectors": [SEL_VALIDATOR],
+                    "max_seconds": 120,
+                    "max_runs": 2,
+                },
+            },
+            {
+                "id": "T2",
+                "write_set": {"paths": [SEL_A], "complete": True},
+                "narrow_tests": {
+                    "selectors": [SEL_A],
+                    "max_seconds": 120,
+                    "max_runs": 2,
+                },
+            },
+        ],
+    }
+    jobs = compile_validation_jobs(payload)
+    validator_job = next(j for j in jobs if j.get("task_id") == "T1")
+    assert validator_job["command"] == f"python3 {SEL_VALIDATOR}"
+    test_job = next(j for j in jobs if j.get("task_id") == "T2")
+    assert test_job["command"].startswith("pytest ")
+
+
+def _validator_fixture(tmp_path: Path) -> tuple[Path, Path, dict]:
+    """A persisted compiled narrow_recheck over a CLI validator selector.
+
+    Mirrors the preserved occurrence shape: the compiled command is the
+    pytest shape over scripts/validate_pype_schemas.py — pytest collects
+    zero tests and always exits 5, so the persisted command can never pass
+    without the direct-validator projection.
+    """
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    path = project_dir / SEL_VALIDATOR
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("print('OK: validated')\n", encoding="utf-8")
+    finalize_data: dict = {
+        "task_contract_version": 2,
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "pending",
+                "write_set": {"paths": [SEL_VALIDATOR], "complete": True},
+            }
+        ],
+        "validation_jobs": [
+            {
+                "id": "VJ2",
+                "kind": "narrow_recheck",
+                "command": f"pytest {SEL_VALIDATOR} --tb=short -q",
+                "selectors": [SEL_VALIDATOR],
+                "max_seconds": 120,
+                "timeout_seconds": 120,
+                "task_id": "T1",
+                "mutates": False,
+                "writes_files": False,
+                "expected_exit_codes": [0],
+                "acceptance_mode": NARROW_RECHECK_DELTA_ACCEPTANCE,
+            },
+            {
+                "id": "VJ1",
+                "kind": "post_execute_suite",
+                "command": "timeout 3600s pytest tests --tb=short -q",
+                "selectors": ["tests"],
+                "max_seconds": 3600,
+                "task_id": "",
+                "mutates": False,
+                "writes_files": False,
+                "expected_exit_codes": [0],
+            },
+        ],
+    }
+    return plan_dir, project_dir, finalize_data
+
+
+def test_pre_dispatch_consumes_direct_validator_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import patch
+
+    plan_dir, project_dir, finalize_data = _validator_fixture(tmp_path)
+    state = _make_state(project_dir)
+    fake = _result(
+        exit_code=0,
+        failures=[],
+        status="passed",
+        command=f"python3 {SEL_VALIDATOR}",
+    )
+    with patch(
+        "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
+        return_value=fake,
+    ) as mock_run:
+        with patch(
+            "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+            return_value={"event_id": "ev"},
+        ):
+            evidence = _run_batch_validation_jobs(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                finalize_data=finalize_data,
+                batch_task_ids=["T1"],
+                state=state,
+                admission=True,
+            )
+    observed_command = mock_run.call_args[0][1]["test_command"]
+    assert observed_command == f"python3 {SEL_VALIDATOR}"
+    assert evidence[0]["status"] == "passed"
+
+
+def test_pytest_command_leaves_direct_validator_untouched() -> None:
+    """A direct non-pytest validator command keeps its own argv verbatim.
+
+    Appending the pytest reporting flags made the validator's argparse exit
+    2 (unrecognized arguments) and the parser report a collection error —
+    the direct run can never pass (occurrence e252f47b761e, VJ2 exit 2).
+    """
+    from arnold_pipelines.megaplan.orchestration.suite_runner import (
+        _pytest_command,
+    )
+
+    executed = _pytest_command(f"python3 {SEL_VALIDATOR}")
+    assert executed == f"python3 {SEL_VALIDATOR}"
+    # A python -m pytest run keeps the parsing-flag normalization.
+    pytest_run = _pytest_command("python3 -m pytest tests/test_ok.py")
+    assert "-m" in pytest_run and "pytest" in pytest_run
+    assert pytest_run.endswith("--tb=no -q --no-header -rA")
