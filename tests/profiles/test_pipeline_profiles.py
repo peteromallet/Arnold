@@ -322,3 +322,53 @@ class TestInheritance:
         )
         assert resolved["plan"] == "codex:high"  # child override
         assert resolved["critique"] == "claude:low"  # inherited
+
+
+# ── Built-in profile catalog integrity ────────────────────────────────
+
+
+def test_every_builtin_profile_file_loads() -> None:
+    """Regression (occurrence c2f73c7ddcef, 2026-08-29): the
+    all-muse-spark-openrouter profile shipped with agent specs missing the
+    ``omp:`` prefix ("openrouter/meta/..."), so load_profiles raised
+    invalid_profile at gate dispatch and deterministically blocked the chain.
+    EVERY built-in profile TOML must load through the real validator — a new
+    profile file that fails agent-spec validation fails here, not in a live
+    chain dispatch."""
+    import tomllib
+    from pathlib import Path
+
+    import arnold_pipelines.megaplan.profiles as profiles_pkg
+
+    profiles_dir = Path(profiles_pkg.__file__).resolve().parent
+    toml_files = sorted(profiles_dir.glob("*.toml"))
+    assert toml_files, "no built-in profile TOMLs found"
+
+    loaded = load_profiles()
+    for path in toml_files:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        for profile_name in data.get("profiles", {}):
+            assert profile_name in loaded, (
+                f"built-in profile {profile_name!r} from {path.name} failed "
+                "to load through the validator"
+            )
+
+
+def test_muse_spark_profile_specs_carry_agent_prefix() -> None:
+    """The all-muse-spark-openrouter profile must use prefixed agent specs
+    (``omp:openrouter/...``), not bare provider routes."""
+    import tomllib
+    from pathlib import Path
+
+    import arnold_pipelines.megaplan.profiles as profiles_pkg
+
+    path = (
+        Path(profiles_pkg.__file__).resolve().parent
+        / "all-muse-spark-openrouter.toml"
+    )
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    profile = data["profiles"]["all-muse-spark-openrouter"]
+    assert profile, "profile is empty"
+    for phase, spec in profile.items():
+        if isinstance(spec, str):
+            assert spec.startswith("omp:"), f"{phase}: {spec!r} lacks omp: prefix"
