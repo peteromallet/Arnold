@@ -1075,13 +1075,19 @@ def phase_result_guard(plan_dir: Path):
 
         from arnold_pipelines.megaplan.types import CliError
 
-        # Decide exit_kind based on exception class
         if isinstance(exc, subprocess.TimeoutExpired):
             ek = ExitKind.timeout.value
+        elif isinstance(exc, CliError) and exc.code == "scheduling_condition":
+            ek = ExitKind.scheduling_condition.value
         elif isinstance(exc, CliError) and exc.extra.get("model_output_parse_error") is True:
             ek = ExitKind.malformed_model_output.value
         else:
             ek = ExitKind.internal_error.value
+        scheduling_condition = None
+        if ek == ExitKind.scheduling_condition.value:
+            raw_condition = exc.extra.get("condition", exc.extra)
+            if isinstance(raw_condition, dict):
+                scheduling_condition = SchedulingCondition.from_dict(raw_condition)
         external_error = None
         if ek == ExitKind.internal_error.value:
             external_error = _classify_external_error(exc)
@@ -1106,13 +1112,14 @@ def phase_result_guard(plan_dir: Path):
                         invocation_id=invocation_id,
                         exit_kind=ek,
                         external_error=external_error,
+                        scheduling_condition=scheduling_condition,
                     )
                     validate_phase_result_current(result.to_dict())
                     atomic_write_phase_result(plan_dir, result)
                     try:
                         from arnold_pipelines.megaplan.custody.phase_wbc import fail_phase_wbc, phase_wbc_required
 
-                        if phase_wbc_required(phase):
+                        if ek != ExitKind.scheduling_condition.value and phase_wbc_required(phase):
                             fail_phase_wbc(
                                 state=raw,
                                 plan_dir=plan_dir,

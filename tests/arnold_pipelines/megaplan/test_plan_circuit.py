@@ -754,3 +754,9 @@ class TestPlanCircuitEdgeCases:
         d = CircuitDecision(action="allow_retry", signature=sig, occurrence_count=1)
         with pytest.raises(Exception):
             d.action = "open_circuit"  # type: ignore[misc]
+
+
+def test_failure_signature_is_stable_for_equivalent_errors() -> None:
+    first = normalize_failure_signature({"code": "internal_error", "message": "boom"}, task_id="task")
+    second = normalize_failure_signature({"code": "internal_error", "message": "boom"}, task_id="task")
+    assert first == second

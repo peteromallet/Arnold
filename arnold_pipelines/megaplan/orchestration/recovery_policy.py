@@ -66,7 +66,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, Optional
+from typing import Any, Final, Literal, Mapping, Optional
 
 # ---------------------------------------------------------------------------
 # Lazy imports — keep this module importable from non-planning consumers.
@@ -735,6 +735,18 @@ class RecoveryPolicy:
             external-retryable filter.
         """
         exit_kind = self._read_exit_kind(error)
+        outcome = getattr(error, "dispatch_outcome", None)
+        outcome_kind = getattr(outcome, "kind", None)
+        if isinstance(error, Mapping):
+            raw_outcome = error.get("dispatch_outcome")
+            outcome_kind = raw_outcome.get("kind") if isinstance(raw_outcome, Mapping) else outcome_kind
+        if exit_kind == ExitKind.scheduling_condition or outcome_kind == "no_launch":
+            return RecoveryDecision(
+                action="retry_transient",
+                budget_delta=0,
+                budget_kind="scheduling",
+                reason="scheduling/no-launch result is not a phase failure",
+            )
 
         # 1) Context exhaustion — caller decides retry_fresh vs halt by budget.
         if exit_kind == ExitKind.context_exhausted or self._mentions_context_exhaustion(error):
@@ -827,6 +839,8 @@ class RecoveryPolicy:
         fence: str | None = None,
     ) -> RecoveryDecision:
         """Consult the plan circuit before authorizing the classified action."""
+        if self._read_exit_kind(error) == ExitKind.scheduling_condition:
+            return self.classify(error, layer, phase=phase)
         from arnold_pipelines.megaplan.orchestration.plan_circuit import (
             normalize_failure_signature,
         )
