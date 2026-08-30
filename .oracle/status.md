@@ -1,3 +1,22 @@
+# NBF execution contract — Batch 2 Oracle gate blocked — 2026-08-30
+
+- State: `BLOCKED_PROVIDER_CREDITS` at the Batch-2 Oracle gate.
+- Candidate HEAD: `5da26ec5be4d13559948fe4256a114ad7626482b` (committed
+  implementation identity; **not** validly Batch-2 passed).
+- Oracle policy remains Grok 4.6. The authorized v2 wrapper failed before
+  review commissioning with HTTP 402: `This request requires more credits, or
+  fewer max_tokens. You requested up to 16384 tokens, but can only afford 388.`
+- Failure receipt: `.oracle/receipts/oracle-nbf02-nbf03-grok-v2-launch-failure.md`
+  — SHA-256 `477eb4aec0374dadbc307ada8ee7ef4058830d0eeb1651b21e0fe3d41ad115ea`.
+- Grok v2 brief: `.oracle/briefs/oracle-nbf02-nbf03-grok-v2.md` — SHA-256
+  `e770f5bb556c81a6238e4dffce517662c1624d3c312e5147532f073aaf89762a`.
+- Invalid Sol artifacts remain quarantined and do not count as Oracle review.
+- Batch 3 is stopped; its preserved dirty/untracked materials were not
+  mutated by this blocked launch.
+- Next action: retry the same Grok v2 brief after credits/token capacity are
+  restored, or await explicit user approval to change Oracle. Do not fabricate
+  a verdict or switch providers implicitly.
+
 # NBF execution contract — Batch 1 PASS checkpoint — 2026-08-30
 
 - State: `BATCH_1_PASS` at checkpoint `878a9b2980f0eab6642ed51c30e687903a7213b9`.
