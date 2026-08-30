@@ -627,6 +627,9 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
             "managed_run_id": str(manifest.get("run_id") or ""),
             "managed_manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
         }
+        attestation = manifest.get("worker_attestation")
+        if isinstance(attestation, dict) and isinstance(attestation.get("token"), str):
+            identity["managed_attestation_token"] = attestation["token"]
         if not identity["boot_id"] or not identity["managed_run_id"]:
             return LaunchResult(accepted=False, value=return_code)
         return LaunchResult(

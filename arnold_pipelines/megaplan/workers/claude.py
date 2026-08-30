@@ -12,8 +12,8 @@ Signature mirrors the other workers so ``run_step_with_worker`` dispatches
 from __future__ import annotations
 
 import json
+import os
 import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -56,9 +56,10 @@ def _build_command(
     *,
     model: str,
     effort: str | None,
+    executable: str,
 ) -> list[str]:
     cmd = [
-        "claude",
+        executable,
         "--print",
         "--input-format",
         "text",
@@ -129,9 +130,24 @@ def run_claude_step(
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
     output_path: Path | None = None,
+    session_agent: Any | None = None,
 ) -> Any:
     """Run one megaplan phase through native ``claude --print``."""
-    from arnold_pipelines.megaplan.workers._impl import WorkerResult
+    from arnold_pipelines.megaplan.workers._impl import (
+        WorkerResult,
+        _check_mock_safe,
+        mock_worker_output,
+    )
+
+    if os.getenv("MEGAPLAN_MOCK_WORKERS") == "1":
+        _check_mock_safe()
+        return mock_worker_output(
+            step,
+            state,
+            plan_dir,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+        )
 
     resolved_model = model or "claude-sonnet-4-6"
     if shutil.which("claude") is None:
@@ -149,20 +165,27 @@ def run_claude_step(
         raise CliError("invalid_args", f"empty prompt for claude step '{step}'")
 
     timeout_seconds = _timeout_for_step(step)
-    cmd = _build_command(model=resolved_model, effort=effort)
+    executable = str(Path(shutil.which("claude") or "claude").resolve(strict=False))
+    cmd = _build_command(model=resolved_model, effort=effort, executable=executable)
     started = time.monotonic()
+    # ``run_command`` is the canonical process boundary.  Supplying an
+    # activity callback selects its streaming Popen path, which captures the
+    # actual child executable/argv/start identity before exit.  The surrounding
+    # ControlledFinalLaunch context makes that attestation birth-bound to the
+    # admission receipt in production.
+    from arnold_pipelines.megaplan.workers._impl import resolve_work_dir, run_command
     try:
-        completed = subprocess.run(
-            cmd + [prompt],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise CliError(
-            "worker_timeout",
-            f"claude worker exceeded --timeout={timeout_seconds}s for step '{step}'",
-        ) from exc
+        work_dir = resolve_work_dir(state)
+    except Exception:
+        work_dir = plan_dir
+
+    completed = run_command(
+        cmd + [prompt],
+        cwd=work_dir,
+        env=dict(os.environ),
+        timeout=timeout_seconds,
+        activity_callback=lambda _kind, _text: None,
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
 
     if completed.returncode != 0:
@@ -170,6 +193,12 @@ def run_claude_step(
             "worker_error",
             f"claude --print exited {completed.returncode} for step '{step}': "
             f"{(completed.stderr or '').strip()[-500:] or 'no stderr'}",
+        )
+
+    if not isinstance(completed.worker_identity, Mapping) or completed.worker_identity.get("verified") is not True:
+        raise CliError(
+            "worker_identity_unavailable",
+            "claude worker completed without a verified process identity",
         )
 
     raw = (completed.stdout or "").strip()
@@ -191,4 +220,5 @@ def run_claude_step(
         auth_channel="claude_cli",
         cost_pricing=None,
         session_id=None,
+        worker_identity=dict(completed.worker_identity),
     )

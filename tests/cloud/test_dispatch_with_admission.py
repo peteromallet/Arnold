@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import json
+import os
 from dataclasses import replace
 
 import pytest
@@ -121,7 +123,7 @@ def test_launchresult_mapping_is_completed_nullable_dispatch_schema(tmp_path: Pa
     assert outcome.reconciliation_event_id is None
 
 
-def test_production_shaped_native_worker_result_normalizes(tmp_path: Path) -> None:
+def test_production_shaped_native_worker_result_normalizes(tmp_path: Path, monkeypatch) -> None:
     """A native launcher result object is accepted through the real shape."""
     import hashlib
 
@@ -129,14 +131,18 @@ def test_production_shaped_native_worker_result_normalizes(tmp_path: Path) -> No
     from arnold_pipelines.megaplan.workers._impl import WorkerResult, capture_process_identity
 
     executable = Path("/bin/sleep").resolve(strict=True)
+    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(base, WorkerAdmissionReceipt)
+    monkeypatch.setenv(
+        "ARNOLD_WORKER_EXECUTION_CONTEXT",
+        json.dumps(base.execution_context.to_dict(), sort_keys=True),
+    )
     process = subprocess.Popen([str(executable), "2"])
     try:
         identity = capture_process_identity(process, (str(executable), "2"))
     finally:
         process.terminate()
         process.wait(timeout=5)
-    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
-    assert isinstance(base, WorkerAdmissionReceipt)
     receipt = replace(
         base,
         production_intent=True,
@@ -165,12 +171,18 @@ def test_production_shaped_native_worker_result_normalizes(tmp_path: Path) -> No
     assert outcome.success_payload == worker.payload
 
 
-def test_production_omp_wrapper_worker_result_normalizes(tmp_path: Path) -> None:
+def test_production_omp_wrapper_worker_result_normalizes(tmp_path: Path, monkeypatch) -> None:
     """The OMP adapter's LaunchResult(WorkerResult(...)) shape is terminal."""
     from arnold_pipelines.megaplan.cloud import worker_dispatch
     from arnold_pipelines.megaplan.workers._impl import WorkerResult, capture_process_identity
 
     binding = worker_dispatch._resolve_omp_runtime_binding()
+    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(base, WorkerAdmissionReceipt)
+    monkeypatch.setenv(
+        "ARNOLD_WORKER_EXECUTION_CONTEXT",
+        json.dumps(base.execution_context.to_dict(), sort_keys=True),
+    )
     process = subprocess.Popen(
         [binding["launcher_executable_path"], binding["executable_path"], "--mode", "rpc"],
         stdin=subprocess.PIPE,
@@ -192,8 +204,6 @@ def test_production_omp_wrapper_worker_result_normalizes(tmp_path: Path) -> None
             process.wait(timeout=5)
     identity["attestation_source"] = "omp_rpc_process"
     identity["runtime_binding"] = binding
-    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
-    assert isinstance(base, WorkerAdmissionReceipt)
     receipt = replace(base, production_intent=True, route_liveness_evidence={"executable": binding})
     worker = WorkerResult(
         payload={"omp": True},
@@ -304,10 +314,16 @@ def test_production_dispatch_projects_consumed_attestation_once_and_rejects_repl
         worker_dispatch._validate_worker_identity_for_receipt(identity, receipt)
 
 
-def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path: Path) -> None:
+def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path: Path, monkeypatch) -> None:
     from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
     from arnold_pipelines.megaplan.workers._impl import capture_process_identity
 
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    monkeypatch.setenv(
+        "ARNOLD_WORKER_EXECUTION_CONTEXT",
+        json.dumps(receipt.execution_context.to_dict(), sort_keys=True),
+    )
     child = subprocess.Popen(["/bin/sleep", "2"])
     try:
         # Deliberately lie about argv: capture must use OS-observed identity.
@@ -317,8 +333,6 @@ def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path:
     finally:
         child.terminate()
         child.wait(timeout=5)
-    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
-    assert isinstance(receipt, WorkerAdmissionReceipt)
     receipt = replace(
         receipt,
         production_intent=True,
@@ -348,7 +362,7 @@ def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path:
         _validate_worker_identity_for_receipt(identity, other)
 
 
-def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path: Path) -> None:
+def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path: Path, monkeypatch) -> None:
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         _resolve_omp_runtime_binding,
         require_production_worker_dispatch_runtime,
@@ -356,6 +370,12 @@ def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path
     from arnold_pipelines.megaplan.workers._impl import capture_process_identity
 
     binding = _resolve_omp_runtime_binding()
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    monkeypatch.setenv(
+        "ARNOLD_WORKER_EXECUTION_CONTEXT",
+        json.dumps(receipt.execution_context.to_dict(), sort_keys=True),
+    )
     process = subprocess.Popen(
         [binding["launcher_executable_path"], binding["executable_path"], "--mode", "rpc"],
         stdin=subprocess.PIPE,
@@ -371,8 +391,6 @@ def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path
         identity["runtime_binding"] = binding
         assert identity["process_executable"] == binding["launcher_executable_path"]
         assert binding["executable_path"] in identity["process_argv"]
-        receipt = require_production_worker_dispatch_runtime(request(tmp_path))
-        assert isinstance(receipt, WorkerAdmissionReceipt)
         receipt = replace(
             receipt,
             production_intent=True,
@@ -388,7 +406,7 @@ def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path
             process.wait(timeout=5)
 
 
-def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_path: Path) -> None:
+def test_completed_managed_child_rejects_self_hashed_dead_pid(tmp_path: Path) -> None:
     import hashlib
     import json
     from dataclasses import replace
@@ -427,7 +445,8 @@ def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_pat
         "managed_run_id": receipt.logical_dispatch_id,
         "managed_manifest_sha256": hashlib.sha256(raw).hexdigest(),
     }
-    assert _validate_worker_identity_for_receipt(identity, receipt)["pid"] == 99999999
+    with pytest.raises(ValueError, match="producer attestation"):
+        _validate_worker_identity_for_receipt(identity, receipt)
 
 
 def test_completed_managed_child_rejects_forged_manifest_digest(tmp_path: Path) -> None:

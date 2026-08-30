@@ -1808,6 +1808,60 @@ class CommandResult:
 
 
 _PROCESS_ATTESTATIONS: dict[str, dict[str, Any]] = {}
+# A process snapshot is a bearer capability only when the producer issued it
+# for the admission context that was active at birth.  Keep custody metadata in
+# a separate, private table: copying or editing the returned identity mapping
+# must never be able to choose a receipt on first use.
+_PROCESS_ATTESTATION_CUSTODY: dict[str, dict[str, Any]] = {}
+_PROCESS_ATTESTATION_LOCK = threading.RLock()
+
+
+def _active_worker_attestation_scope() -> dict[str, str] | None:
+    """Read the immutable receipt context installed by ``ControlledFinalLaunch``.
+
+    The context is process-local parent state, not a field supplied by a
+    worker result.  Unbound snapshots remain useful to non-production legacy
+    callers, but production validation rejects them because no producer can
+    prove which logical dispatch birthed the process.
+    """
+    raw = os.environ.get("ARNOLD_WORKER_EXECUTION_CONTEXT")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    required = (
+        "admission_receipt_id",
+        "logical_dispatch_id",
+        "semantic_dispatch_fingerprint",
+    )
+    if any(not isinstance(payload.get(name), str) or not payload[name] for name in required):
+        return None
+    return {name: payload[name] for name in required}
+
+
+def consume_process_attestation(token: str, *, scope: tuple[str, str, str]) -> dict[str, Any]:
+    """Atomically consume one producer-issued process attestation.
+
+    Scope is checked against private producer custody before the identity
+    mapping is consulted.  This closes both attacks that motivated Batch 2:
+    first use against a different receipt and copied-dict rebinding.
+    """
+    with _PROCESS_ATTESTATION_LOCK:
+        identity = _PROCESS_ATTESTATIONS.get(token)
+        custody = _PROCESS_ATTESTATION_CUSTODY.get(token)
+        if not isinstance(identity, dict) or not isinstance(custody, dict):
+            raise ValueError("completed worker identity attestation is unknown or expired")
+        issued_scope = custody.get("scope")
+        if not isinstance(issued_scope, tuple) or issued_scope != scope:
+            raise ValueError("completed worker identity attestation is bound to another receipt")
+        if custody.get("consumed") is True:
+            raise ValueError("completed worker identity attestation was already consumed")
+        custody["consumed"] = True
+        return dict(identity)
 
 
 def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, Any]:
@@ -1910,7 +1964,26 @@ def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, 
         "process_argv": observed_argv,
         "process_attestation_token": token,
     }
-    _PROCESS_ATTESTATIONS[token] = dict(identity)
+    scope_payload = _active_worker_attestation_scope()
+    if scope_payload is not None:
+        # The private table is authoritative.  The public identity fields are
+        # merely explanatory metadata and are deliberately not trusted during
+        # validation.
+        scope = (
+            scope_payload["admission_receipt_id"],
+            scope_payload["logical_dispatch_id"],
+            scope_payload["semantic_dispatch_fingerprint"],
+        )
+        identity["process_attestation_scope"] = dict(scope_payload)
+    else:
+        scope = None
+    with _PROCESS_ATTESTATION_LOCK:
+        _PROCESS_ATTESTATIONS[token] = dict(identity)
+        _PROCESS_ATTESTATION_CUSTODY[token] = {
+            "scope": scope,
+            "consumed": False,
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+        }
     return identity
 
 ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]

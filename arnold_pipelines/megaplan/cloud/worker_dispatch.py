@@ -32,8 +32,6 @@ SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
 _TRUSTED_OMP_RUNTIME_BINDING: dict[str, str] | None = None
-_PROCESS_ATTESTATION_SCOPES: dict[str, tuple[str, str, str]] = {}
-_PROCESS_ATTESTATION_CONSUMED: set[str] = set()
 
 # These identifiers are assigned by the production call sites.  They are not
 # user-configurable metadata: a request entering one of these doors is a
@@ -462,6 +460,16 @@ def _extract_native_models(value: Any) -> set[str]:
     return result
 
 
+# Claude Code has no offline ``debug models`` endpoint.  This is the local
+# route catalog owned by Arnold; checking it is deliberately a pure local
+# operation and never a network/API probe.  The binary and model are still
+# bound together in the returned proof.
+_OFFLINE_NATIVE_CATALOG: dict[str, tuple[str, ...]] = {
+    "claude": ("claude-opus-4-7", "claude-sonnet-4-6"),
+    "shannon": ("claude-opus-4-7", "claude-sonnet-4-6"),
+}
+
+
 def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., Any] | None = None) -> Mapping[str, Any]:
     binary = "claude" if agent in {"claude", "shannon"} else "codex" if agent == "codex" else agent
     path = shutil.which(binary)
@@ -473,15 +481,81 @@ def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., An
         identity = f"{binary}:{resolved}:{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}"
     except OSError as exc:
         raise CliError("route_liveness_unreadable", f"native backend proof is unreadable: {exc}") from exc
+    # Claude's catalog/liveness must stay offline.  ``claude --print`` itself
+    # is the eventual API-consuming operation; admission only checks the
+    # locally installed binary and Arnold's frozen catalog.
+    if binary in _OFFLINE_NATIVE_CATALOG:
+        if model not in _OFFLINE_NATIVE_CATALOG[binary]:
+            raise CliError(
+                "route_liveness_missing",
+                f"native backend model {model!r} is not an exact offline catalog member",
+                extra={"backend": binary, "models": list(_OFFLINE_NATIVE_CATALOG[binary])},
+            )
+        proof = {
+            "binary": identity,
+            "model": model,
+            "catalog": list(_OFFLINE_NATIVE_CATALOG[binary]),
+            "probe": "offline-local-catalog",
+        }
+        try:
+            executable_sha256 = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
+        except OSError:
+            executable_sha256 = ""
+        return {
+            "kind": "native_backend",
+            "identity": _digest(proof),
+            "digest": _digest(proof),
+            "backend": binary,
+            "provider": agent,
+            "model": model,
+            "observed_at": _now(),
+            "authoritative": True,
+            "offline": True,
+            "probe": "offline-local-catalog",
+            "executable": {
+                "executable_path": resolved,
+                "executable_sha256": executable_sha256,
+            },
+        }
+
     # Executable presence is only a locator, not proof that this route can
     # construct the requested model.  Use the backend's installed, machine-
     # generated catalog.  ``debug models`` is a catalog read, not a generation
     # request, and unlike ``exec --model X --help`` it cannot report success for
     # an arbitrary opaque model string.
     run = runner or subprocess.run
+    def file_digest(candidate: Path) -> str:
+        try:
+            return hashlib.sha256(candidate.read_bytes()).hexdigest()
+        except (OSError, AttributeError):
+            return ""
+
+    executable_binding: dict[str, Any] = {
+        "executable_path": resolved,
+        "executable_sha256": "",
+    }
+    # The Codex shell entry point is a JavaScript script with a Node shebang.
+    # Record both layers so acceptance cannot confuse a different Node binary
+    # or a different codex.js script for the route that admission probed.
+    if binary == "codex":
+        node_path = shutil.which("node")
+        if node_path:
+            node_resolved = Path(node_path).resolve(strict=False)
+            executable_binding = {
+                "executable_path": str(node_resolved),
+                "executable_sha256": file_digest(node_resolved),
+                "script_path": resolved,
+                "script_sha256": file_digest(Path(resolved)),
+            }
+    probe_command = [resolved, "debug", "models"]
+    if binary == "codex" and executable_binding.get("script_path"):
+        node = executable_binding.get("executable_path")
+        script = executable_binding.get("script_path")
+        if isinstance(node, str) and isinstance(script, str) and node and script:
+            probe_command = [node, script, "debug", "models"]
     try:
         probe = run(
-            [resolved, "debug", "models"],
+            probe_command,
             capture_output=True,
             text=True,
             timeout=10,
@@ -506,7 +580,13 @@ def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., An
             f"native backend model {model!r} is not an exact installed catalog member",
             extra={"backend": binary, "models": sorted(models)},
         )
-    proof = {"binary": identity, "model": model, "catalog": sorted(models), "probe": "debug models"}
+    proof = {
+        "binary": identity,
+        "model": model,
+        "catalog": sorted(models),
+        "probe": "debug models",
+        "executable": executable_binding,
+    }
     try:
         executable_sha256 = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
     except OSError:
@@ -520,10 +600,10 @@ def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., An
         "model": model,
         "observed_at": _now(),
         "authoritative": True,
-        "executable": {
-            "executable_path": resolved,
-            "executable_sha256": executable_sha256,
-        },
+        "executable": (
+            {**executable_binding, "executable_sha256": executable_binding.get("executable_sha256") or executable_sha256}
+            if binary == "codex" else {"executable_path": resolved, "executable_sha256": executable_sha256}
+        ),
     }
 
 
@@ -868,6 +948,28 @@ def _validate_managed_completed_identity(
         raise ValueError("managed completed identity run identity mismatch")
     if not isinstance(manifest.get("worker_cmdline_sha256"), str) or len(manifest["worker_cmdline_sha256"]) != 64:
         raise ValueError("managed completed identity lacks worker command binding")
+    from arnold_pipelines.megaplan.managed_agent import consume_managed_process_attestation
+    attestation = manifest.get("worker_attestation")
+    if (
+        isinstance(value.get("managed_attestation_token"), str)
+        and (
+            not isinstance(attestation, Mapping)
+            or value["managed_attestation_token"] != attestation.get("token")
+        )
+    ):
+        raise ValueError("managed completed identity producer attestation token mismatch")
+    consume_managed_process_attestation(
+        manifest,
+        manifest_path=manifest_path,
+        expected={
+            "run_id": receipt.logical_dispatch_id,
+            "pid": pid,
+            "host": expected["host"],
+            "boot_id": expected["boot_id"],
+            "process_start_identity": expected["process_start_identity"],
+            "process_command_sha256": manifest["worker_cmdline_sha256"],
+        },
+    )
     return dict(value)
 
 
@@ -884,7 +986,13 @@ def _validate_completed_process_identity(
     token = value.get("process_attestation_token")
     if not isinstance(token, str) or not token:
         raise ValueError("completed worker identity lacks process attestation")
-    from arnold_pipelines.megaplan.workers._impl import _PROCESS_ATTESTATIONS
+    from arnold_pipelines.megaplan.workers._impl import (
+        _PROCESS_ATTESTATIONS,
+        consume_process_attestation,
+    )
+    # The snapshot table is only used to compare machine-observed fields.  The
+    # one-shot custody check below consults the producer's private scope table;
+    # a copied identity mapping cannot bind itself to a different receipt.
     observed = _PROCESS_ATTESTATIONS.get(token)
     if not isinstance(observed, Mapping):
         raise ValueError("completed worker identity attestation is unknown or expired")
@@ -908,16 +1016,37 @@ def _validate_completed_process_identity(
             raise ValueError("completed OMP worker launcher digest does not match admission")
         argv = value.get("process_argv")
         script = expected.get("executable_path")
-        if not isinstance(argv, list) or not isinstance(script, str) or not any(
-            isinstance(arg, str) and Path(arg).resolve(strict=False) == Path(script)
-            for arg in argv
-        ):
-            raise ValueError("completed OMP worker argv lacks the trusted CLI script")
+        launcher = expected.get("launcher_executable_path")
+        if not isinstance(argv, list) or not isinstance(script, str) or not isinstance(launcher, str):
+            raise ValueError("completed OMP worker argv lacks canonical runtime binding")
+        _validate_canonical_omp_argv(argv, launcher=launcher, script=script)
     else:
         if value.get("process_executable") != expected.get("executable_path"):
             raise ValueError("completed worker executable does not match admission")
         if value.get("process_executable_sha256") != expected.get("executable_sha256"):
             raise ValueError("completed worker executable digest does not match admission")
+        # Codex is a Node process launched through the trusted codex.js
+        # entrypoint.  Bind both observations coherently; accepting only the
+        # shell script path would permit a different Node runtime, while
+        # accepting only Node would permit a different script.
+        script_path = expected.get("script_path")
+        if script_path is not None:
+            argv = value.get("process_argv")
+            if not isinstance(argv, list) or not any(
+                isinstance(arg, str)
+                and Path(arg).resolve(strict=False) == Path(str(script_path)).resolve(strict=False)
+                for arg in argv
+            ):
+                raise ValueError("completed Codex worker argv lacks the trusted codex.js script")
+            script_sha = expected.get("script_sha256")
+            if not isinstance(script_sha, str) or not script_sha:
+                raise ValueError("admission receipt lacks trusted codex.js digest")
+            try:
+                observed_script_sha = hashlib.sha256(Path(str(script_path)).read_bytes()).hexdigest()
+            except OSError as exc:
+                raise ValueError("trusted codex.js script is unreadable") from exc
+            if observed_script_sha != script_sha:
+                raise ValueError("trusted codex.js script changed after admission")
     if value.get("host") != os.uname().nodename:
         raise ValueError("completed worker identity host does not match this machine")
     scope = (
@@ -925,16 +1054,66 @@ def _validate_completed_process_identity(
         str(receipt.logical_dispatch_id),
         str(receipt.semantic_dispatch_fingerprint),
     )
-    previous_scope = _PROCESS_ATTESTATION_SCOPES.get(token)
-    if previous_scope is not None:
-        if previous_scope != scope:
-            raise ValueError("completed worker identity attestation is bound to another receipt")
-        if token in _PROCESS_ATTESTATION_CONSUMED:
-            raise ValueError("completed worker identity attestation was already consumed")
-    else:
-        _PROCESS_ATTESTATION_SCOPES[token] = scope
-    _PROCESS_ATTESTATION_CONSUMED.add(token)
+    # Consume only after every machine-observed and route-binding comparison
+    # has succeeded.  An invalid attempt against another receipt therefore
+    # cannot burn a token that belongs to the producer's actual receipt.
+    consume_process_attestation(token, scope=scope)
     return dict(value)
+
+
+def _validate_canonical_omp_argv(
+    argv: list[Any], *, launcher: str, script: str
+) -> None:
+    """Require the exact trusted Bun/cli.js RPC launch grammar.
+
+    The first four tokens are immutable.  Remaining tokens are a small
+    allowlisted option grammar; arbitrary eval flags, extra script/path
+    arguments, and launcher substitutions are rejected before acceptance.
+    """
+    if len(argv) < 4 or not all(isinstance(item, str) and item for item in argv):
+        raise ValueError("completed OMP worker argv is malformed")
+
+    def resolve_executable(token: str, *, label: str) -> Path:
+        # The producer must have put the resolved executable/script in argv;
+        # accepting a bare ``bun`` would reintroduce PATH substitution at the
+        # validation boundary even if the current PATH happens to resolve it
+        # to the trusted file.
+        if not Path(token).is_absolute():
+            raise ValueError(f"completed OMP worker argv {label} is not resolved")
+        return Path(token).resolve(strict=False)
+
+    if resolve_executable(argv[0], label="launcher") != Path(launcher).resolve(strict=False):
+        raise ValueError("completed OMP worker argv does not use the trusted Bun launcher")
+    if not Path(argv[1]).is_absolute():
+        raise ValueError("completed OMP worker argv script is not resolved")
+    if Path(argv[1]).resolve(strict=False) != Path(script).resolve(strict=False):
+        raise ValueError("completed OMP worker argv does not use the trusted cli.js script")
+    if argv[2:4] != ["--mode", "rpc"]:
+        raise ValueError("completed OMP worker argv must begin with Bun cli.js --mode rpc")
+
+    pair_flags = {"--provider", "--model", "--thinking", "--tools"}
+    bare_flags = {"--no-tools", "--no-session", "--no-skills", "--no-rules", "--no-title"}
+    index = 4
+    while index < len(argv):
+        flag = argv[index]
+        if flag in {"-e", "--eval"} or flag.startswith("-e"):
+            raise ValueError("completed OMP worker argv contains forbidden eval flag")
+        if flag in bare_flags:
+            index += 1
+            continue
+        if flag not in pair_flags or index + 1 >= len(argv):
+            raise ValueError("completed OMP worker argv contains an unpermitted flag or path")
+        argument = argv[index + 1]
+        if not argument or argument.startswith("-"):
+            raise ValueError("completed OMP worker argv option value is malformed")
+        # Values are route metadata, not filesystem selectors.  A slash is
+        # valid only inside provider/model identifiers (e.g. deepseek/model).
+        if flag in {"--provider", "--model"}:
+            if argument.startswith(("/", "~")) or any(part in argument for part in ("..", "\\")):
+                raise ValueError("completed OMP worker argv contains a path-like route value")
+        elif flag == "--tools" and any(part in argument for part in ("/", "\\", "..")):
+            raise ValueError("completed OMP worker argv tools value contains a path")
+        index += 2
 
 
 def _validate_worker_identity_for_receipt(

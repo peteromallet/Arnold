@@ -519,9 +519,29 @@ def _build_client(
         )
     rpc_client = _import_rpc_client()
     from arnold_pipelines.megaplan.cloud.worker_dispatch import _resolve_omp_runtime_binding
-    executable = _resolve_omp_runtime_binding()["executable_path"]
+    binding = _resolve_omp_runtime_binding()
+    # Do not delegate launcher resolution to the CLI's ``#!/usr/bin/env bun``
+    # shebang.  The process must be born from the machine-owned Bun binary and
+    # trusted cli.js with the canonical RPC prefix; only the explicit RPC
+    # option set below may follow it.  In particular, never pass ``-e`` or a
+    # caller-selected path through this boundary.
+    command: list[str] = [
+        binding["launcher_executable_path"],
+        binding["executable_path"],
+        "--mode",
+        "rpc",
+        "--provider",
+        provider,
+        "--model",
+        model_id,
+    ]
+    if thinking is not None:
+        command.extend(["--thinking", thinking])
+    if tools is not None:
+        command.extend(["--no-tools" if len(tools) == 0 else "--tools", ",".join(tools)] if tools else ["--no-tools"])
+    command.extend(["--no-session", "--no-skills", "--no-rules", "--no-title"])
     return rpc_client(
-        executable=executable,
+        command=command,
         provider=provider,
         model=model_id,
         cwd=str(cwd),

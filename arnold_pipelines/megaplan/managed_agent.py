@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import secrets
 import subprocess
 import sys
 import time
@@ -49,6 +50,51 @@ TERMINAL_STATUSES = frozenset(
 FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY = "recovery_engine_only"
 FILESYSTEM_CAPABILITY_UNRESTRICTED = "unrestricted"
 _DEFAULT_FILESYSTEM_CAPABILITY = FILESYSTEM_CAPABILITY_RECOVERY_ENGINE_ONLY
+
+# Process custody is issued by the real managed supervisor immediately after
+# ``Popen`` returns.  A manifest copied from elsewhere can contain plausible
+# PID/start/hash fields, but it cannot mint an entry in this producer table.
+_MANAGED_PROCESS_ATTESTATIONS: dict[str, dict[str, Any]] = {}
+
+
+def consume_managed_process_attestation(
+    manifest: Mapping[str, Any], *, manifest_path: Path, expected: Mapping[str, Any]
+) -> None:
+    """Consume a supervisor-issued managed-child birth attestation.
+
+    ``expected`` is derived from the admission receipt and returned identity;
+    neither caller-supplied manifest fields nor a self-computed manifest hash
+    can create custody.  The producer records liveness and the kernel birth
+    tuple before waiting for the child, so a completed/dead child remains
+    attributable without treating a recycled PID as proof.
+    """
+    envelope = manifest.get("worker_attestation")
+    if not isinstance(envelope, Mapping):
+        raise ValueError("managed completed identity lacks producer attestation")
+    token = envelope.get("token")
+    if not isinstance(token, str) or not token:
+        raise ValueError("managed completed identity producer attestation is malformed")
+    record = _MANAGED_PROCESS_ATTESTATIONS.get(token)
+    if not isinstance(record, Mapping):
+        raise ValueError("managed completed identity producer attestation is unknown")
+    if record.get("consumed") is True:
+        raise ValueError("managed completed identity producer attestation was already consumed")
+    if Path(str(record.get("manifest_path"))).resolve(strict=False) != manifest_path.resolve(strict=False):
+        raise ValueError("managed completed identity producer attestation is bound to another manifest")
+    claims = envelope.get("claims")
+    if not isinstance(claims, Mapping) or dict(claims) != dict(record.get("claims") or {}):
+        raise ValueError("managed completed identity producer attestation claims disagree")
+    digest = hashlib.sha256(
+        json.dumps(dict(claims), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if envelope.get("sha256") != digest or record.get("sha256") != digest:
+        raise ValueError("managed completed identity producer attestation digest disagrees")
+    for name, value in expected.items():
+        if claims.get(name) != value:
+            raise ValueError(f"managed completed identity producer attestation {name} disagrees")
+    if claims.get("live_at_birth") is not True or claims.get("identity_verified") is not True:
+        raise ValueError("managed completed identity lacks verified live birth proof")
+    record["consumed"] = True
 
 
 def _resolve_fs_capability(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -1048,6 +1094,36 @@ def _run_managed_command_locked(
         )
         manifest["worker_started_at"] = utc_now()
         manifest["worker_cmdline_sha256"] = hashlib.sha256(raw_cmdline).hexdigest()
+        # Issue custody only after the supervisor has observed the real child
+        # and its kernel birth tuple.  This token is intentionally not derived
+        # from caller-visible fields, and is checked against the private
+        # producer table when a completed result is projected into admission.
+        attestation_token = secrets.token_urlsafe(32)
+        attestation_claims = {
+            "run_id": str(manifest["run_id"]),
+            "pid": child.pid,
+            "host": manifest["worker_host"],
+            "boot_id": manifest["worker_boot_id"],
+            "process_start_identity": manifest["worker_start_ticks"],
+            "process_command_sha256": manifest["worker_cmdline_sha256"],
+            "live_at_birth": bool(_pid_live(child.pid)),
+            "identity_verified": bool(manifest["worker_identity_verified"]),
+        }
+        attestation_sha256 = hashlib.sha256(
+            json.dumps(attestation_claims, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        manifest["worker_attestation"] = {
+            "schema": "arnold-managed-agent-process-attestation-v1",
+            "token": attestation_token,
+            "claims": attestation_claims,
+            "sha256": attestation_sha256,
+        }
+        _MANAGED_PROCESS_ATTESTATIONS[attestation_token] = {
+            "manifest_path": str(manifest_path.resolve()),
+            "claims": attestation_claims,
+            "sha256": attestation_sha256,
+            "consumed": False,
+        }
         _append_status(manifest, "running", evidence="worker_process_started")
         atomic_write_manifest(manifest_path, manifest)
         log_path = Path(str(manifest["log_path"]))

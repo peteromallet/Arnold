@@ -107,6 +107,9 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert payload["completion_delivery"]["status"] == "not_applicable"
     assert payload["launch_provenance"]["schema_version"] == MACHINE_ORIGIN_SCHEMA
     assert payload["launch_provenance"]["transport"] == "automatic_system"
+    assert payload["worker_attestation"]["schema"] == "arnold-managed-agent-process-attestation-v1"
+    assert payload["worker_attestation"]["claims"]["live_at_birth"] is True
+    assert payload["worker_attestation"]["claims"]["identity_verified"] is True
     assert payload["stdin"] == {"kind": "devnull", "sealed": True, "size_bytes": 0}
     assert payload["links"]["repair_request_id"] == "request-1"
     assert "managed-ok" in Path(payload["full_log_path"]).read_text()
