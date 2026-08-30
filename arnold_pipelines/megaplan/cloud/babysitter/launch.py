@@ -637,6 +637,37 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
             finished_at=str(manifest.get("finished_at") or "") or None,
         )
 
+    def pre_entry_no_launch(context: Any) -> tuple[str, ...]:
+        """Produce no-launch evidence from the machine-owned run manifest.
+
+        A previously terminal run with no worker PID is the only safe
+        pre-entry short circuit.  The adapter state event is read back from
+        the canonical ledger, so this cannot be a caller-invented marker.
+        """
+        root = spec.run_root or Path(".megaplan/plans/resident-subagents")
+        if not root.is_absolute():
+            root = spec.project_dir / root
+        candidate = root / stable_managed_run_id(spec.run_kind, spec.identity_key) / "manifest.json"
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ()
+        if payload.get("status") not in {"completed", "failed", "cancelled", "interrupted", "superseded"}:
+            return ()
+        if payload.get("worker_pid"):
+            return ()
+        from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+        ledger = IncidentLedger(Path(context.ledger_root))
+        return tuple(
+            str(record.get("payload", {}).get("event_id"))
+            for record in ledger.read_nbf_events()
+            if record.get("payload", {}).get("event_type") == "controlled_adapter_state"
+            and record.get("payload", {}).get("admission_receipt_id") == context.admission_receipt_id
+            and record.get("payload", {}).get("launch_state_identity") == "not_started"
+        )
+
+    launch.pre_entry_no_launch = pre_entry_no_launch
+
     result = dispatch_with_admission(request, launch, return_worker=False)
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
