@@ -91,6 +91,7 @@ def update_marker_runtime(
     direction: str = "cutover",
     source_branch: str = "",
     clear_fields: tuple[str, ...] = DEFAULT_OBSOLETE_FIELDS,
+    expected_interpreter_path: str | None = None,
 ) -> dict[str, Any]:
     """Atomically update runtime custody only when marker and runtime guards match."""
 
@@ -106,6 +107,7 @@ def update_marker_runtime(
     if is_stale_marker_relaunch_command(relaunch_command) or not relaunch_matches_runtime(
         relaunch_command,
         active,
+        expected_interpreter_path=expected_interpreter_path,
     ):
         raise CliError(
             "runtime_marker_relaunch_mismatch",

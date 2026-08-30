@@ -2101,3 +2101,85 @@ def test_rebind_marker_revision_advance_still_rewrites_pins(
     assert "MEGAPLAN_BOUND_RUNTIME_REVISION=" + "b" * 40 in command
     assert "ARNOLD_RUNTIME_MANIFEST=/auth/epic-demo.json" in command
     assert calls[0]["active_runtime_identity"] == live_identity
+
+
+def test_regenerate_relaunch_command_rewrites_dependency_interpreter() -> None:
+    old = "/workspace/runtime-venvs/old-generation/bin/python"
+    new = "/workspace/runtime-venvs/new-generation/bin/python"
+    command = (
+        "cd /workspace/runtime && "
+        f"{old} -P -m arnold_pipelines.megaplan chain start"
+    )
+    regenerated = attestation._regenerate_relaunch_command(
+        command,
+        old_revision="",
+        new_revision="",
+        expected_interpreter_path=new,
+    )
+    assert old not in regenerated
+    assert f"{new} -P -m arnold_pipelines.megaplan" in regenerated
+
+
+def test_relaunch_matches_runtime_rejects_wrong_dependency_interpreter() -> None:
+    from arnold_pipelines.megaplan.cloud.relaunch_resolution import (
+        relaunch_matches_runtime,
+    )
+
+    command = (
+        "env ARNOLD_RUNTIME_MANIFEST=/auth/epic.json "
+        "/workspace/runtime-venvs/old-generation/bin/python -P -m "
+        "arnold_pipelines.megaplan chain start"
+    )
+    assert not relaunch_matches_runtime(
+        command,
+        {"import_root": "/ws/runtime", "source_revision": "a" * 40},
+        expected_interpreter_path="/workspace/runtime-venvs/new-generation/bin/python",
+    )
+
+
+def test_rebind_marker_detects_stale_dependency_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud import runtime_cutover, runtime_manifest
+
+    identity = {
+        "import_root": "/ws/runtime",
+        "source_revision": "a" * 40,
+    }
+    old = "/workspace/runtime-venvs/old-generation/bin/python"
+    new = "/workspace/runtime-venvs/new-generation/bin/python"
+    marker = {
+        "runtime_binding": {"current_identity": dict(identity)},
+        "relaunch_command": f"{old} -P -m arnold_pipelines.megaplan chain start",
+    }
+    marker_path = tmp_path / "marker.json"
+    marker_path.write_text("{}", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    class _Manifest:
+        epic = {"dependency_generation": {"interpreter_path": new}}
+
+    monkeypatch.setattr(runtime_manifest, "load_manifest", lambda _path: _Manifest())
+    monkeypatch.setattr(
+        runtime_cutover,
+        "marker_runtime_identity",
+        lambda _marker: {**identity, "content_sha256": "d" * 64},
+    )
+    monkeypatch.setattr(
+        runtime_cutover,
+        "update_marker_runtime",
+        lambda _path, **kwargs: calls.append(kwargs),
+    )
+
+    attestation._rebind_marker_if_stale(
+        marker_path,
+        marker,
+        live_identity=dict(identity),
+        source_branch="main",
+        expected_manifest_path="/auth/epic-demo.json",
+    )
+
+    assert len(calls) == 1
+    assert new in str(calls[0]["relaunch_command"])
+    assert old not in str(calls[0]["relaunch_command"])
+    assert calls[0]["expected_interpreter_path"] == new

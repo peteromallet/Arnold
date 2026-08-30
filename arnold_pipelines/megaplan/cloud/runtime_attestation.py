@@ -22,6 +22,9 @@ from urllib.parse import unquote, urlparse
 
 from arnold_pipelines.megaplan._core import now_utc
 from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+from arnold_pipelines.megaplan.cloud.relaunch_resolution import (
+    relaunch_matches_runtime,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -911,6 +914,7 @@ def _regenerate_relaunch_command(
     old_revision: str,
     new_revision: str,
     expected_manifest_path: str | None = None,
+    expected_interpreter_path: str | None = None,
 ) -> str:
     """Rewire a persisted relaunch command to the active runtime identity.
 
@@ -932,6 +936,13 @@ def _regenerate_relaunch_command(
     When the old revision is absent the revision swap is skipped and the
     caller fails closed (the CAS cutover still refuses a command that does
     not bind the active runtime).
+
+    ``expected_interpreter_path`` repairs the other launch selector that can
+    survive a same-root cutover: an explicit command may still invoke the
+    previous dependency-generation Python even though its source revision and
+    manifest selector are current.  The replacement is deliberately limited
+    to the interpreter immediately preceding the canonical megaplan module,
+    leaving unrelated command paths untouched.
     """
     if not command:
         return command
@@ -943,6 +954,18 @@ def _regenerate_relaunch_command(
                 command[: match.start(2)]
                 + expected
                 + command[match.end(2) :]
+            )
+    if expected_interpreter_path:
+        match = re.search(
+            r"(?P<path>/[^\s\"';&|]+/bin/python(?:[0-9.]*)?)"
+            r"(?=\s+-P\s+-m\s+arnold_pipelines\.megaplan(?:\s|$))",
+            command,
+        )
+        if match:
+            command = (
+                command[: match.start("path")]
+                + str(expected_interpreter_path)
+                + command[match.end("path") :]
             )
     if not old_revision or not new_revision:
         return command
@@ -993,6 +1016,22 @@ def _rebind_marker_if_stale(
     relaunch_command = str(
         marker.get("relaunch_command") or marker.get("launch_command") or ""
     ).strip()
+    expected_interpreter_path = None
+    if expected_manifest_path:
+        try:
+            from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
+
+            manifest = load_manifest(Path(expected_manifest_path))
+            dependency = manifest.epic.get("dependency_generation")
+            if isinstance(dependency, Mapping):
+                value = str(dependency.get("interpreter_path") or "").strip()
+                if value:
+                    expected_interpreter_path = value
+        except Exception:
+            # ensure_runtime_launch_seed has already validated the manifest;
+            # this compatibility path is also exercised with synthetic marker
+            # tests that intentionally provide a non-file manifest selector.
+            expected_interpreter_path = None
     # A same-runtime marker can still carry a STALE LAUNCH SELECTOR: a
     # command that pins ARNOLD_RUNTIME_MANIFEST to the creation-time session
     # copy lags every manifest generation advance and fails admission on the
@@ -1006,7 +1045,14 @@ def _rebind_marker_if_stale(
         command_manifest_stale = bool(
             match and match.group(1) != str(expected_manifest_path)
         )
-    if same_runtime and not command_manifest_stale:
+    command_interpreter_stale = False
+    if expected_interpreter_path and relaunch_command:
+        command_interpreter_stale = not relaunch_matches_runtime(
+            relaunch_command,
+            live_identity,
+            expected_interpreter_path=expected_interpreter_path,
+        )
+    if same_runtime and not command_manifest_stale and not command_interpreter_stale:
         return
     if not relaunch_command:
         raise CliError(
@@ -1025,6 +1071,7 @@ def _rebind_marker_if_stale(
         old_revision=str(marker_identity.get("source_revision") or ""),
         new_revision=str(live_identity.get("source_revision") or ""),
         expected_manifest_path=expected_manifest_path,
+        expected_interpreter_path=expected_interpreter_path,
     )
     update_marker_runtime(
         marker_path,
@@ -1036,6 +1083,7 @@ def _rebind_marker_if_stale(
         actor="chain",
         direction="cutover",
         source_branch=source_branch,
+        expected_interpreter_path=expected_interpreter_path,
     )
 
 

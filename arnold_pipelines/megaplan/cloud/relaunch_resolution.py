@@ -254,8 +254,16 @@ def is_stale_marker_relaunch_command(
 def relaunch_matches_runtime(
     command: str,
     identity: Mapping[str, object],
+    *,
+    expected_interpreter_path: str | None = None,
 ) -> bool:
-    """Require a content-addressed relaunch command to name its bound runtime."""
+    """Require a content-addressed relaunch command to name its bound runtime.
+
+    ``expected_interpreter_path`` is supplied by manifest-backed CAS cutovers.
+    Legacy commands may use a manifest-resolved ``$GEN_INTERPRETER`` token, so
+    only an explicit interpreter path is checked here; a mismatching explicit
+    path is never admitted.
+    """
 
     runtime_root = str(
         identity.get("import_root") or identity.get("editable_root") or ""
@@ -267,6 +275,15 @@ def relaunch_matches_runtime(
         return False
     if len(revision) == 40 and revision not in command:
         return False
+    if expected_interpreter_path:
+        expected = os.path.realpath(str(expected_interpreter_path))
+        match = re.search(
+            r"(?P<path>/[^\s\"';&|]+/bin/python(?:[0-9.]*)?)"
+            r"(?=\s+-P\s+-m\s+arnold_pipelines\.megaplan(?:\s|$))",
+            command,
+        )
+        if match and os.path.realpath(match.group("path")) != expected:
+            return False
     return True
 
 
