@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+from dataclasses import replace
 
 from arnold_pipelines.megaplan.cloud.worker_dispatch import (
     AdmissionRefusal,
@@ -8,6 +10,7 @@ from arnold_pipelines.megaplan.cloud.worker_dispatch import (
     dispatch_with_admission,
     LaunchResult,
     _normalize_outcome,
+    _validate_worker_identity_for_receipt,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome, SchedulingCondition
 
@@ -132,6 +135,35 @@ def test_launchresult_mapping_missing_required_identity_is_rejected(tmp_path: Pa
             "s",
             "f",
         )
+
+
+def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
+    from arnold_pipelines.megaplan.workers._impl import capture_process_identity
+
+    child = subprocess.Popen(["/bin/sleep", "2"])
+    try:
+        identity = capture_process_identity(child, ("/bin/sleep", "2"))
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    receipt = replace(
+        receipt,
+        production_intent=True,
+        route_liveness_evidence={
+            "executable": {
+                "executable_path": identity["process_executable"],
+                "executable_sha256": identity["process_executable_sha256"],
+            }
+        },
+    )
+    assert _validate_worker_identity_for_receipt(identity, receipt)["pid"] == identity["pid"]
+    forged = dict(identity, process_executable_sha256="0" * 64)
+    import pytest
+    with pytest.raises(ValueError, match="executable digest"):
+        _validate_worker_identity_for_receipt(forged, receipt)
 
 
 def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_path: Path) -> None:

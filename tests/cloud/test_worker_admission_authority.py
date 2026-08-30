@@ -37,6 +37,10 @@ def test_checker_resolves_import_aliases(tmp_path) -> None:
         ("from arnold_pipelines.megaplan.cloud.worker_dispatch import dispatch_with_admission as admit\ndef door():\n    return admit(req, launch)\n", "dispatch_without_typed_worker_return"),
         ("from subprocess import Popen\ndef door():\n    spawn = Popen\n    return spawn(['echo', 'bad'])\n", "raw_launch_access"),
         ("import subprocess\ndef door():\n    spawn = getattr(subprocess, 'Popen')\n    return spawn(['echo', 'bad'])\n", "raw_launch_access"),
+        ("import subprocess\ndef door(Popen=subprocess.Popen):\n    def nested():\n        return Popen(['echo', 'bad'])\n    return nested()\n", "raw_launch_access"),
+        ("import subprocess\ndef door():\n    return getattr(subprocess, 'P' + 'open')(['echo', 'bad'])\n", "raw_launch_access"),
+        ("import subprocess\ndef door():\n    name = 'Popen'\n    return getattr(subprocess, name)(['echo', 'bad'])\n", "raw_launch_access"),
+        ("from arnold_pipelines.megaplan.managed_agent import run_managed_command\ndef door():\n    return run_managed_command(spec)\n", "raw_runtime_preflight"),
     ],
 )
 def test_checker_rejects_aliased_and_dynamic_launch_or_admission_bypass(tmp_path, source, code) -> None:

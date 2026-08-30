@@ -733,6 +733,13 @@ class IncidentLedger:
                     if authorizer.get(name) != supplied_context[name]:
                         raise ValueError(f"linked reservation authorizer context mismatch: {name}")
                 if (
+                    parent.get("semantic_dispatch_fingerprint") == semantic_dispatch_fingerprint
+                    and not changed_precondition_event_id
+                ):
+                    raise ValueError(
+                        "linked reservation cannot reuse the parent semantic fingerprint without a changed precondition"
+                    )
+                if (
                     authorizer.get("event_type") == "changed_precondition"
                     and changed_precondition_event_id not in {None, authorizing_event_id}
                 ):

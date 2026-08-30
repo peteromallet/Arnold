@@ -230,6 +230,10 @@ class WorkerAdmissionReceipt:
     admitted_at: str
     execution_context: WorkerExecutionContextRef
     production_intent: bool = True
+    # Full machine-owned route proof, including the executable/runtime binding
+    # used for OMP membership.  Keeping this on the receipt prevents a later
+    # worker result from claiming a different executable than admission saw.
+    route_liveness_evidence: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "execution_context"}
@@ -330,31 +334,29 @@ def _resolve_omp_runtime_binding(
     resolved = Path(candidate).resolve(strict=False)
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise CliError("omp_runtime_untrusted", "resolved omp executable is not a runnable file")
-    # Only a call-site supplied executable (or the installed runtime shape
-    # below) is trusted.  An environment variable is transport input and must
-    # not be able to bless an arbitrary executable.
-    expected_raw = trusted_executable
-    if expected_raw:
-        expected = Path(str(expected_raw)).expanduser().resolve(strict=False)
+    # The PATH entry is only a locator.  Trust is rooted in the machine-owned
+    # Bun global install, never in a caller-provided path, filename shape, or
+    # environment variable.  Resolving before comparison also rejects a
+    # symlink from a temporary ``pi-coding-agent/dist/cli.js`` tree.
+    canonical_paths = (
+        Path.home() / ".bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
+        Path("/opt/homebrew/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"),
+        Path("/usr/local/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"),
+    )
+    canonical = tuple(path.resolve(strict=False) for path in canonical_paths if path.is_file())
+    if not canonical or resolved not in canonical:
+        raise CliError(
+            "omp_runtime_untrusted",
+            "resolved omp executable is not the machine-owned installed runtime",
+            extra={"resolved_executable": str(resolved), "trusted_executables": [str(path) for path in canonical]},
+        )
+    if trusted_executable is not None:
+        expected = Path(str(trusted_executable)).expanduser().resolve(strict=False)
         if resolved != expected:
             raise CliError(
                 "omp_runtime_untrusted",
                 "omp PATH resolution does not match the trusted executable",
                 extra={"resolved_executable": str(resolved), "trusted_executable": str(expected)},
-            )
-    else:
-        # The resolved Bun entrypoint is the installed OMP runtime.  A random
-        # executable named ``omp`` from a prepended PATH is not an authority.
-        parts = set(resolved.parts)
-        if not (
-            resolved.name == "cli.js"
-            and "dist" in parts
-            and any("pi-coding-agent" in part for part in parts)
-        ):
-            raise CliError(
-                "omp_runtime_untrusted",
-                "resolved omp executable is outside the trusted coding-agent runtime",
-                extra={"resolved_executable": str(resolved)},
             )
     try:
         import omp_rpc
@@ -487,7 +489,24 @@ def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., An
             extra={"backend": binary, "models": sorted(models)},
         )
     proof = {"binary": identity, "model": model, "catalog": sorted(models), "probe": "debug models"}
-    return {"kind": "native_backend", "identity": _digest(proof), "digest": _digest(proof), "backend": binary, "provider": agent, "model": model, "observed_at": _now(), "authoritative": True}
+    try:
+        executable_sha256 = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
+    except OSError:
+        executable_sha256 = ""
+    return {
+        "kind": "native_backend",
+        "identity": _digest(proof),
+        "digest": _digest(proof),
+        "backend": binary,
+        "provider": agent,
+        "model": model,
+        "observed_at": _now(),
+        "authoritative": True,
+        "executable": {
+            "executable_path": resolved,
+            "executable_sha256": executable_sha256,
+        },
+    }
 
 
 def _validate_basic(request: WorkerAdmissionRequest) -> AdmissionRefusal | None:
@@ -688,7 +707,22 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
         reservation_event_id = str(payload.get("event_id") or payload.get("reservation_event_id") or "")
         receipt_id = str(payload.get("admission_receipt_id") or ledger.derive_receipt(payload))
         context = WorkerExecutionContextRef(str(request.ledger_root or Path.cwd()), request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, receipt_id, fingerprint, normalized_spec, request.physical_door_id)
-        return WorkerAdmissionReceipt(receipt_id, request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, request.parent_logical_dispatch_id, request.authorizing_event_id, request.physical_door_id, request.admission_attempt, normalized_spec, provider, model, family, str(liveness.get("kind")), str(liveness.get("identity")), str(liveness.get("digest")), float(request.timeout_budget_s), request.source_revision, request.runtime_vector, request.manifest_identity, request.seed_identity, request.dependency_interpreter_identity, fingerprint, request.projection_key, int(payload.get("expected_projection_version", 0)), reservation_event_id, request.changed_precondition_event_id, payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None, _now(), context, _machine_production_intent(request))
+        return WorkerAdmissionReceipt(
+            receipt_id, request.plan_id, request.phase, request.dispatch_family_id,
+            request.logical_dispatch_id, request.parent_logical_dispatch_id,
+            request.authorizing_event_id, request.physical_door_id,
+            request.admission_attempt, normalized_spec, provider, model, family,
+            str(liveness.get("kind")), str(liveness.get("identity")),
+            str(liveness.get("digest")), float(request.timeout_budget_s),
+            request.source_revision, request.runtime_vector,
+            request.manifest_identity, request.seed_identity,
+            request.dependency_interpreter_identity, fingerprint,
+            request.projection_key, int(payload.get("expected_projection_version", 0)),
+            reservation_event_id, request.changed_precondition_event_id,
+            payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None,
+            _now(), context, _machine_production_intent(request),
+            dict(liveness),
+        )
     except (CliError, ValueError, OSError) as exc:
         return _refusal(request, getattr(exc, "code", "admission_rejected"), str(exc))
 
@@ -819,12 +853,43 @@ def _validate_managed_completed_identity(
     return dict(value)
 
 
+def _validate_completed_process_identity(
+    value: Mapping[str, Any],
+    receipt: WorkerAdmissionReceipt,
+) -> Mapping[str, Any]:
+    """Validate a launcher-captured process snapshot after child exit."""
+    if value.get("verified") is not True or value.get("observed_before_exit") is not True:
+        raise ValueError("completed worker identity lacks a verified launch snapshot")
+    for name in ("process_start_identity", "process_executable", "process_executable_sha256", "process_command_sha256"):
+        if not isinstance(value.get(name), str) or not value[name]:
+            raise ValueError(f"completed worker identity lacks {name}")
+    binding = receipt.route_liveness_evidence or {}
+    expected = binding.get("executable") if isinstance(binding, Mapping) else None
+    if not isinstance(expected, Mapping):
+        raise ValueError("admission receipt lacks executable binding")
+    if value.get("process_executable") != expected.get("executable_path"):
+        raise ValueError("completed worker executable does not match admission")
+    if value.get("process_executable_sha256") != expected.get("executable_sha256"):
+        raise ValueError("completed worker executable digest does not match admission")
+    if value.get("attestation_source") == "omp_rpc_process":
+        runtime_binding = value.get("runtime_binding")
+        if not isinstance(runtime_binding, Mapping) or dict(runtime_binding) != dict(expected):
+            raise ValueError("completed OMP worker runtime binding does not match admission")
+    if value.get("host") != os.uname().nodename:
+        raise ValueError("completed worker identity host does not match this machine")
+    return dict(value)
+
+
 def _validate_worker_identity_for_receipt(
     value: Any,
     receipt: WorkerAdmissionReceipt,
 ) -> Mapping[str, Any]:
     if not receipt.production_intent:
         return _worker_identity(value)
+    if isinstance(value, Mapping) and value.get("attestation_source") in {
+        "managed_process_snapshot", "omp_rpc_process",
+    }:
+        return _validate_completed_process_identity(value, receipt)
     if isinstance(value, Mapping) and value.get("attestation_source") == "managed_agent_manifest":
         return _validate_managed_completed_identity(value, receipt)
     return _worker_identity(value, require_verified=True)

@@ -65,6 +65,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
+    capture_process_identity,
     mock_worker_output,
     resolve_work_dir,
 )
@@ -517,8 +518,10 @@ def _build_client(
             max_event_history=200_000,
         )
     rpc_client = _import_rpc_client()
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import _resolve_omp_runtime_binding
+    executable = _resolve_omp_runtime_binding()["executable_path"]
     return rpc_client(
-        executable="omp",
+        executable=executable,
         provider=provider,
         model=model_id,
         cwd=str(cwd),
@@ -1647,6 +1650,20 @@ def run_omp_step(
             _emit_llm_end(plan_dir, step, usage, call_transaction_id)
             _emit_cost_recorded(plan_dir, step, usage, catalog_model)
 
+            # Capture the real RPC child while it is still live.  The client
+            # is stopped in the surrounding ``finally`` before this result is
+            # consumed by the admission adapter, so this snapshot is the only
+            # valid process-boundary evidence for a completed OMP turn.
+            worker_identity = None
+            rpc_process = getattr(client, "_process", None)
+            if rpc_process is not None:
+                worker_identity = capture_process_identity(
+                    rpc_process, tuple(getattr(client, "command", ()))
+                )
+                worker_identity["attestation_source"] = "omp_rpc_process"
+                from arnold_pipelines.megaplan.cloud.worker_dispatch import _resolve_omp_runtime_binding
+                worker_identity["runtime_binding"] = _resolve_omp_runtime_binding()
+
             elapsed_ms = int((time.monotonic() - started) * 1000)
             auth_metadata = {
                 "worker_channel": OMP_WORKER_CHANNEL,
@@ -1676,6 +1693,7 @@ def run_omp_step(
                 worker_channel=auth_metadata["worker_channel"],
                 auth_channel=auth_metadata["auth_channel"],
                 auth_metadata=auth_metadata,
+                worker_identity=worker_identity,
                 configured_specs=tuple(attempted_specs),
                 attempt_index=attempt_index,
                 attempted_specs=tuple(attempted_specs),

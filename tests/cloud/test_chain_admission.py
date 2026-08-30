@@ -114,3 +114,19 @@ def test_production_linked_child_accepts_canonical_terminal_and_grant(tmp_path: 
     )
     assert child.parent_terminal_event_id == terminal["payload"]["terminal_outcome_id"]
     assert child.parent_physical_door_id == parent.physical_door_id
+    with pytest.raises(ValueError, match="semantic fingerprint"):
+        ledger.reserve(
+            plan_id=parent.plan_id,
+            phase=parent.phase,
+            projection_key="child",
+            semantic_dispatch_fingerprint="f" * 64,
+            logical_dispatch_id="child",
+            dispatch_family_id=parent.dispatch_family_id,
+            physical_door_id=parent.physical_door_id,
+            parent_logical_dispatch_id=parent.logical_dispatch_id,
+            parent_terminal_event_id=terminal["payload"]["terminal_outcome_id"],
+            parent_dispatch_family_id=parent.dispatch_family_id,
+            parent_physical_door_id=parent.physical_door_id,
+            authorizing_event_id=grant["payload"]["event_id"],
+            selected_spec=parent.selected_spec,
+        )

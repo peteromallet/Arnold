@@ -23,7 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
@@ -1802,6 +1802,74 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_ms: int
+    worker_identity: dict[str, Any] | None = None
+
+
+def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, Any]:
+    """Capture a real child identity before the launcher reaps it."""
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise CliError("worker_identity_unavailable", "worker process did not expose a valid PID")
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError, PermissionError) as exc:
+        raise CliError("worker_identity_unavailable", "worker process was not inspectable at launch") from exc
+    host = os.uname().nodename
+    boot_path = Path("/proc/sys/kernel/random/boot_id")
+    if boot_path.is_file():
+        boot_id = boot_path.read_text(encoding="utf-8").strip()
+    else:
+        boot = subprocess.run(
+            ["sysctl", "-n", "kern.boottime"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        boot_id = boot.stdout.strip() if boot.returncode == 0 else ""
+    if not boot_id:
+        raise CliError("worker_identity_unavailable", "machine boot identity was not inspectable")
+    start_identity = ""
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.is_file():
+        try:
+            start_identity = proc_stat.read_text(encoding="utf-8").split()[21]
+        except (OSError, IndexError):
+            start_identity = ""
+    if not start_identity:
+        started = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        start_identity = started.stdout.strip() if started.returncode == 0 else ""
+    if not start_identity:
+        raise CliError("worker_identity_unavailable", "worker process start was not inspectable")
+    executable = Path(str(command[0]))
+    if not executable.is_absolute():
+        resolved = shutil.which(str(executable))
+        if not resolved:
+            raise CliError("worker_identity_unavailable", "worker executable could not be resolved")
+        executable = Path(resolved)
+    executable = executable.resolve(strict=True)
+    executable_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    command_sha256 = hashlib.sha256(
+        json.dumps([str(arg) for arg in command], separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "host": host,
+        "pid": pid,
+        "boot_id": boot_id,
+        "process_start_identity": start_identity,
+        "verified": True,
+        "attestation_source": "managed_process_snapshot",
+        "observed_before_exit": True,
+        "process_executable": str(executable),
+        "process_executable_sha256": executable_sha256,
+        "process_command_sha256": command_sha256,
+    }
 
 ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
@@ -2708,6 +2776,7 @@ def run_command(
                 stdout=process.stdout or "",
                 stderr=process.stderr or "",
                 duration_ms=int((time.monotonic() - started) * 1000),
+                worker_identity=None,
             )
 
         stdin_file = None
@@ -2725,6 +2794,15 @@ def run_command(
                 stderr=subprocess.PIPE,
                 env=env,
             )
+            try:
+                worker_identity = capture_process_identity(process, command)
+            except Exception:
+                kill_group(process)
+                try:
+                    process.wait(timeout=2)
+                except Exception:
+                    pass
+                raise
             if progress_liveness_probe is None and progress_liveness_factory is not None:
                 try:
                     progress_liveness_probe = progress_liveness_factory(process)
@@ -3127,6 +3205,7 @@ def run_command(
             stdout=b"".join(stdout_parts).decode("utf-8", errors="replace"),
             stderr=b"".join(stderr_parts).decode("utf-8", errors="replace"),
             duration_ms=int((time.monotonic() - started) * 1000),
+            worker_identity=worker_identity,
         )
     finally:
         # Guard against UnboundLocalError when an early exception prevents
@@ -6541,6 +6620,7 @@ def _run_codex_step_uncapped(
         total_tokens=prompt_tokens + completion_tokens,
         cost_pricing=cost_pricing,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        worker_identity=result.worker_identity,
         response_enforcement_attestation=response_attestation,
     )
 
@@ -6745,6 +6825,7 @@ def run_codex_prep_step(
         rendered_prompt=prompt,
         model_actual=model,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        worker_identity=result.worker_identity,
         response_enforcement_attestation=response_attestation,
     )
 
@@ -7421,6 +7502,11 @@ def _production_worker_dispatch(
             identity = getattr(worker, "worker_identity", None)
             if identity is None and isinstance(getattr(worker, "auth_metadata", None), dict):
                 identity = worker.auth_metadata.get("worker_identity")
+            # WorkerResult is projected into AgentResult by the canonical
+            # runtime adapter; in that shape identity is carried in metadata.
+            # Never infer it from the supervisor or accept an untyped result.
+            if identity is None and isinstance(getattr(worker, "metadata", None), dict):
+                identity = worker.metadata.get("worker_identity")
             if isinstance(identity, dict):
                 return LaunchResult(accepted=True, value=value, worker_identity=identity)
             # Returning an untyped value deliberately fails closed in the

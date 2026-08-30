@@ -50,7 +50,7 @@ import os
 import runpy
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     cli_model,
@@ -585,7 +585,11 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         manifest_identity=manifest_identity,
         seed_identity=seed_identity,
         dependency_interpreter_identity=str(Path(sys.executable).resolve()),
-        prompt_or_phase_input_identity=str(ctx.get("goal_path") or ctx["run_id"]),
+        prompt_or_phase_input_identity=hashlib.sha256(
+            Path(str(ctx.get("goal_path") or "")).read_bytes()
+        ).hexdigest() if ctx.get("goal_path") else hashlib.sha256(
+            ctx["run_id"].encode("utf-8")
+        ).hexdigest(),
         configured_fallback_chain_identity="",
         authorized_route_identity=model,
         projection_key=f"babysitter:{ctx['session']}",
@@ -701,6 +705,12 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     return int((payload or {}).get("returncode", 1))
 
 
+def _stable_managed_identity_key(ctx: Mapping[str, Any], goal_path: Path) -> str:
+    """Derive one semantic producer key independent of temp paths/attempt IDs."""
+    goal_identity = hashlib.sha256(goal_path.read_bytes()).hexdigest()
+    return f"babysitter:{ctx['session']}:{ctx['occurrence']}:{goal_identity}"
+
+
 def launch_babysitter(argv: Sequence[str] | None = None) -> int:
     """Run the single-flash babysitter launch flow; returns the process rc."""
     args = _build_parser().parse_args(argv)
@@ -724,9 +734,10 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         # The identity is stable across retries.  Reserve the managed
         # manifest before admission so deduplication and a terminal no-launch
         # can use the same canonical reservation/reconciliation path.
-        identity_key = (
-            f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}"
-        )
+        # The semantic producer identity must survive renderer retries and
+        # temporary goal-file names.  Bind to session/occurrence and the goal
+        # contents, never to a mkstemp/path or per-attempt run id.
+        identity_key = _stable_managed_identity_key(ctx, goal_path)
         ctx["identity_key"] = identity_key
         managed_run_id = stable_managed_run_id(RUN_KIND, identity_key)
         ctx["managed_run_id"] = managed_run_id

@@ -20,20 +20,25 @@ FORBIDDEN_RAW = {
     "refresh_runtime_launch_seed_for_worker_dispatch",
     "require_configured_runtime_launch",
     "worker_launch_preflight",
+    "run_managed_command",
 }
 
 
-def _constant_string(node: ast.AST) -> str:
+def _constant_string(node: ast.AST, aliases: dict[str, str] | None = None) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if isinstance(node, ast.Name) and aliases is not None:
+        return aliases.get(node.id, "")
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = _constant_string(node.left)
-        right = _constant_string(node.right)
+        left = _constant_string(node.left, aliases)
+        right = _constant_string(node.right, aliases)
         return left + right if left and right else ""
     return ""
 
 
 def _resolve_expr(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
     if isinstance(node, ast.Name):
         return aliases.get(node.id, node.id)
     if isinstance(node, ast.Attribute):
@@ -43,7 +48,7 @@ def _resolve_expr(node: ast.AST, aliases: dict[str, str]) -> str:
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
         if len(node.args) >= 2:
             base = _resolve_expr(node.args[0], aliases)
-            attr = _constant_string(node.args[1])
+            attr = _constant_string(node.args[1], aliases)
             if base and attr:
                 name = f"{base}.{attr}"
                 return aliases.get(name, name)
@@ -60,6 +65,13 @@ def _aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[-1]] = item.name
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            defaults = list(node.args.defaults) + [value for value in node.args.kw_defaults if value is not None]
+            positional = list(node.args.args) + list(node.args.kwonlyargs)
+            for argument, default in zip(positional[-len(defaults):] if defaults else [], defaults):
+                resolved = _resolve_expr(default, aliases)
+                if resolved:
+                    aliases[argument.arg] = resolved
     for _ in range(16):
         changed = False
         for node in ast.walk(tree):
@@ -126,8 +138,18 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
         except (OSError, SyntaxError) as exc:
             diagnostics.append({"path": str(path), "code": "unreadable_or_invalid", "detail": str(exc)})
             continue
+        owners = _enclosing_functions(tree)
         for name, line in _call_names(tree):
             if name in FORBIDDEN_RAW or name.rsplit(".", 1)[-1] in FORBIDDEN_RAW:
+                if (
+                    name.rsplit(".", 1)[-1] == "run_managed_command"
+                    and path == ROOT / "arnold_pipelines/megaplan/cloud/babysitter/launch.py"
+                    # The canonical door delegates to this one nested launch
+                    # closure.  Other callers, including aliases and helper
+                    # functions in the same module, remain forbidden.
+                    and owners.get(line) == "launch"
+                ):
+                    continue
                 diagnostics.append({
                     "path": str(path),
                     "line": line,
@@ -144,7 +166,6 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                 or _resolve_expr(node.func, aliases).endswith(".dispatch_with_admission")
             )
         ]
-        owners = _enclosing_functions(tree)
         raw_process_calls = [
             node
             for node in ast.walk(tree)
@@ -166,6 +187,7 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             "_ps_children",
             "_subtree_cputime_sample",
             "_worktree_mutation_fingerprint",
+            "capture_process_identity",
         }
         for node in raw_process_calls:
             name = _resolve_expr(node.func, aliases)

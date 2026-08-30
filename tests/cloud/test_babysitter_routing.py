@@ -34,6 +34,19 @@ def test_unknown_routing_value_fails_closed() -> None:
         resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "deepseek"})
 
 
+def test_babysitter_identity_is_stable_across_temp_goal_paths(tmp_path: Path) -> None:
+    first = tmp_path / "attempt-a" / "goal.md"
+    second = tmp_path / "attempt-b" / "goal.md"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("same semantic goal", encoding="utf-8")
+    second.write_text("same semantic goal", encoding="utf-8")
+    ctx = {"session": "session", "occurrence": "occurrence", "run_id": "different"}
+    assert launch._stable_managed_identity_key(ctx, first) == launch._stable_managed_identity_key(ctx, second)
+    second.write_text("changed semantic goal", encoding="utf-8")
+    assert launch._stable_managed_identity_key(ctx, first) != launch._stable_managed_identity_key(ctx, second)
+
+
 def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> None:
     goal = tmp_path / "goal.md"
     goal.write_text("prove movement", encoding="utf-8")
