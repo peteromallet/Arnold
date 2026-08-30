@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import subprocess
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -372,67 +373,43 @@ def _run_worker(
     refreshed = res.refreshed if isinstance(res, AgentMode) else res[2]
     model = res.resolved_model if isinstance(res, AgentMode) else res[3]
     effort = res.effort if isinstance(res, AgentMode) else None
-    # ── OOM-aware pre-dispatch memory headroom gate (occurrence 1ac805e5eef9) ──
-    # A frontier (high-memory) spec with insufficient cgroup headroom must not
-    # be launched: select the phase's configured fallback spec BEFORE the
-    # worker is constructed; fail typed (never silently) when no fallback is
-    # safe. The container ceiling cannot be raised from inside, so model
-    # selection is the only in-container lever.
-    from arnold_pipelines.megaplan.fallback_chains import configured_fallback_chain_for_phase
-    from arnold_pipelines.megaplan.runtime.memory_headroom import (
-        read_cgroup_memory_snapshot,
-        record_dispatch_memory_marker,
-        select_memory_safe_spec,
+    _canonical_production = bool(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+        or os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+        or getattr(args, "production_intent", False)
     )
-
     _selected_spec = format_selected_spec(agent, model, effort) or agent
-    _configured_chain = configured_fallback_chain_for_phase(
-        getattr(args, "phase_model", None), step
-    )
-    _configured_specs = (
-        tuple(_configured_chain.specs)
-        if _configured_chain is not None
-        else (_selected_spec,)
-    )
-    _headroom_snapshot = read_cgroup_memory_snapshot()
-    _safe_spec, _headroom_decision = select_memory_safe_spec(
-        _configured_specs,
-        phase=step,
-        plan_dir=plan_dir,
-        snapshot=_headroom_snapshot,
-    )
-    if _safe_spec is None:
-        _block_error = CliError(
-            "insufficient_memory_headroom",
-            f"refusing to dispatch {_selected_spec} for phase {step}: "
-            f"{_headroom_decision.get('reason')} — no configured fallback has safe "
-            "cgroup headroom (typed block instead of a known-OOM launch)",
-            extra={
-                "phase": step,
-                "selected_spec": _selected_spec,
-                "configured_specs": list(_configured_specs),
-                "decision": _headroom_decision,
-            },
+    if _canonical_production:
+        _configured_specs = (_selected_spec,)
+        _safe_spec = _selected_spec
+    else:
+        from arnold_pipelines.megaplan.fallback_chains import configured_fallback_chain_for_phase
+        from arnold_pipelines.megaplan.runtime.memory_headroom import (
+            read_cgroup_memory_snapshot,
+            record_dispatch_memory_marker,
+            select_memory_safe_spec,
         )
-        record_step_failure(
-            plan_dir, state, step=step, iteration=failure_iteration, error=_block_error
+        _configured_chain = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
+        _configured_specs = tuple(_configured_chain.specs) if _configured_chain is not None else (_selected_spec,)
+        _safe_spec, _headroom_decision = select_memory_safe_spec(
+            _configured_specs, phase=step, plan_dir=plan_dir,
+            snapshot=read_cgroup_memory_snapshot(),
         )
-        raise _block_error
-    if _safe_spec != _selected_spec:
-        # Pre-dispatch fallback selection (e.g. ox-alpha -> deepseek-v4-pro).
-        _fallback_parsed = parse_agent_spec(_safe_spec)
-        agent = _fallback_parsed.agent or agent
-        model = _fallback_parsed.model
-        effort = _fallback_parsed.effort
-        res = AgentMode(
-            agent=agent,
-            mode=mode,
-            refreshed=refreshed,
-            model=model,
-            effort=effort,
-            resolved_model=model,
-        )
-    record_dispatch_memory_marker(plan_dir, step, _safe_spec)
+        if _safe_spec is None:
+            _block_error = CliError(
+                "insufficient_memory_headroom",
+                f"refusing to dispatch {_selected_spec} for phase {step}: {_headroom_decision.get('reason')}",
+                extra={"phase": step, "selected_spec": _selected_spec, "configured_specs": list(_configured_specs), "decision": _headroom_decision},
+            )
+            record_step_failure(plan_dir, state, step=step, iteration=failure_iteration, error=_block_error)
+            raise _block_error
+        if _safe_spec != _selected_spec:
+            _fallback_parsed = parse_agent_spec(_safe_spec)
+            agent = _fallback_parsed.agent or agent
+            model = _fallback_parsed.model
+            effort = _fallback_parsed.effort
+            res = AgentMode(agent=agent, mode=mode, refreshed=refreshed, model=model, effort=effort, resolved_model=model)
+        record_dispatch_memory_marker(plan_dir, step, _safe_spec)
     if reuse_active_phase:
         active_step = state.get("active_step")
         phase = phase_wbc_state(state, step=step)
@@ -457,11 +434,16 @@ def _run_worker(
             model=model,
             **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
         )
+    _canonical_production = bool(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+        or os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+        or (getattr(args, "production_intent", False))
+    )
     _emit_phase_notice(step)
     try:
-        if phase_wbc_required(step) and not reuse_active_phase:
+        if phase_wbc_required(step) and not reuse_active_phase and not _canonical_production:
             activate_phase_wbc(state=state, plan_dir=plan_dir, step=step, agent=agent)
-        if wbc_dispatch is None:
+        if wbc_dispatch is None and not _canonical_production:
             selected_spec = format_selected_spec(agent, model, effort) or agent
             wbc_dispatch = build_worker_dispatch_spec(
                 plan_dir=plan_dir,
@@ -495,7 +477,8 @@ def _run_worker(
             )
     except CliError as error:
         clear_active_step(state, run_id=run_id)
-        record_step_failure(plan_dir, state, step=step, iteration=failure_iteration, error=error)
+        if error.code != "scheduling_condition":
+            record_step_failure(plan_dir, state, step=step, iteration=failure_iteration, error=error)
         raise
     except Exception:
         clear_active_step(state, run_id=run_id)

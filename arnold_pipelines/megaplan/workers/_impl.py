@@ -7343,6 +7343,107 @@ def _patch_active_step_fallback_metadata(
     except Exception:
         return
 
+def _production_worker_dispatch(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    args: argparse.Namespace,
+    *,
+    root: Path,
+    resolved: tuple[str, str, bool, str | None] | AgentMode | None,
+    prompt_override: str | None,
+    prompt_kwargs: dict[str, Any] | None,
+    read_only: bool,
+    output_path: Path | None,
+    worker_options: dict[str, Any] | None,
+    wbc_dispatch: CommonWorkerDispatchSpec | None = None,
+) -> tuple[WorkerResult, str, str, bool]:
+    if wbc_dispatch is None:
+        raise CliError(
+            "wbc_dispatch_required",
+            "production native dispatch requires the canonical WBC adapter",
+        )
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        configured_seed_path,
+        require_production_worker_dispatch_runtime,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        AdmissionRefusal,
+        SchedulingCondition,
+        WorkerAdmissionRequest,
+        dispatch_with_admission,
+    )
+
+    am = resolved or resolve_agent_mode(step, args)
+    agent = am.agent if isinstance(am, AgentMode) else am[0]
+    model = am.resolved_model if isinstance(am, AgentMode) else am[3]
+    effort = am.effort if isinstance(am, AgentMode) else None
+    selected_spec = format_selected_spec(agent, model, effort) or agent
+    provenance = runtime_provenance()
+    seed_path = configured_seed_path()
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
+    seed_identity = hashlib.sha256(seed_path.read_bytes()).hexdigest() if seed_path and seed_path.is_file() else ""
+    manifest_identity = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest() if manifest_path and Path(manifest_path).is_file() else ""
+    logical_id = str((state.get("meta") or {}).get("current_invocation_id") or uuid.uuid4())
+    options = worker_options or {}
+    request = WorkerAdmissionRequest(
+        plan_id=str((state.get("meta") or {}).get("plan_id") or state.get("plan_id") or plan_dir.name),
+        phase=step,
+        dispatch_family_id=str(options.get("dispatch_family_id") or logical_id),
+        logical_dispatch_id=logical_id,
+        physical_door_id=str(options.get("physical_door_id") or "workers._impl.run_step_with_worker"),
+        configured_spec=str(options.get("configured_spec") or selected_spec),
+        selected_spec=selected_spec,
+        source_revision=str(provenance.get("source_revision") or ""),
+        runtime_vector=provenance,
+        manifest_identity=manifest_identity,
+        seed_identity=seed_identity,
+        dependency_interpreter_identity=str(Path(sys.executable).resolve()),
+        prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or _digest_prompt_identity(prompt_override, prompt_kwargs, step)),
+        configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
+        authorized_route_identity=str(options.get("authorized_route_identity") or selected_spec),
+        projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
+        timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
+        production_intent=True,
+        ledger_root=root,
+        route_liveness_resolver=options.get("route_liveness_resolver"),
+        memory_headroom_reader=options.get("memory_headroom_reader"),
+        cooldown_reader=options.get("cooldown_reader"),
+    )
+
+    def launch(_context: Any) -> Any:
+        if wbc_dispatch is not None:
+            return wbc_dispatch.run(
+                lambda _start: _run_step_with_worker_legacy(
+                    step, state, plan_dir, args, root=root, resolved=am,
+                    prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
+                    read_only=read_only, output_path=output_path,
+                    worker_options=worker_options, record_routing=True,
+                )
+            ).worker_result
+        return _run_step_with_worker_legacy(
+            step, state, plan_dir, args, root=root, resolved=am,
+            prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
+            read_only=read_only, output_path=output_path,
+            worker_options=worker_options, record_routing=True,
+        )
+
+    outcome = dispatch_with_admission(
+        request, launch, gate=require_production_worker_dispatch_runtime, return_worker=True,
+    )
+    if isinstance(outcome, AdmissionRefusal):
+        raise CliError(outcome.code, outcome.reason, extra=outcome.to_dict())
+    if isinstance(outcome, SchedulingCondition):
+        raise CliError("scheduling_condition", outcome.reason, extra=outcome.to_dict())
+    if not isinstance(outcome, tuple) or len(outcome) != 4:
+        raise CliError("internal_error", "canonical worker dispatch returned an invalid worker result")
+    return outcome
+
+
+def _digest_prompt_identity(prompt_override: str | None, prompt_kwargs: dict[str, Any] | None, step: str) -> str:
+    return hashlib.sha256(json.dumps({"step": step, "prompt": prompt_override, "kwargs": prompt_kwargs or {}}, sort_keys=True, default=str).encode()).hexdigest()
+
 
 def run_step_with_worker(
     step: str,
@@ -7371,6 +7472,31 @@ def run_step_with_worker(
     ledger_fallback_trigger: str | None = None,
     wbc_dispatch: CommonWorkerDispatchSpec | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
+    production_intent = bool(
+        os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+        or os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+        or (worker_options or {}).get("production_intent")
+    )
+    if production_intent:
+        am = resolved or resolve_agent_mode(step, args)
+        agent_name = am.agent if isinstance(am, AgentMode) else am[0]
+        if agent_name != "omp":
+            return _production_worker_dispatch(
+                step, state, plan_dir, args, root=root, resolved=am,
+                prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
+                read_only=read_only, output_path=output_path,
+                worker_options=worker_options, wbc_dispatch=wbc_dispatch,
+            )
+        # OMP owns its physical admission door.  The outer worker entry only
+        # delegates; it must never wrap this route in a second gate (or allow
+        # a supplied WBC dispatcher to start before OMP admission).
+        return _run_step_with_worker_legacy(
+            step, state, plan_dir, args, root=root, resolved=am,
+            prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
+            read_only=read_only, output_path=output_path,
+            worker_options=worker_options, wbc_dispatch=wbc_dispatch,
+            record_routing=record_routing,
+        )
     if wbc_dispatch is None:
         return _run_step_with_worker_legacy(
             step,
@@ -7528,6 +7654,7 @@ def _run_step_with_worker_legacy(
     ledger_attempted_specs: tuple[str, ...] | list[str] | str | None = None,
     ledger_failed_attempt_reasons: tuple[str, ...] | list[str] | None = None,
     ledger_fallback_trigger: str | None = None,
+    wbc_dispatch: CommonWorkerDispatchSpec | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -7573,82 +7700,6 @@ def _run_step_with_worker_legacy(
             model=model,
             effort=effort,
         )
-    # ── Worker launch preflight: produce a content-addressed equality proof ──
-    # before any agent dispatch loop.  Records the actual runtime values and, when
-    # a chain execution binding is available, verifies them against the bound
-    # identity.  A mismatch raises CliError and blocks the worker.
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-        refresh_runtime_launch_seed_for_worker_dispatch as _refresh_runtime_launch_seed,
-        require_configured_runtime_launch as _require_runtime_launch,
-        runtime_vector_sha256 as _runtime_vector_sha256,
-    )
-    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
-
-    # Select the currently accepted immutable generation at the actual worker
-    # dispatch boundary.  The long-lived chain parent keeps its orchestration
-    # seed; publication only changes workers started after this point.
-    _refresh_runtime_launch_seed()
-    _launch_seed = _require_runtime_launch("worker", create=True)
-    _runtime = _rp()
-    _source_ref = str(_runtime.get("source_revision") or "")
-    _configured_spec = format_selected_spec(agent, model, effort) or agent
-    # Attempt to locate a chain spec for expected-value comparison.
-    _expected: dict[str, Any] = {}
-    from arnold_pipelines.megaplan.chain.execution_binding import (
-        expected_worker_launch_values,
-        find_bound_chain_spec,
-        require_bound_chain_spec,
-    )
-
-    _launch_seed_present = _launch_seed is not None
-    _bound_chain_spec = (
-        require_bound_chain_spec(root, plan_name=plan_dir.name)
-        if _launch_seed_present
-        else find_bound_chain_spec(root, plan_name=plan_dir.name)
-    )
-    if _bound_chain_spec is not None:
-        _expected = expected_worker_launch_values(
-            spec_path=_bound_chain_spec,
-            root=root,
-            runtime_vector_available=_launch_seed_present,
-        )
-    _strict_runtime_binding = bool(_expected.pop("require_full_vector", False))
-    _runtime_vector = ""
-    if _launch_seed is not None:
-        _runtime_vector = _runtime_vector_sha256(_launch_seed)
-        _seed_chain_binding = _launch_seed.get("chain_runtime_binding")
-        _seed_chain_binding = (
-            _seed_chain_binding if isinstance(_seed_chain_binding, dict) else {}
-        )
-        _expected.update(
-            {
-                "expected_root": str(_launch_seed.get("expected_root") or ""),
-                "expected_runtime_vector_sha256": _runtime_vector,
-                "expected_chain_spec": str(
-                    _seed_chain_binding.get("spec_path") or ""
-                ),
-            }
-        )
-    from arnold_pipelines.megaplan.chain.source_admission import (
-        worker_launch_preflight as _wlp,
-    )
-
-    _wlp(
-        source_ref=_source_ref,
-        installed_package_path=str(_runtime.get("import_root") or ""),
-        runtime_revision=str(_runtime.get("source_revision") or ""),
-        runtime_root=str(_runtime.get("import_root") or ""),
-        runtime_vector_sha256=_runtime_vector,
-        canonical_chain_spec=(
-            str(_bound_chain_spec.resolve(strict=False))
-            if _bound_chain_spec is not None
-            else ""
-        ),
-        selected_model=resolved_model,
-        configured_spec=_configured_spec,
-        require_full_vector=_strict_runtime_binding,
-        **_expected,
-    )
     _zero_recovery_plan_iteration = int(state.get("iteration", 0) or 0)
     if step in {"plan", "revise"}:
         _zero_recovery_plan_iteration += 1
@@ -7710,6 +7761,7 @@ def _run_step_with_worker_legacy(
                         read_only=read_only,
                         output_path=output_path,
                         worker_options=worker_options,
+                        wbc_dispatch=wbc_dispatch,
                     )
                 else:
                     # Defensive guard: codex must receive an explicit model. The

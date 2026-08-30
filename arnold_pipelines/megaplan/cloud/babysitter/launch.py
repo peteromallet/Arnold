@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import runpy
@@ -541,6 +542,70 @@ def _managed_spec(
     return spec
 
 
+def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
+    """Run the managed command only after one canonical admission decision."""
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import require_production_worker_dispatch_runtime
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import configured_seed_path
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        AdmissionRefusal,
+        SchedulingCondition,
+        WorkerAdmissionRequest,
+        dispatch_with_admission,
+    )
+
+    model = str(ctx.get("model") or DEFAULT_MODEL)
+    plan = str(ctx.get("plan") or ctx["session"])
+    identity = str(ctx.get("managed_run_id") or ctx["run_id"])
+    seed_path = configured_seed_path()
+    manifest_path = str(os.environ.get("ARNOLD_RUNTIME_MANIFEST") or "")
+    seed_identity = ""
+    manifest_identity = ""
+    try:
+        if seed_path is not None and seed_path.is_file():
+            seed_identity = hashlib.sha256(seed_path.read_bytes()).hexdigest()
+        if manifest_path and Path(manifest_path).is_file():
+            manifest_identity = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
+    except OSError:
+        # Keep the identity empty so the canonical gate returns a typed refusal
+        # before the managed command is constructed or started.
+        seed_identity = ""
+        manifest_identity = ""
+    provenance = runtime_provenance()
+    request = WorkerAdmissionRequest(
+        plan_id=plan,
+        phase="babysitter",
+        dispatch_family_id=f"babysitter:{ctx['session']}:{ctx['run_id']}",
+        logical_dispatch_id=identity,
+        physical_door_id="cloud.babysitter.launch",
+        configured_spec=model,
+        selected_spec=model,
+        source_revision=str(provenance.get("source_revision") or ""),
+        runtime_vector=provenance,
+        manifest_identity=manifest_identity,
+        seed_identity=seed_identity,
+        dependency_interpreter_identity=str(Path(sys.executable).resolve()),
+        prompt_or_phase_input_identity=str(ctx.get("goal_path") or ctx["run_id"]),
+        configured_fallback_chain_identity="",
+        authorized_route_identity=model,
+        projection_key=f"babysitter:{ctx['session']}",
+        timeout_budget_s=float(os.environ.get("ARNOLD_BABYSITTER_TIMEOUT_S", "3600")),
+        production_intent=True,
+        ledger_root=Path(ctx["run_root"]),
+    )
+    result = dispatch_with_admission(
+        request, lambda _context: run_managed_command(spec),
+        gate=require_production_worker_dispatch_runtime, return_worker=True,
+    )
+    if isinstance(result, AdmissionRefusal):
+        raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
+    if isinstance(result, SchedulingCondition):
+        raise RuntimeError(f"babysitter admission scheduled: {result.reason}")
+    if not isinstance(result, int):
+        raise RuntimeError("babysitter admission returned an invalid managed result")
+    return result
+
+
 def launch_babysitter(argv: Sequence[str] | None = None) -> int:
     """Run the single-flash babysitter launch flow; returns the process rc."""
     args = _build_parser().parse_args(argv)
@@ -583,7 +648,7 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         # created=True "supervisor_start" path — no pre-reservation, which
         # would be misread as a dead-supervisor restart) and then blocks
         # until the Flash agent finishes.
-        rc = run_managed_command(spec)
+        rc = _admit_managed_launch(ctx, spec)
         managed_terminal = "unknown"
         try:
             managed_terminal = str(

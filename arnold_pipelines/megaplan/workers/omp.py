@@ -30,7 +30,7 @@ before emitting Arnold ledger receipts.
 """
 
 from __future__ import annotations
-
+import contextvars
 import hashlib
 import json
 import logging
@@ -73,6 +73,7 @@ from arnold.execution.step_invocation import StepInvocation
 
 OMP_WORKER_CHANNEL = "omp_rpc"
 OMP_AGENT = "omp"
+_OMP_ADMISSION_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar("omp_admission_active", default=False)
 # Spec prefix kept as a constant so rejection prose never spells the
 # forbidden double-colon form literally.
 _OMP_SPEC_PREFIX = "omp:"
@@ -1169,6 +1170,96 @@ def _local_strict_prompt_suffix() -> str:
 # ────────────────────────────────────────────────────────────────────────
 # Main entry
 # ────────────────────────────────────────────────────────────────────────
+def _run_omp_with_admission(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    fresh: bool,
+    model: str | None,
+    effort: str | None,
+    prompt_override: str | None,
+    output_path: Path | None,
+    worker_options: dict[str, Any] | None,
+    read_only: bool,
+    prompt_kwargs: dict[str, Any] | None,
+    wbc_dispatch: Any = None,
+) -> WorkerResult:
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        configured_seed_path,
+        require_production_worker_dispatch_runtime,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        AdmissionRefusal,
+        SchedulingCondition,
+        WorkerAdmissionRequest,
+        dispatch_with_admission,
+    )
+
+    options = worker_options or {}
+    raw_spec = model or ""
+    provider, model_id = parse_omp_spec(raw_spec)
+    selected_spec = format_omp_spec(provider, model_id)
+    provenance = runtime_provenance()
+    seed_path = configured_seed_path()
+    manifest_path = os.environ.get("ARNOLD_RUNTIME_MANIFEST", "")
+    seed_identity = hashlib.sha256(seed_path.read_bytes()).hexdigest() if seed_path and seed_path.is_file() else ""
+    manifest_identity = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest() if manifest_path and Path(manifest_path).is_file() else ""
+    logical_id = str((state.get("meta") or {}).get("current_invocation_id") or uuid.uuid4())
+    request = WorkerAdmissionRequest(
+        plan_id=plan_dir.name,
+        phase=step,
+        dispatch_family_id=str(options.get("dispatch_family_id") or logical_id),
+        logical_dispatch_id=logical_id,
+        physical_door_id=str(options.get("physical_door_id") or "workers.omp.run_omp_step"),
+        configured_spec=str(options.get("configured_spec") or selected_spec),
+        selected_spec=selected_spec,
+        source_revision=str(provenance.get("source_revision") or ""),
+        runtime_vector=provenance,
+        manifest_identity=manifest_identity,
+        seed_identity=seed_identity,
+        dependency_interpreter_identity=str(Path(os.sys.executable).resolve()),
+        prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or hashlib.sha256(f"{step}:{prompt_override or ''}".encode()).hexdigest()),
+        configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
+        authorized_route_identity=str(options.get("authorized_route_identity") or selected_spec),
+        projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
+        timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
+        production_intent=True,
+        ledger_root=root,
+        route_liveness_resolver=options.get("route_liveness_resolver"),
+        memory_headroom_reader=options.get("memory_headroom_reader"),
+        cooldown_reader=options.get("cooldown_reader"),
+    )
+    token = _OMP_ADMISSION_ACTIVE.set(True)
+    try:
+        def launch(_context: Any) -> WorkerResult:
+            def final_launch(_start: Any = None) -> WorkerResult:
+                return run_omp_step(
+                    step, state, plan_dir, root=root, fresh=fresh, model=selected_spec,
+                    effort=effort, prompt_override=prompt_override, output_path=output_path,
+                    worker_options=worker_options, read_only=read_only,
+                    prompt_kwargs=prompt_kwargs,
+                )
+            if wbc_dispatch is not None:
+                return wbc_dispatch.run(final_launch).worker_result
+            return final_launch()
+
+        result = dispatch_with_admission(
+            request, launch, gate=require_production_worker_dispatch_runtime,
+            return_worker=True,
+        )
+    finally:
+        _OMP_ADMISSION_ACTIVE.reset(token)
+    if isinstance(result, AdmissionRefusal):
+        raise CliError(result.code, result.reason, extra=result.to_dict())
+    if isinstance(result, SchedulingCondition):
+        raise CliError("scheduling_condition", result.reason, extra=result.to_dict())
+    if not isinstance(result, WorkerResult):
+        raise CliError("internal_error", "canonical OMP dispatch returned an invalid worker result")
+    return result
+
 
 def run_omp_step(
     step: str,
@@ -1185,6 +1276,7 @@ def run_omp_step(
     read_only: bool = False,
     free_text: bool = False,
     prompt_kwargs: dict[str, Any] | None = None,
+    wbc_dispatch: Any = None,
 ) -> WorkerResult:
     """Run a megaplan phase through a fresh stateless omp RPC session.
 
@@ -1194,6 +1286,20 @@ def run_omp_step(
     reads/validates the file.  Retries are bounded and attempt-idempotent;
     execute never replays after side effects.
     """
+    if (
+        not _OMP_ADMISSION_ACTIVE.get()
+        and (
+            os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+            or os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+            or (worker_options or {}).get("production_intent")
+        )
+    ):
+        return _run_omp_with_admission(
+            step, state, plan_dir, root=root, fresh=fresh, model=model, effort=effort,
+            prompt_override=prompt_override, output_path=output_path,
+            worker_options=worker_options, read_only=read_only,
+            prompt_kwargs=prompt_kwargs, wbc_dispatch=wbc_dispatch,
+        )
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(

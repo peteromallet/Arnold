@@ -7164,6 +7164,17 @@ def drive(
             code, out, err, result = _run_phase(cmd, next_step)
             _clear_completed_phase_active_step(next_step, result)
 
+        if result is not None and getattr(result, "exit_kind", None) == ExitKind.scheduling_condition.value:
+            condition = getattr(result, "scheduling_condition", None)
+            deterministic_phase_failure_signature = None
+            deterministic_phase_failure_count = 0
+            repeated_failure_signature = None
+            repeated_failure_occurrence = None
+            repeated_failure_signature_count = 0
+            wait_s = float(getattr(condition, "retry_after_s", 0.0) or 0.0)
+            if wait_s > 0:
+                time.sleep(wait_s)
+            continue
         if result is None or getattr(result, "exit_kind", None) not in {
             ExitKind.internal_error.value,
             ExitKind.malformed_model_output.value,

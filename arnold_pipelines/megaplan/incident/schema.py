@@ -1177,7 +1177,7 @@ def validate_nbf_event(
                 raise ValueError("provider probe result passed must be boolean")
             _sha256_identity(payload["evidence_digest"], f"{typ}.evidence_digest")
     if typ == "controlled_adapter_state":
-        if payload.get("launch_state_identity") not in {"not_started", "entered", "accepted", "ambiguous"}:
+        if payload.get("launch_state_identity") not in {"not_started", "entered", "accepted", "closed", "ambiguous"}:
             raise ValueError("controlled adapter state is invalid")
         _required(payload.get("reservation_event_id"), f"{typ}.reservation_event_id")
         _required(payload.get("admission_receipt_id"), f"{typ}.admission_receipt_id")

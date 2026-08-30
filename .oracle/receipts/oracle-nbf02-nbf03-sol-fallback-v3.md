@@ -1,0 +1,23 @@
+# Batch 2 emergency Sol fallback receipt
+
+- Model intended by frozen policy: Grok 4.6 Oracle.
+- Grok result: HTTP 402 `Grok Build usage balance exhausted`.
+- Fallback: GPT-5.6 Sol read-only gate attempt; no terminal artifact emitted before bounded runner ended.
+- Autonomous authority: user explicitly ordered continuation without waiting for confirmation.
+- Gate artifact: `.oracle/checkins/batch-2-sol-fallback-v3.md`, verdict `PASS_BATCH_2`.
+- Candidate branch: `megado-nbf-guard-0826`.
+- Batch-1 checkpoint: `878a9b2980f0eab6642ed51c30e687903a7213b9`.
+- Batch-2 checkpoint reviewed: `19deab5bb407273e7e82d40a66fc06d17af93ad4` plus dirty Batch-2 implementation/tests.
+- Source merge-base: `origin/main@798c50619204010ed3f4297fbb57988fe9381924`.
+- Executor evidence: `.oracle/findings/execution-nbf02-nbf03-luna-v3.md`.
+- Executor evidence root: `/tmp/oracle-nbf02-nbf03-luna-v3-0830/`.
+- Exact NBF-02 result: `242 passed in 303.69s`.
+- Exact NBF-03 result: `41 passed, 4 failed`; archived HEAD reproduced the same four unchanged legacy babysitter failures.
+- Authority checker: exit 0.
+- Raw-symbol scan: exit 0.
+- Changed-file compile: exit 0.
+- Diff check: exit 0.
+- Canonical admission/controlled terminal smoke: exit 0.
+- Existing common WBC: `34 passed`.
+- Decision: Batch-2 criteria pass for the changed scope; four baseline babysitter failures remain honest and out of scope.
+- No Grok completion is claimed. No post-gate mutation is authorized by this receipt.

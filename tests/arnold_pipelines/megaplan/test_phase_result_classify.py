@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+from arnold_pipelines.megaplan.orchestration.phase_result_classify import (
+    classify_dispatch_outcome,
+    terminal_outcome_kind,
+)
+
 from arnold_pipelines.megaplan.orchestration.phase_result import ExternalError
 from arnold_pipelines.megaplan.run_state.quality_family import (
     QualityFamily,
@@ -248,3 +254,14 @@ def test_structured_failed_different_inputs_produce_different_hashes() -> None:
     assert occ1.content_hash != occ2.content_hash, (
         "Different original_status must produce different hashes"
     )
+
+@pytest.mark.parametrize("kind", ["success", "ordinary_terminal_failure", "provider_exhausted", "worker_disposition"])
+def test_dispatch_classification_preserves_typed_terminal_kind(kind: str) -> None:
+    assert classify_dispatch_outcome({"kind": kind}) == kind
+    assert terminal_outcome_kind({"kind": kind}) == kind
+
+
+def test_scheduling_outcomes_are_not_worker_terminals() -> None:
+    assert classify_dispatch_outcome({"kind": "no_launch"}) == "no_launch"
+    with pytest.raises(ValueError):
+        terminal_outcome_kind({"kind": "no_launch"})

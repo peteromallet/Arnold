@@ -2958,7 +2958,7 @@ def require_configured_runtime_launch(
     return seed
 
 
-def require_production_worker_dispatch_runtime(
+def _legacy_require_production_worker_dispatch_runtime(
     *,
     component: str = "worker",
     create_process_attestation: bool = True,
@@ -3044,6 +3044,21 @@ def require_production_worker_dispatch_runtime(
             "runtime interpreter identity drifted",
         )
     return seed
+def require_production_worker_dispatch_runtime(request: Any = None, **legacy_kwargs: Any) -> Any:
+    """Single production admission authority.
+
+    The historical seed-only call remains available for startup callers.  A
+    typed ``WorkerAdmissionRequest`` is delegated to the canonical admission
+    implementation, keeping the public authority name stable for all doors.
+    """
+    if request is None:
+        return _legacy_require_production_worker_dispatch_runtime(**legacy_kwargs)
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        require_production_worker_dispatch_runtime as _admit,
+    )
+    return _admit(request, **legacy_kwargs)
+
+
 
 
 def main(argv: list[str] | None = None) -> int:
