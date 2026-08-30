@@ -1,0 +1,23 @@
+# Invocation receipt — revision-sol-W1
+
+- Role: Planner / full-plan revision owner
+- Classification: planning judgment (Sol-fixed role)
+- Actual provider/model: OpenAI / gpt-5.6-sol
+- Reasoning effort: high
+- Sandbox: read-only
+- Session mode: ephemeral
+- Session id: 01a04f00-49de-7e82-bfec-455d63106ce5
+- Command: `timeout 1800 codex exec --sandbox read-only --ephemeral -C <worktree> -c model=gpt-5.6-sol -c model_reasoning_effort=high -o /tmp/megado-nbf-sol-plan-v2.md <embedded-W1-revision-brief> </dev/null`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T19:30:12Z
+- Ended UTC: 2026-08-29T19:35:22Z
+- Exit status: 0
+- Brief SHA-256: e754c5cf662fd4b4b8da6a224e4baf9346a004c12edc496b02bc30eacdb35a4a
+- Input plan-v1 SHA-256: 770c61d4c63e1af0af1c92630fbce3ccdf956d66250c8134cb4db00c5b3dcb69
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result plan-v2 SHA-256: d341a71cf9b15766a35cd2cafd9d6e89f5ef2a2afc5d386fd2ce9c2bda639fdd
+- Durable result path: .oracle/plan.md
+- Planner disposition: STABILITY: STABLE; requires fresh complete Luna settled-plan wave.
+- Secrets retained: none

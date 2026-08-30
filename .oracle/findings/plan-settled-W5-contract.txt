@@ -1,0 +1,22 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+PASS_CONTRACT_COMPLETE
+
+No remaining material contradiction or authority/state-transition gap was found.
+
+- Admission, scheduling, terminal outcomes, death recording, and confirmation each have one named owner.
+- Physical-door ownership is distinct from admission attempts and logical dispatches; nested OMP and no-WBC paths are explicitly closed.
+- `no_launch`, `unresolved_launch`, accepted terminal outcomes, and scheduling conditions have disjoint accounting and reconciliation semantics.
+- Semantic fingerprint CAS is independent of logical dispatch ID; changed-precondition authorization is evidence-bound and single-use.
+- Composite provider route transition plus child reservation is one ledger event, with post-commit deterministic receipt derivation and replay stability.
+- T7 and T8 are typed scheduling paths, bypass breakers, and cannot produce `blocked`; T8 remains solely owned by NBF-06.
+- Native and OMP routes have explicit route-applicable positive proof without forcing native models through OMP membership or adding speculative probes.
+- Every signal path is covered by generated repository-wide discovery, typed disposition records, record-before-signal ordering, and durable two-scan confirmation where required.
+- Controlled launch sequencing prevents absence or ambiguity from being interpreted as no-launch.
+- NBF-06’s dependency barrier, authority checker, generated inventory, rebase validation, custody preservation, branch push, and merge-approval boundary are explicit.
+
+No additional material investigation is required. The plan is stable and ready for fresh settled-plan execution.
+[launch_hermes_agent] done in 108.2s (exit=0)
+0

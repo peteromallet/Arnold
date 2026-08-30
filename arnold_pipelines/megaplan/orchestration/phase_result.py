@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import uuid
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -35,6 +36,240 @@ class ExitKind(str, Enum):
     malformed_model_output = "malformed_model_output"
     internal_error = "internal_error"
     external_error = "external_error"
+    scheduling_condition = "scheduling_condition"
+
+
+class SchedulingConditionReason(str, Enum):
+    memory_cooldown = "memory_cooldown"
+    provider_observation_wait = "provider_observation_wait"
+    provider_degraded = "provider_degraded"
+    provider_probe_wait = "provider_probe_wait"
+    provider_probe_failed = "provider_probe_failed"
+    unresolved_launch = "unresolved_launch"
+
+
+@dataclass(frozen=True)
+class SchedulingCondition:
+    """A typed, lossless request to schedule another admission attempt."""
+
+    condition_id: str
+    reason: str
+    plan_id: str
+    phase: str
+    spec: str
+    dispatch_family_id: str
+    logical_dispatch_id: str
+    admission_attempt: int
+    retry_after_s: float
+    observed_at: str
+    cause_event_id: str | None = None
+    disposition_id: str | None = None
+    from_spec: str | None = None
+    to_spec: str | None = None
+    evidence: Any = field(default_factory=dict)
+    schema_version: int = 1
+
+    _FIELDS = frozenset({"schema_version", "condition_id", "reason", "plan_id", "phase", "spec", "dispatch_family_id", "logical_dispatch_id", "admission_attempt", "retry_after_s", "observed_at", "cause_event_id", "disposition_id", "from_spec", "to_spec", "evidence"})
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported SchedulingCondition schema_version")
+        if self.reason not in {r.value for r in SchedulingConditionReason}:
+            raise ValueError(f"invalid scheduling condition reason: {self.reason!r}")
+        for name in ("condition_id", "plan_id", "phase", "spec", "dispatch_family_id", "logical_dispatch_id", "observed_at"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                raise ValueError(f"SchedulingCondition.{name} must be non-empty")
+        if isinstance(self.admission_attempt, bool) or not isinstance(self.admission_attempt, int) or self.admission_attempt < 1:
+            raise ValueError("SchedulingCondition.admission_attempt must be positive")
+        if (not isinstance(self.retry_after_s, (int, float)) or isinstance(self.retry_after_s, bool)
+                or not math.isfinite(self.retry_after_s) or self.retry_after_s < 0):
+            raise ValueError("SchedulingCondition.retry_after_s must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"schema_version": self.schema_version, "condition_id": self.condition_id, "reason": self.reason, "plan_id": self.plan_id, "phase": self.phase, "spec": self.spec, "dispatch_family_id": self.dispatch_family_id, "logical_dispatch_id": self.logical_dispatch_id, "admission_attempt": self.admission_attempt, "retry_after_s": self.retry_after_s, "observed_at": self.observed_at, "cause_event_id": self.cause_event_id, "disposition_id": self.disposition_id, "from_spec": self.from_spec, "to_spec": self.to_spec, "evidence": self.evidence}
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "SchedulingCondition":
+        unknown = set(payload) - cls._FIELDS
+        if unknown:
+            raise ValueError(f"unknown SchedulingCondition fields: {sorted(unknown)}")
+        missing = cls._FIELDS - set(payload)
+        if missing:
+            raise ValueError(f"missing SchedulingCondition fields: {sorted(missing)}")
+        return cls(**dict(payload))
+
+
+class DispatchOutcomeKind(str, Enum):
+    success = "success"
+    no_launch = "no_launch"
+    ordinary_terminal_failure = "ordinary_terminal_failure"
+    provider_exhausted = "provider_exhausted"
+    worker_disposition = "worker_disposition"
+    unresolved_launch = "unresolved_launch"
+
+
+class LaunchState(str, Enum):
+    not_started = "not_started"
+    accepted = "accepted"
+    ambiguous = "ambiguous"
+
+
+@dataclass(frozen=True)
+class DispatchOutcome:
+    """Strict final-launch result carried across the phase boundary."""
+
+    kind: str
+    launch_state: str
+    plan_id: str
+    phase: str
+    dispatch_family_id: str
+    logical_dispatch_id: str
+    admission_receipt_id: str | None
+    semantic_dispatch_fingerprint: str | None
+    selected_spec: str
+    worker_identity: Any = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    success_payload: Any = None
+    terminal_failure: Any = None
+    provider_evidence: Any = None
+    provider_failure_key: str | None = None
+    disposition_id: str | None = None
+    reconciliation_event_id: str | None = None
+    terminal_outcome_event_id: str | None = None
+    schema_version: int = 1
+
+    _FIELDS = frozenset({"schema_version", "kind", "launch_state", "plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "admission_receipt_id", "semantic_dispatch_fingerprint", "selected_spec", "worker_identity", "started_at", "finished_at", "success_payload", "terminal_failure", "provider_evidence", "provider_failure_key", "disposition_id", "reconciliation_event_id", "terminal_outcome_event_id"})
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("unsupported DispatchOutcome schema_version")
+        try:
+            kind = DispatchOutcomeKind(self.kind)
+            state = LaunchState(self.launch_state)
+        except ValueError as exc:
+            raise ValueError("unknown DispatchOutcome kind or launch_state") from exc
+        expected = {"no_launch": "not_started", "unresolved_launch": "ambiguous"}
+        if kind.value in expected and state.value != expected[kind.value]:
+            raise ValueError(f"{kind.value} requires launch_state={expected[kind.value]}")
+        if kind.value not in expected and state is not LaunchState.accepted:
+            raise ValueError(f"{kind.value} requires launch_state=accepted")
+        for name in ("plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "selected_spec"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                raise ValueError(f"DispatchOutcome.{name} must be non-empty")
+        if kind in {DispatchOutcomeKind.no_launch, DispatchOutcomeKind.unresolved_launch}:
+            if any(getattr(self, n) is not None for n in ("admission_receipt_id", "semantic_dispatch_fingerprint", "worker_identity", "started_at", "finished_at", "provider_evidence", "provider_failure_key", "disposition_id", "terminal_outcome_event_id", "terminal_failure", "success_payload")):
+                raise ValueError("no_launch cannot carry worker/provider/disposition evidence")
+        else:
+            if not self.admission_receipt_id or not self.semantic_dispatch_fingerprint or self.worker_identity is None or not self.started_at or not self.finished_at:
+                raise ValueError("accepted outcome requires receipt, worker, and timing context")
+            if (not isinstance(self.semantic_dispatch_fingerprint, str)
+                    or len(self.semantic_dispatch_fingerprint) != 64
+                    or any(c not in "0123456789abcdef" for c in self.semantic_dispatch_fingerprint)):
+                raise ValueError("accepted outcome requires a canonical semantic fingerprint")
+            if not isinstance(self.worker_identity, Mapping):
+                raise ValueError("accepted outcome requires a typed worker identity")
+            required_identity = ("host", "pid", "boot_id")
+            if any(name not in self.worker_identity for name in required_identity):
+                raise ValueError("accepted outcome worker identity is incomplete")
+            if (not isinstance(self.worker_identity.get("host"), str) or not self.worker_identity.get("host")
+                    or not isinstance(self.worker_identity.get("boot_id"), str) or not self.worker_identity.get("boot_id")):
+                raise ValueError("accepted outcome worker identity is malformed")
+            if (not isinstance(self.worker_identity.get("pid"), int)
+                    or isinstance(self.worker_identity.get("pid"), bool)
+                    or self.worker_identity.get("pid") <= 0):
+                raise ValueError("accepted outcome worker identity pid is malformed")
+            for name in ("started_at", "finished_at"):
+                if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                    raise ValueError(f"accepted outcome {name} is required")
+            if self.provider_failure_key is not None and (not isinstance(self.provider_failure_key, str) or len(self.provider_failure_key) != 64 or any(c not in "0123456789abcdef" for c in self.provider_failure_key)):
+                raise ValueError("provider failure key must be canonical")
+        if kind is DispatchOutcomeKind.worker_disposition:
+            if not self.disposition_id or self.worker_identity is None or not self.started_at or not self.finished_at:
+                raise ValueError("worker_disposition requires disposition, worker, and timing context")
+            if self.provider_evidence is not None or self.terminal_failure is not None:
+                raise ValueError("worker_disposition cannot carry provider exhaustion or ordinary failure")
+            if self.success_payload is not None:
+                raise ValueError("worker_disposition cannot carry success evidence")
+        if kind is DispatchOutcomeKind.ordinary_terminal_failure and self.disposition_id is not None:
+            raise ValueError("worker disposition cannot be coerced into ordinary failure")
+        if kind is DispatchOutcomeKind.success and (self.terminal_failure is not None or self.provider_evidence is not None or self.disposition_id is not None):
+            raise ValueError("success cannot carry failure/provider/disposition evidence")
+        if kind is DispatchOutcomeKind.ordinary_terminal_failure and self.provider_evidence is not None:
+            raise ValueError("ordinary failure cannot carry provider evidence")
+        if kind is DispatchOutcomeKind.ordinary_terminal_failure and self.success_payload is not None:
+            raise ValueError("ordinary failure cannot carry success evidence")
+        if kind is DispatchOutcomeKind.provider_exhausted and not isinstance(self.provider_evidence, Mapping):
+            raise ValueError("provider_exhausted requires structured provider_evidence")
+        if kind is DispatchOutcomeKind.provider_exhausted:
+            required_provider = ("observation_id", "retryability_class", "exhausted_attempt_count", "terminal_provider_evidence_id", "precondition_identity", "provider_epoch_identity", "provider_failure_key", "observed_at")
+            if any(not self.provider_evidence.get(name) for name in required_provider):
+                raise ValueError("provider_exhausted provider_evidence is incomplete")
+            if self.disposition_id is not None or self.success_payload is not None:
+                raise ValueError("provider exhaustion cannot carry disposition/success evidence")
+            if self.terminal_failure is not None:
+                raise ValueError("provider exhaustion cannot carry ordinary failure evidence")
+            if (not isinstance(self.provider_evidence.get("exhausted_attempt_count"), int)
+                    or isinstance(self.provider_evidence.get("exhausted_attempt_count"), bool)
+                    or self.provider_evidence.get("exhausted_attempt_count") < 1):
+                raise ValueError("provider exhaustion attempt count must be positive")
+            key = self.provider_evidence.get("provider_failure_key")
+            if not isinstance(key, str) or len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+                raise ValueError("provider exhaustion requires a canonical provider failure key")
+            if self.provider_failure_key is not None and self.provider_failure_key != key:
+                raise ValueError("provider failure key disagrees with provider evidence")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in (
+            "schema_version", "kind", "launch_state", "plan_id", "phase",
+            "dispatch_family_id", "logical_dispatch_id", "admission_receipt_id",
+            "semantic_dispatch_fingerprint", "selected_spec", "worker_identity",
+            "started_at", "finished_at", "success_payload", "terminal_failure",
+            "provider_evidence", "disposition_id", "reconciliation_event_id",
+            "terminal_outcome_event_id", "provider_failure_key",
+        )}
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "DispatchOutcome":
+        unknown = set(payload) - cls._FIELDS
+        if unknown:
+            raise ValueError(f"unknown DispatchOutcome fields: {sorted(unknown)}")
+        missing = cls._FIELDS - set(payload)
+        if missing:
+            raise ValueError(f"missing DispatchOutcome fields: {sorted(missing)}")
+        return cls(**dict(payload))
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "DispatchOutcome":
+        try:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("DispatchOutcome JSON must be one object") from exc
+        if not isinstance(value, dict):
+            raise ValueError("DispatchOutcome JSON must be one object")
+        return cls.from_dict(value)
+
+
+def _condition_to_json(self: SchedulingCondition) -> str:
+    return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+@classmethod
+def _condition_from_json(cls: type[SchedulingCondition], raw: str) -> SchedulingCondition:
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("SchedulingCondition JSON must be one object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("SchedulingCondition JSON must be one object")
+    return cls.from_dict(value)
+
+
+SchedulingCondition.to_json = _condition_to_json  # type: ignore[attr-defined]
+SchedulingCondition.from_json = _condition_from_json  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +549,7 @@ _PHASE_RESULT_FIELDS = frozenset(
         "cli_provenance",
     }
 )
+_OPTIONAL_PHASE_RESULT_FIELDS = frozenset({"external_error", "scheduling_condition", "dispatch_outcome"})
 
 _VALID_EXIT_KINDS: frozenset[str] = frozenset(e.value for e in ExitKind)
 
@@ -344,6 +580,8 @@ class PhaseResult:
     artifacts_written: tuple[str, ...] = ()
     cli_provenance: dict[str, Any] = field(default_factory=dict)
     external_error: ExternalError | None = None
+    scheduling_condition: SchedulingCondition | None = None
+    dispatch_outcome: DispatchOutcome | None = None
     schema: str = PHASE_RESULT_SCHEMA
     schema_version: int = PHASE_RESULT_SCHEMA_VERSION
     phase_result_contract_version: int = PHASE_RESULT_CONTRACT_VERSION
@@ -359,6 +597,18 @@ class PhaseResult:
                 "PhaseResult: blocked_by_prereq requires at least one blocked_task; "
                 "empty blocked_tasks with blocked_by_prereq is classification_incompatible"
             )
+        if self.exit_kind == ExitKind.scheduling_condition.value and self.scheduling_condition is None:
+            raise ValueError("scheduling_condition exit requires a SchedulingCondition")
+        if self.scheduling_condition is not None and self.exit_kind != ExitKind.scheduling_condition.value:
+            raise ValueError("SchedulingCondition requires scheduling_condition exit_kind")
+        if self.dispatch_outcome is not None and self.exit_kind not in {
+            ExitKind.success.value,
+            ExitKind.scheduling_condition.value,
+            ExitKind.external_error.value,
+        }:
+            # Dispatch outcomes are normally success/typed transport; leave
+            # legacy error kinds untouched when no outcome is attached.
+            raise ValueError("dispatch_outcome cannot accompany this exit kind")
 
     @property
     def exit_kind_enum(self) -> ExitKind:
@@ -367,7 +617,7 @@ class PhaseResult:
     # ── serialisation ───────────────────────────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema": PHASE_RESULT_SCHEMA,
             "schema_version": PHASE_RESULT_SCHEMA_VERSION,
             "phase_result_contract_version": PHASE_RESULT_CONTRACT_VERSION,
@@ -384,6 +634,11 @@ class PhaseResult:
                 else None
             ),
         }
+        if self.scheduling_condition is not None:
+            payload["scheduling_condition"] = self.scheduling_condition.to_dict()
+        if self.dispatch_outcome is not None:
+            payload["dispatch_outcome"] = self.dispatch_outcome.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PhaseResult:
@@ -402,6 +657,16 @@ class PhaseResult:
             external_error=(
                 ExternalError.from_dict(raw)
                 if isinstance((raw := d.get("external_error")), dict)
+                else None
+            ),
+            scheduling_condition=(
+                SchedulingCondition.from_dict(raw)
+                if isinstance((raw := d.get("scheduling_condition")), dict)
+                else None
+            ),
+            dispatch_outcome=(
+                DispatchOutcome.from_dict(raw)
+                if isinstance((raw := d.get("dispatch_outcome")), dict)
                 else None
             ),
             schema=str(d.get("schema", PHASE_RESULT_SCHEMA)),
@@ -542,6 +807,10 @@ def _validate_phase_result_structure(
     if not isinstance(payload, dict):
         raise CliError("parse_error", "phase_result payload must be a dict")
 
+    unknown = set(payload) - _PHASE_RESULT_FIELDS - _OPTIONAL_PHASE_RESULT_FIELDS
+    if unknown:
+        raise CliError("parse_error", "phase_result unknown fields: " + ", ".join(sorted(unknown)))
+
     # --- required fields --------------------------------------------------
     required_fields = set(_PHASE_RESULT_FIELDS)
     if not require_current_schema:
@@ -618,6 +887,7 @@ def _validate_phase_result_structure(
                     "parse_error",
                     f"phase_result.external_error.{field_name} must be a string",
                 )
+
         for field_name in ("deterministic", "nonretryable"):
             if field_name in external_error and not isinstance(
                 external_error.get(field_name), bool
@@ -634,6 +904,16 @@ def _validate_phase_result_structure(
                 "parse_error",
                 "phase_result.external_error.failure_fingerprint must be a string",
             )
+
+    for field_name, decoder in (("scheduling_condition", SchedulingCondition.from_dict), ("dispatch_outcome", DispatchOutcome.from_dict)):
+        raw = payload.get(field_name)
+        if raw is not None:
+            if not isinstance(raw, dict):
+                raise CliError("parse_error", f"phase_result.{field_name} must be an object or null")
+            try:
+                decoder(raw)
+            except ValueError as exc:
+                raise CliError("parse_error", f"phase_result.{field_name}: {exc}") from exc
 
     # --- blocked_tasks ----------------------------------------------------
     bts = payload.get("blocked_tasks")
@@ -718,6 +998,8 @@ def _emit_phase_result(
     artifacts_written: tuple[str, ...] = (),
     cli_provenance: dict[str, Any] | None = None,
     external_error: ExternalError | None = None,
+    scheduling_condition: SchedulingCondition | None = None,
+    dispatch_outcome: DispatchOutcome | None = None,
 ) -> None:
     """Construct and write a ``PhaseResult`` from handler state.
 
@@ -753,6 +1035,8 @@ def _emit_phase_result(
         artifacts_written=artifacts_written,
         cli_provenance=cli_provenance,
         external_error=external_error,
+        scheduling_condition=scheduling_condition,
+        dispatch_outcome=dispatch_outcome,
     )
 
     # Validate against the current schema before writing.
@@ -864,6 +1148,11 @@ __all__ = [
     "PHASE_RESULT_SCHEMA_VERSION",
     "PHASE_RESULT_CONTRACT_VERSION",
     "ExitKind",
+    "SchedulingConditionReason",
+    "SchedulingCondition",
+    "DispatchOutcomeKind",
+    "LaunchState",
+    "DispatchOutcome",
     "BlockedTask",
     "Deviation",
     "ExternalError",

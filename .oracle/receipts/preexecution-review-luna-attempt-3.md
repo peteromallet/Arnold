@@ -1,0 +1,21 @@
+# Invocation receipt — preexecution-review-luna-attempt-3
+
+- Role: fresh independent pre-execution contract re-review
+- Review count: exactly one pass
+- Classification: normal
+- Selected model: GPT-5.6 Luna
+- Requested model: codex:gpt-5.6-luna
+- Resolved provider/model: openai-codex/gpt-5.6-luna
+- Started UTC: 2026-08-29T20:31:32Z
+- Ended UTC: 2026-08-29T20:34:44Z
+- Exit status: 0
+- Elapsed seconds: 191.3
+- Brief SHA-256: 50181cbab01c1eae3f7018be31cfa2d10bd60391fa74b046d8e32ddcdb1c95ce
+- Reviewed tasklist SHA-256: ed1f595430bd86d5c175421ac8b4ef0c9dd288c263b11482b2a7b7564a126668
+- Settled plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: 018575462883f957b1b88058990180fa84d7c5112e64fc6e4230f77544ee8725
+- Durable result path: .oracle/findings/preexecution-review-luna-attempt-3.txt
+- Verdict: ISSUES; T8 observation/reset contradiction reopens plan.
+- North Star disposition: delivery ordering PASS; plan freeze denied.
+- Secrets retained: none

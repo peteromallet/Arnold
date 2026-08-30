@@ -1,0 +1,20 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+PASS_STATE_CONTRACT
+
+The v6 state machine is internally consistent. The prior contradiction is resolved explicitly:
+
+- `provider_recovery_verified` is a special, evidence-bound, single-use authorization. Its creation and consumption preserve the existing provider-failure key and streak (§4.6, §4.16).
+- Therefore, the authorized same-route child’s matching accepted `provider_exhausted` outcome is correctly the second consecutive worker observation and may establish `provider_degraded` (§4.17, NBF-06 Substep C).
+- Other changed-precondition events reset or rekey observations only when their authoritative before/after provider-failure keys differ. Key-preserving changes may authorize fingerprint redispatch but cannot erase provider evidence (§4.6, §4.16).
+- Fingerprint CAS remains compatible: the recovery event is the narrowly authorized exception for one same-route child; different logical IDs cannot bypass the terminal fingerprint, while fallback/return children receive new logical IDs and composite reservations (§4.5, §4.7).
+- Route changes cannot inherit an incompatible streak because the composite event binds the target route, target liveness, and target provider-failure-key identity before commit (§4.7, §4.17).
+- Replay is deterministic: observations, recovery authorization, composite child reservation, receipt derivation, and streak transitions are ledger-authoritative and restart-safe (§4.11, §4.16).
+- Breaker accounting remains separated: `provider_exhausted` enters the T8 policy after canonical terminal recording; scheduling conditions bypass failure and breaker accounting, while genuine internal errors retain ordinary breaker behavior (§4.12–§4.14).
+- Probe success, sleep, time passage, membership refresh, and liveness-digest changes cannot independently authorize or reset state. Probe recovery requires the canonical producer and single-use CAS consumption.
+
+No material contradiction remains between the frozen T8 streak rules, fingerprint admission, changed-precondition semantics, fallback/return transitions, replay behavior, breaker handling, and required tests. North Star disposition: PASS.
+[launch_hermes_agent] done in 113.6s (exit=0)
+0

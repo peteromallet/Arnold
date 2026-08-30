@@ -1,0 +1,11 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Still starting after 11s — phase: module load / pre-phase work
+  logs: /Users/peteromalley/.omp/logs/omp.2026-08-29.80568.log · re-run with PI_DEBUG_STARTUP=1 for streaming phase markers
+Working...
+PASS — The contract is internally consistent and execution-complete. Criteria 1–8 map to NBF-01 through NBF-07 with explicit ownership, dependencies, binary batch gates, focused suites, structural/static evidence, and one authoritative post-rebase validation owner. Admission, scheduling, ledger/CAS, terminal outcomes, reconciliation, controlled launch sequencing, signal dispositions, durable confirmation, provider policy, and generated inventories each have single authoritative owners; no-WBC, chain, nested-OMP, fingerprint, no-launch, unresolved-launch, crash/replay, and T8 bypasses are explicitly prohibited and tested. All tasks remain Normal/GPT-5.6 Luna, with Sol reserved for gates and Oracle judgments; custody, candidate-only push, guarded force updates, and user approval before `main` merge are preserved.
+
+North Star alignment: PASS — the tasklist preserves one door per invariant, typed deaths with record-before-signal, joint model admission with positive route proof, changed-precondition-gated recovery, and fixer-contract delivery on the candidate branch.
+[launch_hermes_agent] done in 69.5s (exit=0)
+0

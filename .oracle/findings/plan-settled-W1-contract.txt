@@ -1,0 +1,41 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+CONTRACT-1 — **Material: yes.**  
+**Evidence:** The inventory identifies a separate `chain/source_admission.py::worker_launch_preflight` and a chain launch path in `chain/__init__.py`. NBF-02 says to “move” the source/runtime preflight under the gate, but NBF-03 only specifies three doors in `_impl.py`, `workers/omp.py`, and babysitter launch. It never states whether the chain preflight is deleted, reduced to an internal gate primitive, or remains callable.  
+**Required correction:** Explicitly enumerate every production caller of `worker_launch_preflight`; delete or make it non-authoritative, and state that all chain launches reach the one expanded admission function. Add a negative structural test for the chain path.  
+**Criterion impact:** Blocks 1 and potentially 2.  
+**North Star:** Violates “one door per invariant” if chain admission remains independent.
+
+CONTRACT-2 — **Material: yes.**  
+**Evidence:** NBF-02 says admission “either returns that receipt or raises a typed refusal/scheduling condition,” while also requiring cooldown sleep and full-gate rerun. NBF-06 and the T7 text do not define which caller catches the condition, retry bounds, duplicate `retry_wait` suppression, or how an admission attempt returns control to the shared seam.  
+**Required correction:** Specify one owner and protocol, e.g. a shared `admit_or_wait` loop returning either a receipt or terminal refusal, with injected clock/sleeper, bounded retry semantics, scheduling-condition identity, and explicit breaker bypass before any outer-loop failure accounting.  
+**Criterion impact:** T7/criterion 7 remains untestable end-to-end.  
+**North Star:** Preserves scheduling-as-scheduling rather than silently converting it into worker failure.
+
+CONTRACT-3 — **Material: yes.**  
+**Evidence:** Section 3.3 requires `dispatch_fingerprint`, `timeout_source`, phase, selected spec, worker identity, timestamp, and evidence. NBF-01’s acceptance only requires rejection of incomplete `{killer, signal, elapsed_s, disposition_id}`. The shell requirement (“narrow CLI over the same helper”) does not define executable location, serialization, ledger path, failure exit status, or fields available to watchdog/restack observers.  
+**Required correction:** Freeze the complete schema, typed enums, required/optional fields for in-band versus observed deaths, and the Python/CLI interface. Add tests proving shell callers fail closed when append fails and that unknown-killer observations remain explicit.  
+**Criterion impact:** Criterion 3 can pass superficially while required identity fields are absent.  
+**North Star:** “Deaths speak” requires complete typed facts, not merely four fields.
+
+CONTRACT-4 — **Material: yes.**  
+**Evidence:** T8 spans `workers/omp.py`, `_impl.py`, `handlers/shared.py`, `phase_result.py`, `recovery_policy.py`, `auto.py`, and ledger code. The plan says “persist enough route state” and “later dispatch” returns to primary, but defines no state schema, owner, atomic transition, observation key, or clearing rule for success/changed precondition. Scalar-pin probing and “one redispatch” are likewise not represented as explicit transitions.  
+**Required correction:** Define a phase/spec-keyed state machine: observation streak, degraded route, retry deadline, probe status, authorized fallback target, and primary-return transition. Specify which module owns reads/writes and require all route changes to pass joint admission before durable flip evidence.  
+**Criterion impact:** Criterion 8’s flip, hold, recovery, and return assertions are not independently verifiable.  
+**North Star:** Avoids a second rotator and prevents repeated unchanged retries.
+
+CONTRACT-5 — **Material: yes.**  
+**Evidence:** NBF-04 declares dependency only on NBF-01, yet its acceptance requires the OOM observer to record a disposition “before orphan recovery authorizes redispatch”; the plan explicitly says admission receipts from NBF-02 provide fingerprints.  
+**Required correction:** Make NBF-04 depend on NBF-02, or define and test an interim receipt/fingerprint contract that is identical to the final admission contract. NBF-06 similarly needs an explicit dependency on whichever component propagates typed availability evidence.  
+**Criterion impact:** Batch execution can implement death recording against a contract that later changes.  
+**North Star:** Fixer delivery must not leave a deployed-but-uncommitted or incompatible control path.
+
+CONTRACT-6 — **Material: yes.**  
+**Evidence:** Fingerprint refusal is required “unless a durable changed-precondition identity is recorded,” but no exact event schema, allowed change identities, replay projection, or atomicity between checking the last terminal fingerprint and admitting a new worker is specified. “Explicit recovery action” could become an unrestricted bypass.  
+**Required correction:** Freeze the changed-precondition event fields and an allowlisted reason/content identity set; define atomic ledger/projection check semantics and concurrency behavior. Require the new receipt to reference the accepted change event.  
+**Criterion impact:** Criterion 4 remains vulnerable to unchanged-fingerprint redispatch.  
+**North Star:** Directly enforces the anti-pattern prohibition against retrying identical failures.
+[launch_hermes_agent] done in 75.7s (exit=0)
+0

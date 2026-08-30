@@ -1,0 +1,22 @@
+# Invocation receipt — preexecution-review-luna-attempt-2
+
+- Role: fresh independent pre-execution contract re-review
+- Review count: exactly one pass for corrected attempt
+- Classification: normal
+- Selected model: GPT-5.6 Luna
+- Requested model: codex:gpt-5.6-luna
+- Resolved provider/model: openai-codex/gpt-5.6-luna
+- Started UTC: 2026-08-29T20:27:40Z
+- Ended UTC: 2026-08-29T20:30:01Z
+- Exit status: 0
+- Elapsed seconds: 140.816
+- Brief SHA-256: b408c9af4077f9374c215e8ae3aa8f24c0b00f63eb580b1748d9bab639664b95
+- Reviewed tasklist SHA-256: 4083a2393f7c687f4f3e48e407abecac51b858ee9aac84b9e7c8bd899125a015
+- Post-finding revised tasklist SHA-256: ed1f595430bd86d5c175421ac8b4ef0c9dd288c263b11482b2a7b7564a126668
+- Settled plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: 1fe4af8bec8b7a99c83fd9fa0d6e41251889dfde4ff9333ddd14229d955d8949
+- Durable result path: .oracle/findings/preexecution-review-luna-attempt-2.txt
+- Verdict: ISSUES; two delivery-order contradictions accepted and revised.
+- North Star disposition: PASS in substance.
+- Secrets retained: none

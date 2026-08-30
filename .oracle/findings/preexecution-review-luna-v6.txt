@@ -1,0 +1,13 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+ISSUES
+
+1. **Final validation is not bound to the final candidate SHA.** NBF-07 runs inventory generation, checker, and the authoritative pytest suite before step 9 commits final/generated changes. The required evidence therefore cannot be attributable to the exact clean SHA later reviewed and pushed. This is worse for `docs/nbf-signal-inventory.json`, whose required `repository_revision` can become stale immediately after the commit containing the generated artifact. Commit all final changes first, then run all SHA-bound validation with no post-validation mutation; define `repository_revision` as a non-self-referential source revision.
+
+2. **Accepted worker dispositions have no lossless `DispatchOutcome` representation.** Settled plan §4.8 requires `worker_terminal_outcome.outcome_kind=worker_disposition`, but §4.13 and NBF-01 enumerate `DispatchOutcome.kind` without `worker_disposition`. NBF-02 nevertheless requires dispositions to enter the canonical terminal writer. Without an explicit disposition-to-terminal writer path or a typed outcome variant, execution can coerce a killed worker into `ordinary_terminal_failure`, violating the frozen typed disposition contract.
+
+North Star disposition: **BLOCKED**.
+[launch_hermes_agent] done in 159.2s (exit=0)
+0

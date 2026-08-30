@@ -1,0 +1,32 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+**SEQ2-1 — Atomic reservation ownership is duplicated and underspecified**  
+**Material: yes.** §6 assigns “atomic admission reservation” to NBF-01, then NBF-02 independently assigns “atomic terminal-fingerprint comparison and admission reservation.” Current `IncidentLedger.append_event` (`incident/ledger.py:354-361`) atomically appends only; its read/compare/append lock exists only for maintenance events (`:298-319`). The plan assumes an existing transaction boundary that does not exist.  
+**Correction:** NBF-01 freeze schemas plus a ledger transaction/CAS primitive; NBF-02 alone owns the request-specific reservation call. Add a two-process race test, append/lock-failure test, and restart replay test.  
+**Impact:** Criteria 4, 7, 8. **North Star:** required for one admission door and no replay races.
+
+**SEQ2-2 — Physical-door proof does not define WBC ordering**  
+**Material: yes.** NBF-03 requires admission before final launch, but the current WBC path calls `wbc_dispatch.run` (`workers/_impl.py:7443`); `CommonWorkerDispatchSpec.run` reserves and starts its attempt before invoking the callback (`custody/common_worker_dispatch.py:86-107`). Placing admission inside `_run_step_with_worker_legacy` therefore records a dispatch start before admission. Conversely, placing it outside requires adapting WBC result and failure semantics. Scheduling retries could also be marked completed by WBC rather than deferred.  
+**Correction:** Explicitly define whether WBC start is pre-admission evidence or move admission before `wbc_dispatch.run`; typed conditions must neither consume a worker attempt nor emit worker failure/complete events. Add ordered WBC-start/gate/final-launch traces.  
+**Impact:** Criteria 1, 2, 6, 7. **North Star:** prevents a second hidden admission door.
+
+**SEQ2-3 — Scheduling-condition propagation remains incomplete**  
+**Material: yes.** Current `ExitKind` has no scheduling value (`orchestration/phase_result.py:23-38`), `PhaseResult` has no condition payload (`:330-386`), and `RecoveryPolicy.classify_with_circuit` records a failure before classification (`recovery_policy.py:834-855`). §4.4–4.5 state that scheduling bypasses breakers, but NBF-01, NBF-02, and NBF-06 split the required changes without assigning the end-to-end handler/auto path.  
+**Correction:** Freeze condition serialization and phase-result transport in NBF-01; require NBF-02 to wire handler/auto return paths and an early circuit bypass. Add expiry tests proving no breaker increment and no `blocked` transition.  
+**Impact:** Criteria 7–8. **North Star:** scheduling must remain scheduling, never synthetic failure.
+
+**SEQ2-4 — Shell dispositions may lack mandatory worker identity**  
+**Material: yes.** §4.8 requires every disposition to carry `dispatch_fingerprint`, phase, spec, and worker identity. Current watchdog receipts expose session/run/occurrence data (`cloud/wrappers/arnold-watchdog:2502-2520`), while `ensure-megaplan-watchdog` has only container/pgrep/heartbeat state and directly runs `xargs kill` (`:47-58`). NBF-05 requires complete fields and two scans but does not specify resolution or durable confirmation state for this path.  
+**Correction:** Require an explicit receipt/ledger resolver; absent identity must fail closed or use a separately typed non-worker disposition, never fabricate a fingerprint. Add container/watchdog-incarnation confirmation markers and cross-invocation tests.  
+**Impact:** Criterion 3. **North Star:** deaths speak and single scans cannot kill.
+
+**SEQ2-5 — Membership digest can silently bypass fingerprint refusal**  
+**Material: yes.** §4.6 includes `live_membership_digest` in the terminal fingerprint, so an ordinary catalog refresh can change the fingerprint without an allowlisted `changed_precondition`. That permits semantically identical redispatch.  
+**Correction:** Exclude volatile membership observations from the retry identity, or require `provider_recovery_verified` for any digest-only change; add a digest-only negative test.  
+**Impact:** Criteria 4–5. **North Star:** blocks unchanged redispatch.
+
+**Material investigation newly required: no.** These are missing ownership and verification contracts. The snapshot is **not yet frozen**.
+[launch_hermes_agent] done in 285.8s (exit=0)
+0

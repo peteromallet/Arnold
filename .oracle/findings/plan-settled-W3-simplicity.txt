@@ -1,0 +1,21 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+SIMP3-1 — T8 provider scheduling is still assigned to three batches
+
+- **Materiality:** High. This is an execution-plan duplicate, not a second intended runtime owner. The overlap can produce conflicting implementations and duplicate state-transition tests around the most failure-sensitive path.
+- **Exact evidence:**
+  - **NBF-02** assigns `dispatch_with_admission` typed post-launch handling, linked recovery IDs, first-observation hold/probe, atomic route-transition-plus-child reservation, fallback/return handling, and handler/`auto.py` scheduling.
+  - **NBF-03** repeats provider behavior in structural scenarios 8–10: first observation/probe, configured fallback parent/child IDs, and atomic transition rejection.
+  - **NBF-06** again owns the complete provider lifecycle: first observation, probe authorization, second observation, degradation, fallback, scalar hold, return-to-primary, crash safety, and races.
+- **Why this is new:** W2 correctly established one shared scheduling owner. W3 still distributes the same T8 policy and acceptance obligations across NBF-02, NBF-03, and NBF-06, leaving the implementation handoff materially ambiguous.
+- **Smallest correction:**
+  1. Keep NBF-01 as the sole schema/projection/CAS primitive owner.
+  2. Narrow NBF-02 to the generic `dispatch_with_admission` loop, T7 memory cooldown, lossless scheduling transport, early breaker bypass, and generic `DispatchOutcome` intake. Retain generic linked-dispatch mechanics, but remove provider-specific hold/probe/flip/return policy.
+  3. Narrow NBF-03 to physical-door, WBC-ordering, and launch-cardinality traces. Provider fixtures may prove that no extra launch occurs, but provider policy assertions move out.
+  4. Make NBF-06 the sole owner of T8 provider observation, degradation, fallback/scalar routing, return-to-primary, replay, and race tests. It invokes the shared seam and CAS authority; it does not create another scheduler or projection.
+- **Criterion impact:** Preserves criteria 2, 7, and 8. Improves criterion 8 by making the single scheduling owner and single provider-transition test authority executable rather than merely stated.
+- **North Star disposition:** Accept. This directly strengthens “one door per invariant” by removing duplicate provider-policy ownership and prevents divergent route transitions or duplicated recovery loops.
+[launch_hermes_agent] done in 85.8s (exit=0)
+0

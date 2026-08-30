@@ -1,0 +1,33 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+SEQ-1 — **Material: yes. Unowned chain launch path**
+
+- **Evidence:** Section 2 identifies `chain/__init__.py:7500–7539` as an independent launch/preflight path. NBF-02 lists `chain/source_admission.py`, but NBF-03 defines only three production doors: `_impl.py`, `run_omp_step`, and babysitter. No task explicitly removes or routes the chain path.
+- **Correction:** NBF-02 must inventory every worker-launch caller of `worker_launch_preflight` and the chain-local raises. Route genuine worker launches through the canonical gate, or document and test why a path is not a worker launch. Add a negative test for bypass.
+- **Criterion impact:** Blocks criteria 1–2; the claimed unique admission door is unproven.
+- **North Star:** Violates “one door per invariant” and permits a worker onto an unvalidated spec.
+
+SEQ-2 — **Material: yes. Cooldown semantics conflict with exactly-once spy criteria**
+
+- **Evidence:** NBF-02 requires active cooldown to emit evidence, sleep, and rerun the entire gate. NBF-03 requires gate count exactly one “per dispatch” and says the nested OMP path must total one hit. A cooldown-delayed logical dispatch necessarily has multiple admission attempts unless “hit” is defined differently.
+- **Correction:** Define two counters/contracts before NBF-03: exactly one physical door owner per logical dispatch, versus N admission attempts while scheduling conditions resolve. Extend the spy to assert zero final launches during cooldown, multiple gate attempts as appropriate, and exactly one final launch after expiry.
+- **Criterion impact:** Current tests can either reject correct cooldown retries or accept a bypass disguised as one gate hit.
+- **North Star:** Prevents “scheduling condition treated as failure,” while preserving one admission door rather than one invocation.
+
+SEQ-3 — **Material: yes. T8 route state is not sufficiently specified for durable recovery**
+
+- **Evidence:** Section 3.5 and NBF-06 say to “persist enough route state,” but do not define the state owner, schema, atomic update, replay behavior, or reset rules across restart/concurrent attempts. The same section requires two-observation degradation, scalar holds, fallback flips, and return-to-primary.
+- **Correction:** Add a typed `ProviderRouteState`/projection contract before NBF-06: key by phase/spec, store observation identity and streak, route, retry deadline, and last transition; define atomic ledger-backed transitions and resets on success, changed precondition, and restart. Add restart/interleaving tests.
+- **Criterion impact:** Criterion 8 can regress into repeated primary hammering, false flips, or the cited 126-retry cascade while local tests remain green.
+- **North Star:** Directly guards against unchanged-fingerprint redispatch and single-scan supervision.
+
+SEQ-4 — **Material: yes. Shell disposition verification is weaker than the required guarantee**
+
+- **Evidence:** NBF-05 requires every real TERM/KILL to pass synchronously through the helper/CLI, but its focused validation is only `bash -n` plus wrapper tests. No end-to-end test proves helper invocation precedes each real signal, helper failure leaves the victim alive, or descendant/group escalation emits one ledger event per signal.
+- **Correction:** Add shell-level stub tests that replace the disposition CLI and signal primitive, assert ordering and arguments for every branch, and exercise CLI failure. Require a machine-readable signal-site inventory as a batch artifact.
+- **Criterion impact:** Criterion 3 may pass Python tests while watchdog/restack still kill anonymously.
+- **North Star:** Violates “deaths speak”; a raw shell signal is precisely the forbidden silent-death path.
+[launch_hermes_agent] done in 66.9s (exit=0)
+0

@@ -1,0 +1,33 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+**CONTRACT2-1 — Atomic reservation scope is contradictory**  
+**Material: yes.** §4.7 rejects only a duplicate reservation for the same `logical_dispatch_id/fingerprint`, but §4.6 deliberately excludes `logical_dispatch_id` from the fingerprint. NBF-02 and the completion matrix require concurrent identical requests to produce at most one reservation, including requests with different logical IDs. Two concurrent dispatches can therefore reserve and launch the same terminal fingerprint. Additionally, a changed `live_membership_digest` changes the fingerprint without requiring an allowlisted `changed_precondition` event.
+
+**Correction:** define the uniqueness/CAS key explicitly as projection key plus semantic dispatch fingerprint, independent of logical dispatch ID, and make the accepted change event single-use across that key. Require every fingerprint component—including membership digest—to be backed by a durable changed-precondition event when it differs from the terminal record, or remove volatile membership state from the fingerprint and use provider transition evidence instead.  
+**Impact:** criterion 4; also criterion 5.  
+**North Star:** directly violates the ban on unchanged-fingerprint redispatch and weakens “one door per invariant.”
+
+**CONTRACT2-2 — Provider route transitions are not crash-atomic with admission**  
+**Material: yes.** §4.11 requires joint admission, then appends `provider_route_flip`/`provider_route_return`, then updates fallback metadata. §4.7 atomically persists only `admission_reserved`; no transaction or recovery rule links that reservation to the subsequent route transition. A crash after reservation but before route-event append can leave a valid receipt consumed, route unchanged, metadata stale, and future dispatches blocked or incorrectly retried. The same window exists for return-to-primary.
+
+**Correction:** define a transition intent/commit protocol in the ledger, or make reservation and route transition one atomic ledger operation. Specify restart reconciliation for every boundary and test crash injection before/after reservation, transition append, and metadata update.  
+**Impact:** criteria 4 and 8.  
+**North Star:** violates the single durable projection and risks duplicate/stranded route changes.
+
+**CONTRACT2-3 — Death identity is not closed over launch boundaries**  
+**Material: yes.** NBF-04 requires every disposition to reference the admission dispatch fingerprint, but its work does not define how the receipt/fingerprint reaches the standalone launcher or resident/shell paths. Current `launch_omp_agent.run()` accepts model/query/timeout but no plan, phase, logical-dispatch, receipt, or fingerprint fields (`skills/subagent-launcher/launch_omp_agent.py:167-183`); timeout handling is currently isolated at `:251-261`. The plan must specify required CLI/environment/metadata transport and failure behavior when context is absent.
+
+**Correction:** freeze receipt-context propagation into launcher, resident, watchdog, and wrapper interfaces; reject signal attempts lacking it unless the event is explicitly typed observed/external-unknown.  
+**Impact:** criterion 3 and the launcher acceptance tests.  
+**North Star:** “deaths speak” cannot hold if killer identity exists but dispatch identity is missing.
+
+**CONTRACT2-4 — Signal-site scope is incomplete or undefined**  
+**Material: yes.** NBF-05 says “every scoped” signal, limited to two shell files, while the goal says “ALL terminate sites.” Current source has additional real signals in `resident/agent_loop.py:547-557,1268-1280`, `skills/subagent-launcher/fan.py:89-103`, `fan_process.py:163-225`, `cloud/operator_control.py:70-72`, and `cloud/wrappers/arnold-heartbeat:33-35`. No inventory marks these as covered, probes, non-worker, or intentionally excluded.
+
+**Correction:** make the machine-readable inventory repository-wide; route worker-killing sites through the helper or explicitly document and test each exclusion.  
+**Impact:** criterion 3.  
+**North Star:** leaves silent death paths and single-scan termination anti-patterns unresolved.
+[launch_hermes_agent] done in 156.7s (exit=0)
+0

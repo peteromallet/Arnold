@@ -1,4 +1,16 @@
-# Megado run resumed — custody/source reconciliation
+# NBF execution contract frozen — 2026-08-29
+
+- State: `FROZEN`; implementation has not started.
+- Settled plan v8 SHA-256: `0ec216cca92a6f99f7d73e78494a46f8acb08e22c506a58948640ea2c57421e1`
+- Proposed tasklist v8 SHA-256: `88adb2e2e849285c7f83c924ef32c4fab12f1d05d3d4820dab0813f40c445e43`
+- Frozen tasklist v8 SHA-256: `9d206c8ff7d524f7b1247d4879dc3a1a32b0b0d953b49bc57ffe1aee68411589`
+- Luna gate receipt SHA-256: `2691b341c030e51056987f1aeb02fa130af75f22a901d5847cdf1c94b2d0f2f6`
+- Sol freeze receipt SHA-256: `6e5a2b51c2b4954506a171884cbc2c2fe31bbf826b620ef13aa30ef1283f942e`
+- North Star SHA-256: `d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e`
+- Immutable source base: `origin/main@798c50619204010ed3f4297fbb57988fe9381924`
+- Next step: Batch 1 — execute `NBF-01` with GPT-5.6 Luna, then obtain its Sol Oracle gate before Batch 2.
+
+# Prior status — Megado run resumed, custody/source reconciliation
 
 Location: /Users/peteromalley/Documents/Arnold-oracle-nbf (branch megado-nbf-guard-0826)
 
@@ -8,6 +20,23 @@ foreign onboarding-run artifact and is NOT execution-ready for this NBF goal.
 Next: preserve resume artifacts, rebase the five NBF-only commits onto the
 refreshed source SHA, then have Sol produce/validate the NBF plan and tasklist.
 Model policy: Luna normal; Sol planner/oracle/`[XHARD]`.
+
+## Temporary execution-policy override — 2026-08-29
+
+For the next 30 minutes, the user authorizes GPT-5.6 Sol subagents for obvious
+fixes and normal implementation/validation work. Independent Sol oracle ownership,
+the prohibition on direct main-agent implementation, no main merge, and all
+existing delivery boundaries remain unchanged. The actual goal is unchanged and
+no tasklist is frozen by this bookkeeping note.
+
+## Authoritative model-policy update — 2026-08-29
+
+From this instruction onward, Grok 4.6 is pinned for Oracle and any justified
+`[XHARD]` work. Normal exploration, critique, execution, and independent review
+remain GPT-5.6 Luna. This supersedes the earlier temporary Sol override for
+future Oracle/`[XHARD]` dispatches; completed Sol planning and freeze receipts
+remain historical evidence and are not invalidated. The frozen tasklist, goal
+scope, and source code are unchanged.
 
 ## Prepared
 - .oracle/northstar.md   — durable direction + anti-patterns

@@ -1,0 +1,7 @@
+ISSUES
+
+- NBF-07 is circular: Sol acceptance must precede the push, while the final Sol PASS requires the push and remote-tip verification. Define a reachable order and remove the contradictory prerequisite.
+- NBF-01’s ownership excludes admission, scheduling, and controlled-launch execution, but it also says to implement complete §§4.4–4.13, which include those NBF-02 responsibilities. Narrow this instruction to NBF-01’s schema/ledger primitives.
+- NBF-05 appears to require a digest inside the inventory artifact, while the settled plan defines the digest as external evidence. Remove the embedded self-digest requirement or freeze an explicit non-circular algorithm.
+
+North Star alignment: PASS in substance. Normal/Luna classifications and huge-run determination NO are defensible, but the tasklist should not be frozen until these contradictions are corrected.

@@ -1,0 +1,24 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+PASS_SEQUENCE_AND_VERIFICATION
+
+The batch sequence is coherent and dependency-safe:
+
+`NBF-01 → NBF-02 → NBF-03 → NBF-04 → NBF-05 → NBF-06 → NBF-07`
+
+- NBF-01 freezes ledger schemas, replay, CAS, reconciliation, terminal outcomes, dispositions, and durable confirmation before caller work.
+- NBF-02 consumes those contracts for admission, controlled launch, T7 scheduling, typed outcomes, and transport.
+- NBF-03 proves physical-door ownership, WBC ordering, no-WBC closure, and authority deletion before signal wiring.
+- NBF-04 closes Python context and signal paths; NBF-05 then closes shell paths and generates the repository-wide inventory.
+- NBF-06 has an explicit barrier on NBF-01 through NBF-05 and remains the sole T8 policy owner.
+- NBF-07 rebases first, regenerates/checks structural artifacts, runs the authoritative suite once, obtains independent review, pushes the branch, and stops before merge approval.
+
+Crash/restart coverage is sufficient: composite-event atomicity, post-commit receipt derivation, launch sequencing, no-launch versus ambiguity, terminal append failure, reconciliation replay, confirmation TTL/reset, concurrent consumption, and provider-transition races are all assigned explicit evidence.
+
+Door ordering is explicit: admission reservation precedes `not_started`, controlled launch entry, WBC/final-launch acceptance, and canonical terminal projection. Nested OMP has one owner; production no-WBC cannot bypass admission.
+
+No material dependency, crash/restart, ordering, or evidence gap remains that could allow a batch to pass while violating the frozen North Star criteria.
+[launch_hermes_agent] done in 76.4s (exit=0)
+0

@@ -1,0 +1,33 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+CONTRACT4-1 — **Material: pre-spawn exception handling contradicts reconciliation safety.**
+
+- **Evidence:** §4.8 permits `released_no_launch` only with positive proof that no final launch was entered or accepted. §4.11 nevertheless says any exception before `mark_final_launch_entered()` becomes a typed terminal outcome and reconciles as `released_no_launch`. Absence of that marker is not positive proof; a buggy or partially executed closure could spawn before marking.
+- **Smallest correction:** Require the closure to persist an explicit `not_started` marker before any launch-capable operation, and require deterministic no-launch evidence on every release path. If sequencing evidence is missing, classify as `unresolved_launch`.
+- **Criterion impact:** Final-launch exceptions, reservation reconciliation, crash safety.
+- **North Star:** Directly protects “deaths speak” and the ban on blind redispatch.
+
+CONTRACT4-2 — **Material: the existing no-WBC path remains an admission bypass.**
+
+- **Evidence:** Current `_impl.py:7374–7399` immediately delegates `run_step_with_worker(..., wbc_dispatch=None)` to `_run_step_with_worker_legacy`. The plan specifies WBC ordering and says native `_impl.py` binds the shared seam, but does not explicitly eliminate or forbid this production fallback. Existing direct callers can omit `wbc_dispatch`; that path can launch without the canonical reservation/receipt seam.
+- **Smallest correction:** Make every production `run_step_with_worker` invocation enter `dispatch_with_admission`; either construct the WBC adapter internally or reject `wbc_dispatch=None` under production intent. Add a negative structural test for the no-WBC invocation.
+- **Criterion impact:** 1, 2, and 6.
+- **North Star:** One admission door; no worker exists behind an unguarded route.
+
+CONTRACT4-3 — **Material: ordinary terminal outcomes are not explicitly projected into fingerprint CAS state.**
+
+- **Evidence:** `WorkerDisposition` carries a fingerprint, but `DispatchOutcome` only lists `terminal_failure`/`provider_evidence`; no canonical terminal-outcome event or projection rule is frozen for ordinary failures and provider exhaustion. §4.11 says the seam “records or reconciles” outcomes without naming the authoritative event consumed by §4.5–4.7.
+- **Smallest correction:** Define one strict terminal outcome event containing the semantic fingerprint and require it before reservation closure for every non-scheduling terminal result; make projection and redispatch CAS consume it.
+- **Criterion impact:** 4 and 8.
+- **North Star:** Prevents anonymous terminal failures from bypassing the unchanged-fingerprint block.
+
+CONTRACT4-4 — **Material: changed-precondition events can be caller-forged.**
+
+- **Evidence:** §4.6 requires unequal `before_content_id`/`after_content_id`, an allowlisted reason, and an evidence reference, but does not require those IDs to be derived from authoritative state or prove the referenced evidence matches the claimed change. Arbitrary two-value IDs could authorize an identical retry.
+- **Smallest correction:** Make canonical producers mint reason-specific content identities; CAS must validate evidence-to-identity binding and consume the event atomically. Add forged-event rejection tests.
+- **Criterion impact:** 4, 5, and T8 recovery.
+- **North Star:** Durable changed preconditions, not judgment-based bypasses.
+[launch_hermes_agent] done in 173.4s (exit=0)
+0

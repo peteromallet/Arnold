@@ -61,6 +61,23 @@ impossible to recur:
 - Single-scan supervision verdicts are banned; two-scan confirmation pattern is
   the standard for any kill decision.
 
+### Temporary execution-policy override — 2026-08-29
+
+For the next 30 minutes, the user authorizes GPT-5.6 Sol subagents for obvious
+fixes and normal implementation/validation work. Independent Sol oracle ownership,
+the prohibition on direct main-agent implementation, no main merge, and all
+existing delivery boundaries remain unchanged. This note does not alter the goal
+or freeze any tasklist.
+
+### Authoritative model-policy update — 2026-08-29
+
+From this instruction onward, Grok 4.6 is pinned for Oracle and any justified
+`[XHARD]` work. Normal exploration, critique, execution, and independent review
+remain GPT-5.6 Luna. This supersedes the earlier temporary Sol override for
+future Oracle/`[XHARD]` dispatches; completed Sol planning and freeze receipts
+remain historical evidence and are not invalidated. This bookkeeping note does
+not alter the goal scope, frozen tasklist, or source code.
+
 ## Validation
 - pytest tests/cloud/test_runtime_attestation.py (existing 42) PLUS new
   disposition/admission/spy suites, all green locally.

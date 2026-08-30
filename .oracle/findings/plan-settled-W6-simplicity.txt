@@ -1,0 +1,20 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+# Fresh v6 sense-check — **PASS_NO_MATERIAL_SIMPLIFICATION**
+
+The v6 correction is internally consistent and does not introduce a duplicate state owner, retry authority, reset rule, or material scope expansion.
+
+- **Streak preservation is explicit and coherent.** §4.6 makes `provider_recovery_verified` evidence-bound and single-use while requiring equal provider-failure-key identities. §4.16 explicitly states that probe results and recovery authorization leave the streak unchanged. §4.17 then correctly counts the authorized same-route child’s matching accepted exhaustion as observation two.
+- **Reset/rekey semantics are now conditional, not contradictory.** §4.6 and §4.16 limit changed-precondition reset/rekey to canonical before/after provider-failure-key changes. Success resets the applicable streak; a different-key exhaustion rekeys at one; ordinary failures and dispositions break consecutiveness without entering degradation. This resolves the prior contradiction without adding a second policy.
+- **Fingerprint CAS remains compatible.** §4.5 excludes volatile liveness data from semantic identity. §4.6 permits the recovery event to authorize exactly one same-fingerprint child, and §4.7 consumes that authorization atomically with reservation. Different logical IDs cannot evade the reservation key.
+- **Retry authority remains singular.** §4.14 keeps waiting, admission retries, controlled launch, and child creation in `dispatch_with_admission`. NBF-06 only returns provider-policy instructions and cannot sleep, launch, recurse, or create another scheduler.
+- **Provider state remains singular and replayable.** §4.7 assigns CAS, observation transitions, probe leases, changed-precondition consumption, and route-child reservation to the existing ledger authority. Fallback metadata remains derived. §4.11 and §4.16 cover replay, crash, duplicate-event, and versioned-key behavior.
+- **Breaker accounting is separated correctly.** §4.12 bypasses failure/breaker accounting for scheduling conditions, while §4.8 and §4.16 route accepted terminal outcomes through the canonical writer. Provider exhaustion is not double-recorded as ordinary failure.
+- **Fallback and return remain guarded.** §4.17 requires target admission and one composite route-transition/child-reservation event; route changes derive a new provider-failure key. Scalar pins hold/probe without widening.
+- **Tests and completion criteria match the correction.** NBF-06 explicitly tests preserved streak across probe/recovery authorization, matching-child degradation, success reset, different-key rekey, key-preserving changes, replay, races, and no-launch/unresolved-parent exclusion. The completion matrix repeats the same distinctions.
+
+No smallest correction is required. The v6 plan is ready for the fresh Luna settled-plan wave.
+[launch_hermes_agent] done in 50.1s (exit=0)
+0

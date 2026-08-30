@@ -1,0 +1,15 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+ISSUES — T8 has a material observation-state contradiction.
+
+- Settled plan §4.16 and NBF-06 state that any allowlisted durable `changed_precondition` resets the provider observation streak.
+- `provider_recovery_verified` is precisely such an event after the first observation and passed probe.
+- §4.17 and NBF-06 nevertheless require the next linked child’s exhaustion to count as the **second matching observation** and establish degradation.
+
+After the recovery event resets the streak, that child is only the first post-reset observation; degradation cannot occur as specified. Resolve by either preserving the streak across provider recovery or requiring two post-recovery matching outcomes, then align projection identity, fallback timing, replay, and tests.
+
+North Star disposition: do not freeze yet. The corrected delivery ordering itself is consistent: candidate committed before review, no mutation after pre-push approval, push only after Sol pre-push authorization, and final Sol completion after remote-tip verification.
+[launch_hermes_agent] done in 191.3s (exit=0)
+0

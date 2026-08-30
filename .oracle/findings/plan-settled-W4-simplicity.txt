@@ -1,0 +1,23 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+SIMP4-1 — **Material: composite event has a receipt-ID circularity**
+
+- **Evidence:** §4.4 says `WorkerAdmissionReceipt` is returned only after the ledger append commits. §4.7 nevertheless requires `provider_route_child_reserved` to contain `child_admission_receipt_id`, while that same append is what creates the child reservation and receipt.
+- **Risk:** Implementers must either mint receipt identity before the authoritative event exists, append a prepare record, or split the transaction—contradicting the one-record atomicity requirement.
+- **Smallest safe correction:** Remove `child_admission_receipt_id` from the composite event and derive it deterministically from the committed event ID plus child identity during receipt construction/replay. State that replay must reproduce the same receipt ID.
+- **Criterion impact:** Blocks composite atomicity, restart replay, linked-child context transport, and criterion 8.
+- **North Star disposition:** Required for “one door per invariant” and crash-safe dispatch; one authoritative event must define all derived receipt state.
+
+SIMP4-2 — **Material: pre-spawn exception semantics contradict no-launch fingerprint rules**
+
+- **Evidence:** §4.11 requires an exception before `mark_final_launch_entered()` to become an `ordinary_terminal_failure` and reconcile as `released_no_launch`. §4.8 requires `released_no_launch` to create **no worker terminal fingerprint**. The plan does not define whether the typed outcome is projected as a terminal worker event before reconciliation.
+- **Risk:** A straightforward implementation records the ordinary terminal outcome, creates the terminal fingerprint, then releases the reservation. Identical redispatch is consequently blocked despite no worker ever launching; another implementation may suppress the outcome and violate typed outcome transport.
+- **Smallest safe correction:** Define pre-entry exceptions as a return-level typed outcome with `launch_state=not_started`; they may cross `PhaseResult`, but must not create a worker terminal event/fingerprint. The ledger records only positive `reservation_reconciled(released_no_launch)` (or an explicitly non-worker outcome linked to it). `ordinary_terminal_failure` becomes terminal-fingerprint-bearing only after launch acceptance.
+- **Criterion impact:** Required for final-launch exception normalization, truthful reconciliation, and fingerprint redispatch behavior.
+- **North Star disposition:** Directly enforces “deaths speak” without inventing a worker death and prevents the recovery loop from treating a never-launched attempt as a terminal worker failure.
+
+No other material duplicate owner, parallel state authority, or redundant validation remains evident in v4 after the prior W1–W3 corrections.
+[launch_hermes_agent] done in 92.1s (exit=0)
+0
