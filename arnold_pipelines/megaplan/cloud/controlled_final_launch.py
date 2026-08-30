@@ -152,6 +152,13 @@ class ControlledFinalLaunch:
         ):
             self._persist("ambiguous")
             raise RuntimeError("accepted launch worker identity is malformed")
+        if self.receipt.production_intent:
+            if worker_identity.get("verified") is not True or not worker_identity.get("process_start_identity"):
+                self._persist("ambiguous")
+                raise RuntimeError("production launch worker identity is not process-attested")
+            if worker_identity.get("host") != os.uname().nodename:
+                self._persist("ambiguous")
+                raise RuntimeError("production launch worker identity host mismatch")
         self.accepted_started_at = started_at
         self.accepted_finished_at = finished_at
         self.accepted_worker_identity = worker_identity

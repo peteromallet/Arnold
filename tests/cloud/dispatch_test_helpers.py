@@ -23,6 +23,7 @@ def request(tmp_path: Path, **changes: object) -> WorkerAdmissionRequest:
         "configured_fallback_chain_identity": "",
         "authorized_route_identity": "codex:gpt-5.5",
         "projection_key": "projection",
+        "production_intent": False,
         "ledger_root": tmp_path,
         "route_liveness_resolver": lambda *_: {"kind": "native_backend", "identity": "backend", "digest": "b" * 64},
         "memory_headroom_reader": lambda _spec: {"ok": True, "available_bytes": 10},

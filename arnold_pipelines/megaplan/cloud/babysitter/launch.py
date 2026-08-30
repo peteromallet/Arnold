@@ -615,27 +615,35 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
             "host": str(manifest.get("worker_host") or os.uname().nodename),
             "pid": pid,
             "boot_id": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
+            "process_start_identity": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
+            "verified": manifest.get("worker_identity_verified") is True,
         }
         if not identity["boot_id"]:
             return LaunchResult(accepted=False, value=return_code)
         return LaunchResult(
             accepted=True,
-            value=return_code,
+            value={
+                "kind": "success" if return_code == 0 else "ordinary_terminal_failure",
+                "success_payload": {"returncode": return_code} if return_code == 0 else None,
+                "terminal_failure": {"returncode": return_code} if return_code != 0 else None,
+                "worker_identity": identity,
+                "started_at": identity.get("started_at"),
+                "finished_at": str(manifest.get("finished_at") or "") or None,
+            },
             worker_identity=identity,
             started_at=str(manifest.get("worker_started_at") or "") or None,
             finished_at=str(manifest.get("finished_at") or "") or None,
         )
 
-    result = dispatch_with_admission(request, launch, return_worker=True)
+    result = dispatch_with_admission(request, launch, return_worker=False)
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
     if isinstance(result, SchedulingCondition):
         raise RuntimeError(f"babysitter admission scheduled: {result.reason}")
-    if isinstance(result, LaunchResult):
-        result = result.value
-    if not isinstance(result, int) or isinstance(result, bool):
-        raise RuntimeError("babysitter admission returned an invalid managed result")
-    return result
+    if not hasattr(result, "kind"):
+        raise RuntimeError("babysitter admission returned an invalid typed result")
+    payload = result.success_payload if result.kind == "success" else result.terminal_failure
+    return int((payload or {}).get("returncode", 1))
 
 
 def launch_babysitter(argv: Sequence[str] | None = None) -> int:

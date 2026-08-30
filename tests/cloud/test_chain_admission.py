@@ -33,3 +33,14 @@ def test_linked_child_rejects_unresolved_parent(tmp_path: Path) -> None:
             logical_dispatch_id="child",
             authorizing_event_id="authorization",
         )
+
+
+def test_production_linked_child_requires_authoritative_ledger(tmp_path: Path) -> None:
+    parent = request(tmp_path, production_intent=True)
+    with pytest.raises(ValueError, match="authoritative ledger"):
+        build_authorized_linked_child_request(
+            {**parent.__dict__, "terminal_outcome_event_id": "terminal"},
+            selected_spec=parent.selected_spec,
+            logical_dispatch_id="child",
+            authorizing_event_id="authorization",
+        )

@@ -6,6 +6,8 @@ from arnold_pipelines.megaplan.cloud.worker_dispatch import (
     AdmissionRefusal,
     WorkerAdmissionReceipt,
     dispatch_with_admission,
+    LaunchResult,
+    _normalize_outcome,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome, SchedulingCondition
 
@@ -72,3 +74,13 @@ def test_gate_refusal_prevents_final_launch(tmp_path: Path) -> None:
     )
     assert isinstance(result, AdmissionRefusal)
     assert launches == []
+
+
+def test_wrapped_integer_is_not_a_typed_success(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
+    from pytest import raises
+
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    with raises(ValueError, match="primitive launch results"):
+        _normalize_outcome(LaunchResult(accepted=True, value=7, worker_identity=WORKER), receipt, "s", "f")

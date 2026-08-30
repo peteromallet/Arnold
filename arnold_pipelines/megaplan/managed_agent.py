@@ -282,7 +282,20 @@ def _pid_start_ticks(pid: object) -> str:
         # /proc/<pid>/stat field 22 is stable across exec and changes on PID reuse.
         return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
     except (OSError, IndexError):
-        return ""
+        # macOS has no /proc.  ``ps lstart`` is the kernel-owned process start
+        # observation and remains stable for the lifetime of a PID; preserve
+        # it as the portable process-start identity used in the manifest.
+        try:
+            observed = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "lstart="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return observed.stdout.strip() if observed.returncode == 0 else ""
 
 
 def _pid_matches(pid: object, expected_sha256: str, expected_start_ticks: str = "") -> bool:
@@ -1013,6 +1026,8 @@ def _run_managed_command_locked(
         manifest["worker_pid"] = child.pid
 
         manifest["worker_start_ticks"] = _pid_start_ticks(child.pid)
+        manifest["worker_host"] = os.uname().nodename
+        manifest["worker_identity_verified"] = bool(manifest["worker_start_ticks"])
         manifest["worker_started_at"] = utc_now()
         manifest["worker_cmdline_sha256"] = hashlib.sha256(raw_cmdline).hexdigest()
         _append_status(manifest, "running", evidence="worker_process_started")

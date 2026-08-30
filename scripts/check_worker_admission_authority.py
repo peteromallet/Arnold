@@ -14,6 +14,7 @@ DOORS = (
     ROOT / "arnold_pipelines/megaplan/workers/omp.py",
     ROOT / "arnold_pipelines/megaplan/cloud/babysitter/launch.py",
 )
+CANONICAL_DOORS = frozenset(DOORS)
 CHAIN = ROOT / "arnold_pipelines/megaplan/chain"
 FORBIDDEN_RAW = {
     "refresh_runtime_launch_seed_for_worker_dispatch",
@@ -74,6 +75,45 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                  or (isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch_with_admission"))
         ]
         owners = _enclosing_functions(tree)
+        # A caller-supplied/synthetic door is not allowed to hide a physical
+        # launch behind a different helper.  Canonical workers contain legacy
+        # repository-management subprocess calls, so those files are checked
+        # by the narrower ownership rules below; every other door is treated
+        # as an attempted launch surface and must route through admission.
+        if path not in CANONICAL_DOORS:
+            raw_launches = [
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+                and node.func.attr in {"Popen", "run", "call", "check_call", "check_output"}
+            ]
+            if raw_launches:
+                diagnostics.extend({
+                    "path": str(path),
+                    "line": node.lineno,
+                    "code": "raw_launch_access",
+                    "symbol": f"subprocess.{node.func.attr}",
+                } for node in raw_launches)
+            direct_launches = [
+                (name, line) for name, line in _call_names(tree)
+                if name in {"run_managed_command", "run_omp_step", "worker_launch_preflight"}
+            ]
+            for name, line in direct_launches:
+                diagnostics.append({"path": str(path), "line": line, "code": "no_wbc_bypass", "symbol": name})
+            wbc_calls = [
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in {"wbc_dispatch", "dispatch"}
+            ]
+            if wbc_calls:
+                dispatch_lines = [node.lineno for node in dispatch_calls]
+                if not dispatch_lines or any(node.lineno < min(dispatch_lines) for node in wbc_calls):
+                    diagnostics.extend({"path": str(path), "line": node.lineno, "code": "wbc_before_admission"} for node in wbc_calls)
         # The shared dispatcher owns admission.  A door may invoke it once,
         # but may not supply a replacement gate capable of minting a receipt or
         # bypassing source/runtime/liveness checks.  Resolver/readers belong on
@@ -106,7 +146,12 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                     "code": "dispatch_outside_authorized_door",
                     "detail": f"canonical dispatch must be owned by {expected}, got {owner or 'module'}",
                 })
-            if not any(keyword.arg == "return_worker" and getattr(keyword.value, "value", None) is True for keyword in node.keywords):
+            typed_return = any(
+                keyword.arg == "return_worker"
+                and getattr(keyword.value, "value", None) in {True, False}
+                for keyword in node.keywords
+            )
+            if not typed_return:
                 diagnostics.append({
                     "path": str(path),
                     "line": node.lineno,

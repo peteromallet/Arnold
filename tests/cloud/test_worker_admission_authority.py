@@ -8,6 +8,14 @@ def test_repository_doors_have_no_forbidden_raw_preflight() -> None:
     assert result["ok"], result["diagnostics"]
 
 
+def test_synthetic_raw_launch_door_is_rejected(tmp_path) -> None:
+    door = tmp_path / "door.py"
+    door.write_text("import subprocess\ndef door():\n    return subprocess.Popen(['echo', 'bad'])\n", encoding="utf-8")
+    result = check_files([door])
+    assert not result["ok"]
+    assert any(item["code"] == "raw_launch_access" for item in result["diagnostics"])
+
+
 def test_checker_resolves_import_aliases(tmp_path) -> None:
     door = tmp_path / "door.py"
     door.write_text(

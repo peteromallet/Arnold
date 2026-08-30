@@ -26,7 +26,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# The renderer is also invoked as a standalone script by the watchdog.  In
+# that mode Python does not add the repository root to sys.path, so importing
+# the canonical routing contract would fail before any goal is rendered.
+REPO_ROOT = Path(__file__).resolve().parents[5]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import resolve_babysitter_routing
 

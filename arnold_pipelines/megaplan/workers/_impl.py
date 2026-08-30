@@ -2338,6 +2338,9 @@ class WorkerResult:
     worker_channel: str | None = None
     auth_channel: str | None = None
     auth_metadata: dict[str, Any] | None = None
+    # Process-boundary identity is populated only by the launcher that can
+    # observe the real worker process; never infer it from the supervisor.
+    worker_identity: dict[str, Any] | None = None
     configured_specs: tuple[str, ...] = ()
     attempt_index: int = 0
     attempted_specs: tuple[str, ...] = ()
@@ -2373,6 +2376,7 @@ class WorkerResult:
             worker_channel=metadata.get("worker_channel"),
             auth_channel=metadata.get("auth_channel"),
             auth_metadata=metadata.get("auth_metadata"),
+            worker_identity=metadata.get("worker_identity"),
             configured_specs=tuple(metadata.get("configured_specs", ())),
             attempt_index=int(metadata.get("attempt_index", 0) or 0),
             attempted_specs=tuple(metadata.get("attempted_specs", ())),
@@ -2394,6 +2398,7 @@ class WorkerResult:
                 "worker_channel": self.worker_channel,
                 "auth_channel": self.auth_channel,
                 "auth_metadata": self.auth_metadata,
+                "worker_identity": self.worker_identity,
                 "cost_pricing": self.cost_pricing,
                 "model_evidence": self.model_evidence,
                 "configured_specs": list(self.configured_specs),
