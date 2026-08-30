@@ -1,0 +1,9 @@
+{
+  "diagnostics": [],
+  "doors": [
+    "arnold_pipelines/megaplan/workers/_impl.py",
+    "arnold_pipelines/megaplan/workers/omp.py",
+    "arnold_pipelines/megaplan/cloud/babysitter/launch.py"
+  ],
+  "ok": true
+}
