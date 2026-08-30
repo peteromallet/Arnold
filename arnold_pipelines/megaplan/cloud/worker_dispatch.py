@@ -32,6 +32,8 @@ SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
 _TRUSTED_OMP_RUNTIME_BINDING: dict[str, str] | None = None
+_PROCESS_ATTESTATION_SCOPES: dict[str, tuple[str, str, str]] = {}
+_PROCESS_ATTESTATION_CONSUMED: set[str] = set()
 
 # These identifiers are assigned by the production call sites.  They are not
 # user-configurable metadata: a request entering one of these doors is a
@@ -370,9 +372,20 @@ def _resolve_omp_runtime_binding(
     except (ImportError, OSError, TypeError) as exc:
         raise CliError("omp_runtime_untrusted", "true omp_rpc import path is unavailable") from exc
     executable_bytes = resolved.read_bytes()
+    launcher_candidates = (
+        machine_home / ".bun/bin/bun",
+        Path("/opt/homebrew/bin/bun"),
+        Path("/usr/local/bin/bun"),
+    )
+    launcher_paths = tuple(path.resolve(strict=False) for path in launcher_candidates if path.is_file() and os.access(path, os.X_OK))
+    if not launcher_paths:
+        raise CliError("omp_runtime_untrusted", "machine-owned Bun launcher is not inspectable")
+    launcher = launcher_paths[0]
     return {
         "executable_path": str(resolved),
         "executable_sha256": hashlib.sha256(executable_bytes).hexdigest(),
+        "launcher_executable_path": str(launcher),
+        "launcher_executable_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
         "runtime_import_path": str(rpc_path),
         "runtime_import_sha256": hashlib.sha256(rpc_bytes).hexdigest(),
         "interpreter": str(Path(sys.executable).resolve()),
@@ -885,16 +898,42 @@ def _validate_completed_process_identity(
     expected = binding.get("executable") if isinstance(binding, Mapping) else None
     if not isinstance(expected, Mapping):
         raise ValueError("admission receipt lacks executable binding")
-    if value.get("process_executable") != expected.get("executable_path"):
-        raise ValueError("completed worker executable does not match admission")
-    if value.get("process_executable_sha256") != expected.get("executable_sha256"):
-        raise ValueError("completed worker executable digest does not match admission")
     if value.get("attestation_source") == "omp_rpc_process":
         runtime_binding = value.get("runtime_binding")
         if not isinstance(runtime_binding, Mapping) or dict(runtime_binding) != dict(expected):
             raise ValueError("completed OMP worker runtime binding does not match admission")
+        if value.get("process_executable") != expected.get("launcher_executable_path"):
+            raise ValueError("completed OMP worker launcher does not match admission")
+        if value.get("process_executable_sha256") != expected.get("launcher_executable_sha256"):
+            raise ValueError("completed OMP worker launcher digest does not match admission")
+        argv = value.get("process_argv")
+        script = expected.get("executable_path")
+        if not isinstance(argv, list) or not isinstance(script, str) or not any(
+            isinstance(arg, str) and Path(arg).resolve(strict=False) == Path(script)
+            for arg in argv
+        ):
+            raise ValueError("completed OMP worker argv lacks the trusted CLI script")
+    else:
+        if value.get("process_executable") != expected.get("executable_path"):
+            raise ValueError("completed worker executable does not match admission")
+        if value.get("process_executable_sha256") != expected.get("executable_sha256"):
+            raise ValueError("completed worker executable digest does not match admission")
     if value.get("host") != os.uname().nodename:
         raise ValueError("completed worker identity host does not match this machine")
+    scope = (
+        str(receipt.admission_receipt_id),
+        str(receipt.logical_dispatch_id),
+        str(receipt.semantic_dispatch_fingerprint),
+    )
+    previous_scope = _PROCESS_ATTESTATION_SCOPES.get(token)
+    if previous_scope is not None:
+        if previous_scope != scope:
+            raise ValueError("completed worker identity attestation is bound to another receipt")
+        if token in _PROCESS_ATTESTATION_CONSUMED:
+            raise ValueError("completed worker identity attestation was already consumed")
+    else:
+        _PROCESS_ATTESTATION_SCOPES[token] = scope
+    _PROCESS_ATTESTATION_CONSUMED.add(token)
     return dict(value)
 
 

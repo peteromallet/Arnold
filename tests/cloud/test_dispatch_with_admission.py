@@ -172,6 +172,53 @@ def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path:
         _validate_worker_identity_for_receipt(dict(identity, pid=99999999), receipt)
     with pytest.raises(ValueError, match="machine observation"):
         _validate_worker_identity_for_receipt(dict(identity, pid=os.getpid()), receipt)
+    other = require_production_worker_dispatch_runtime(
+        request(tmp_path, logical_dispatch_id="other", projection_key="other")
+    )
+    assert isinstance(other, WorkerAdmissionReceipt)
+    other = replace(other, production_intent=True, route_liveness_evidence=receipt.route_liveness_evidence)
+    with pytest.raises(ValueError, match="another receipt"):
+        _validate_worker_identity_for_receipt(identity, other)
+
+
+def test_real_omp_process_identity_uses_bun_launcher_and_trusted_script(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        _resolve_omp_runtime_binding,
+        require_production_worker_dispatch_runtime,
+    )
+    from arnold_pipelines.megaplan.workers._impl import capture_process_identity
+
+    binding = _resolve_omp_runtime_binding()
+    process = subprocess.Popen(
+        [binding["launcher_executable_path"], binding["executable_path"], "--mode", "rpc"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        import time
+        time.sleep(0.25)
+        assert process.poll() is None, "installed OMP RPC process exited before identity capture"
+        identity = capture_process_identity(process, ("forged", "argv"))
+        identity["attestation_source"] = "omp_rpc_process"
+        identity["runtime_binding"] = binding
+        assert identity["process_executable"] == binding["launcher_executable_path"]
+        assert binding["executable_path"] in identity["process_argv"]
+        receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+        assert isinstance(receipt, WorkerAdmissionReceipt)
+        receipt = replace(
+            receipt,
+            production_intent=True,
+            route_liveness_evidence={"executable": binding},
+        )
+        assert _validate_worker_identity_for_receipt(identity, receipt)["process_executable"] == binding["launcher_executable_path"]
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_path: Path) -> None:
