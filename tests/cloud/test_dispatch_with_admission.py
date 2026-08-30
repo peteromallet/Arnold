@@ -121,6 +121,99 @@ def test_launchresult_mapping_is_completed_nullable_dispatch_schema(tmp_path: Pa
     assert outcome.reconciliation_event_id is None
 
 
+def test_production_shaped_native_worker_result_normalizes(tmp_path: Path) -> None:
+    """A native launcher result object is accepted through the real shape."""
+    import hashlib
+
+    from arnold_pipelines.megaplan.cloud import worker_dispatch
+    from arnold_pipelines.megaplan.workers._impl import WorkerResult, capture_process_identity
+
+    executable = Path("/bin/sleep").resolve(strict=True)
+    process = subprocess.Popen([str(executable), "2"])
+    try:
+        identity = capture_process_identity(process, (str(executable), "2"))
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(base, WorkerAdmissionReceipt)
+    receipt = replace(
+        base,
+        production_intent=True,
+        route_liveness_evidence={
+            "executable": {
+                "executable_path": str(executable),
+                "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+            }
+        },
+    )
+    worker = WorkerResult(
+        payload={"native": True},
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        worker_identity=identity,
+    )
+    outcome = _normalize_outcome(
+        LaunchResult(accepted=True, value=worker, worker_identity=identity),
+        receipt,
+        "started",
+        "finished",
+    )
+    assert outcome.kind == "success"
+    assert outcome.worker_identity == identity
+    assert outcome.success_payload == worker.payload
+
+
+def test_production_omp_wrapper_worker_result_normalizes(tmp_path: Path) -> None:
+    """The OMP adapter's LaunchResult(WorkerResult(...)) shape is terminal."""
+    from arnold_pipelines.megaplan.cloud import worker_dispatch
+    from arnold_pipelines.megaplan.workers._impl import WorkerResult, capture_process_identity
+
+    binding = worker_dispatch._resolve_omp_runtime_binding()
+    process = subprocess.Popen(
+        [binding["launcher_executable_path"], binding["executable_path"], "--mode", "rpc"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        import time
+
+        time.sleep(0.25)
+        assert process.poll() is None, "installed OMP RPC process exited before identity capture"
+        identity = capture_process_identity(process, tuple(getattr(process, "args", ())))
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    identity["attestation_source"] = "omp_rpc_process"
+    identity["runtime_binding"] = binding
+    base = worker_dispatch.require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(base, WorkerAdmissionReceipt)
+    receipt = replace(base, production_intent=True, route_liveness_evidence={"executable": binding})
+    worker = WorkerResult(
+        payload={"omp": True},
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        worker_channel="omp_rpc",
+        worker_identity=identity,
+    )
+    outcome = _normalize_outcome(
+        LaunchResult(accepted=True, value=worker, worker_identity=identity),
+        receipt,
+        "started",
+        "finished",
+    )
+    assert outcome.kind == "success"
+    assert outcome.worker_identity == identity
+    assert outcome.success_payload == worker.payload
+
+
 def test_launchresult_mapping_missing_required_identity_is_rejected(tmp_path: Path) -> None:
     from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
     from pytest import raises

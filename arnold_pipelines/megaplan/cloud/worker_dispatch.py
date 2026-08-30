@@ -1084,7 +1084,6 @@ def _normalize_outcome(
         selected_spec=receipt.normalized_spec,
         worker_identity=worker_identity(
             getattr(value, "worker_identity", None) or launch_metadata.worker_identity,
-            receipt,
         ),
         started_at=launch_metadata.started_at or started,
         finished_at=launch_metadata.finished_at or finished,
