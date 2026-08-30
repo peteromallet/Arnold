@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 from dataclasses import replace
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud.worker_dispatch import (
     AdmissionRefusal,
     WorkerAdmissionReceipt,
@@ -135,6 +137,78 @@ def test_launchresult_mapping_missing_required_identity_is_rejected(tmp_path: Pa
             "s",
             "f",
         )
+
+
+def test_production_dispatch_projects_consumed_attestation_once_and_rejects_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The real controlled dispatch path consumes a child attestation once.
+
+    ``ControlledFinalLaunch`` is the process-boundary consumer.  Terminal
+    normalization must project its accepted identity without consuming the
+    same token again, while an independent replay remains rejected.
+    """
+    import hashlib
+
+    from arnold_pipelines.megaplan.cloud import worker_dispatch
+    from arnold_pipelines.megaplan.workers._impl import capture_process_identity
+    from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+
+    ledger = IncidentLedger(tmp_path)
+    base = worker_dispatch.require_production_worker_dispatch_runtime(
+        request(tmp_path, ledger=ledger)
+    )
+    assert isinstance(base, WorkerAdmissionReceipt)
+    executable = Path("/bin/sleep").resolve(strict=True)
+    receipt = replace(
+        base,
+        production_intent=True,
+        route_liveness_evidence={
+            "executable": {
+                "executable_path": str(executable),
+                "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+            }
+        },
+    )
+    # Keep admission authoritative while exercising the complete production
+    # dispatch seam (controlled adapter, normalization, and terminal write).
+    monkeypatch.setattr(
+        worker_dispatch,
+        "require_production_worker_dispatch_runtime",
+        lambda _request: receipt,
+    )
+    captured: dict[str, object] = {}
+
+    def launch(_context):
+        process = subprocess.Popen([str(executable), "2"])
+        try:
+            identity = capture_process_identity(process, (str(executable), "2"))
+            captured["identity"] = identity
+            return LaunchResult(
+                accepted=True,
+                value={"kind": "success", "worker_identity": identity},
+                worker_identity=identity,
+            )
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+    result = worker_dispatch.dispatch_with_admission(
+        request(
+            tmp_path,
+            ledger=ledger,
+            production_intent=True,
+        ),
+        launch,
+        ledger=ledger,
+    )
+    assert isinstance(result, DispatchOutcome)
+    assert result.kind == "success"
+    assert result.launch_state == "accepted"
+    identity = captured["identity"]
+    assert isinstance(identity, dict)
+    with pytest.raises(ValueError, match="already consumed"):
+        worker_dispatch._validate_worker_identity_for_receipt(identity, receipt)
 
 
 def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path: Path) -> None:

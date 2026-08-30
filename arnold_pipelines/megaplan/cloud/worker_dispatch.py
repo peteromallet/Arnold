@@ -952,7 +952,28 @@ def _validate_worker_identity_for_receipt(
     return _worker_identity(value, require_verified=True)
 
 
-def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str, finished: str) -> DispatchOutcome:
+def _normalize_outcome(
+    value: Any,
+    receipt: WorkerAdmissionReceipt,
+    started: str,
+    finished: str,
+    *,
+    validated_worker_identity: Mapping[str, Any] | None = None,
+) -> DispatchOutcome:
+    def worker_identity(candidate: Any) -> Mapping[str, Any]:
+        """Project the boundary-validated identity without consuming twice.
+
+        ControlledFinalLaunch consumes process attestations at the process
+        boundary.  Normalization is only a projection of that accepted fact,
+        but repeated result metadata must still agree with it.
+        """
+        if validated_worker_identity is None:
+            return _validate_worker_identity_for_receipt(candidate, receipt)
+        if candidate is not None:
+            if not isinstance(candidate, Mapping) or dict(candidate) != dict(validated_worker_identity):
+                raise ValueError("normalized worker identity differs from controlled launch identity")
+        return dict(validated_worker_identity)
+
     if isinstance(value, DispatchOutcome):
         if value.kind in {"no_launch", "unresolved_launch"}:
             raise ValueError("final launch closure returned a scheduling outcome after entry")
@@ -968,7 +989,7 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
             launch_state="accepted",
             started_at=value.started_at or started,
             finished_at=value.finished_at or finished,
-            worker_identity=_validate_worker_identity_for_receipt(value.worker_identity, receipt),
+            worker_identity=worker_identity(value.worker_identity),
         )
         return DispatchOutcome.from_dict(normalized.to_dict())
     launch_metadata: LaunchResult | None = None
@@ -996,10 +1017,9 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
                 "finished_at": data.get("finished_at")
                 or (launch_metadata.finished_at if launch_metadata else None)
                 or finished,
-                "worker_identity": _validate_worker_identity_for_receipt(
+                "worker_identity": worker_identity(
                     data.get("worker_identity")
                     or (launch_metadata.worker_identity if launch_metadata else None),
-                    receipt,
                 ),
             }
         )
@@ -1019,10 +1039,9 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
             admission_receipt_id=receipt.admission_receipt_id,
             semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
             selected_spec=receipt.normalized_spec,
-            worker_identity=_validate_worker_identity_for_receipt(
+            worker_identity=worker_identity(
                 getattr(worker, "worker_identity", None)
                 or (launch_metadata.worker_identity if launch_metadata else None),
-                receipt,
             ),
             started_at=(launch_metadata.started_at if launch_metadata else None) or started,
             finished_at=(launch_metadata.finished_at if launch_metadata else None) or finished,
@@ -1044,7 +1063,7 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
             admission_receipt_id=receipt.admission_receipt_id,
             semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
             selected_spec=receipt.normalized_spec,
-            worker_identity=_validate_worker_identity_for_receipt(value, receipt),
+            worker_identity=worker_identity(value),
             started_at=started,
             finished_at=finished,
             success_payload=dict(value),
@@ -1063,7 +1082,7 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
         admission_receipt_id=receipt.admission_receipt_id,
         semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
         selected_spec=receipt.normalized_spec,
-        worker_identity=_validate_worker_identity_for_receipt(
+        worker_identity=worker_identity(
             getattr(value, "worker_identity", None) or launch_metadata.worker_identity,
             receipt,
         ),
@@ -1374,7 +1393,13 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
             if isinstance(value, PreLaunchNoLaunch):
                 return reconcile_no_launch(decision, evidence_event_ids=value.evidence_event_ids, ledger=active_ledger)
             finished = _now()
-            outcome = _normalize_outcome(value, decision, controlled.accepted_started_at or started, controlled.accepted_finished_at or finished)
+            outcome = _normalize_outcome(
+                value,
+                decision,
+                controlled.accepted_started_at or started,
+                controlled.accepted_finished_at or finished,
+                validated_worker_identity=controlled.accepted_worker_identity,
+            )
             if outcome.kind in {"no_launch", "unresolved_launch"}:
                 # _normalize_outcome rejects this after entry.  Retain the
                 # defensive branch for future outcome kinds and fail closed.
