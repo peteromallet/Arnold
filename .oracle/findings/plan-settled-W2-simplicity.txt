@@ -1,0 +1,37 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+**Result: material revision required.** The revised plan is not yet stable.
+
+### SIMP2-1 — Provider fallback violates its own dispatch cardinality
+
+**Material:** Yes.
+
+**Evidence:** §4.1 defines one logical dispatch as producing “at most one final launch.” §4.11 then requires a provider route flip followed by “redispatch through the same physical door.” NBF-06 repeats this requirement. The current implementation already loops from a failed worker result or `CliError` into `_advance_configured_spec_fallback` and continues (`workers/_impl.py:7850-7885`, `7910-7941`), so literal implementation can launch a second worker for the same logical dispatch.
+
+**Smallest safe correction:** Make each provider-route attempt a new `logical_dispatch_id`, linked to the prior attempt by a parent dispatch/transition identity. Preserve “at most one final launch” per logical dispatch. The route-transition event and changed-precondition event authorize the child dispatch; they must not silently permit a second launch under the original identity.
+
+**Criterion impact:** Required for criteria 2, 4, and 8. Without it, launch cardinality and fingerprint replay semantics are contradictory.
+
+**North Star:** Aligns with “one door per invariant” and the ban on retrying an unchanged failure fingerprint. It prevents route fallback from becoming an untracked duplicate launch.
+
+### SIMP2-2 — The shared seam has no post-launch provider-evidence contract
+
+**Material:** Yes.
+
+**Evidence:** §4.4 defines `dispatch_with_admission` around gate outcomes: receipt, scheduling condition, or terminal refusal. T8 degradation, however, originates from an exhausted worker dispatch after the final-launch closure runs. NBF-06 requires that evidence to become `provider_degraded`, but no normative contract returns structured availability evidence from the closure to the seam before generic failure/breaker handling. The existing fallback loop in `_impl.py` is the obvious implementation path, but retaining it would create the second scheduling owner explicitly prohibited by §§4.4–4.5 and §5.
+
+**Smallest safe correction:** Define the final-launch closure’s result as a typed `DispatchOutcome` that can carry terminal provider evidence. `dispatch_with_admission` must own the complete post-launch transition: project the observation, produce `SchedulingCondition`, perform the authorized fallback/hold/probe, rerun admission, and return only the final outcome. `RecoveryPolicy` must receive the scheduling condition, never raw provider evidence.
+
+**Criterion impact:** Required for criteria 7 and 8; otherwise T8 can still bypass the sole scheduling loop.
+
+**North Star:** Directly protects “one door per invariant” and prevents provider degradation from reintroducing fragmented retry logic.
+
+### Non-material simplification
+
+`incident/disposition.py` is assigned death schemas, fingerprints, changed-precondition validation, admission reservations, provider projection, transition helpers, and CLI behavior (§4.8, NBF-01). Splitting those concerns would improve maintainability, but it is not a plan-blocking duplicate authority if all writes remain ledger-backed.
+
+**Material investigation newly required:** No. The corrections are contract-level and supported by the plan plus existing source paths.
+[launch_hermes_agent] done in 188.4s (exit=0)
+0

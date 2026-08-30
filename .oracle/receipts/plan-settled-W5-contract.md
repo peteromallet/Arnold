@@ -1,0 +1,24 @@
+# Invocation receipt — plan-settled-W5-contract
+
+- Role: independent settled-plan contract critic
+- Classification: normal
+- Selected model: GPT-5.6 Luna
+- Assignment rationale: user-selected normal-task model
+- Requested model: codex:gpt-5.6-luna
+- Resolved provider/model: openai-codex/gpt-5.6-luna
+- Toolset declaration: file (launcher exposes its documented superset)
+- Command: `PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py --model=codex:gpt-5.6-luna --toolsets=file --query_file=.oracle/briefs/plan-settled-W5-contract.md --project_dir=<worktree> --metadata_file=<temp> --timeout=1800`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T20:13:40Z
+- Ended UTC: 2026-08-29T20:15:30Z
+- Exit status: 0
+- Elapsed seconds: 108.249
+- Brief SHA-256: 3ee1629442fab24769d6502127c46f3c7182f2918dd6fd5feaa7175633cbcf46
+- Immutable plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: d702c094bb438446834fc68630435450a6486eb974cca5c93288c0071a28273c
+- Durable result path: .oracle/findings/plan-settled-W5-contract.txt
+- North Star disposition: PASS.
+- Secrets retained: none

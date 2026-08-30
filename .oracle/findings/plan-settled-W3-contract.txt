@@ -1,0 +1,40 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+CONTRACT3-1 — **Material: global model liveness is underspecified.**
+
+- **Evidence:** The North Star requires every model id to resolve against “live omp membership at dispatch time.” Criterion 5 likewise requires joint spec↔catalog↔family↔live-provider admission. However, §4.2 and §4.3 limit exact live membership validation to “OMP routes.” No equivalent liveness authority is defined for native non-OMP routes, although NBF-03 explicitly treats native non-OMP as a production door.
+- **Correction:** Define route applicability explicitly. Either require a typed live-provider/native-runtime membership adapter for every production model route, or document and prove why a non-OMP route has an equivalent positive liveness proof. The canonical gate must reject missing proof before launch.
+- **Impact:** Criteria 1 and 5; native door in criterion 2.
+- **North Star:** Violates “models are admitted, not assumed” unless the non-OMP exception is positively proven.
+
+CONTRACT3-2 — **Material: dispatch-family concurrency is promised but not enforced by the CAS contract.**
+
+- **Evidence:** §4.1 requires no concurrently active final launches within one dispatch family. §4.4/§4.6 define reservation uniqueness as projection key plus semantic fingerprint and reject active duplicate reservations, but the projection key in §4.11 contains no `dispatch_family_id`, and no family lease/active-launch CAS field or release rule exists. Two logical IDs with distinct fingerprints can therefore satisfy the stated reservation uniqueness while launching concurrently under one family.
+- **Correction:** Add an explicit family-level active reservation/lease keyed by `dispatch_family_id`, with atomic acquisition, outcome/reconciliation release, crash recovery, and a concurrent different-fingerprint test.
+- **Impact:** Criteria 2, 4, crash safety, and linked fallback cardinality.
+- **North Star:** “One door per invariant” is not met if launch cardinality depends on caller sequencing rather than one durable authority.
+
+CONTRACT3-3 — **Material: T8 ownership and batch dependencies contradict each other.**
+
+- **Evidence:** NBF-03 requires structural scenarios for first provider observation, probe wait, fallback child IDs, and atomic transition rejection, and lists those behaviors in its acceptance. NBF-06, which runs after NBF-03, says it first implements structured availability evidence and then owns first/second observations, probes, fallback, scalar hold, and return-to-primary. NBF-02 also claims to implement first-observation scheduling before NBF-06 supplies its producers.
+- **Correction:** Move all provider-scheduling scenarios and acceptance items to NBF-06, leaving NBF-03 only door/WBC/cardinality tests; or make provider-evidence implementation a prerequisite to NBF-03. State which batch owns the initial seam versus complete T8 behavior.
+- **Impact:** Criterion 8, provider-linked criterion 2, and synchronization gates.
+- **North Star:** Prevents “aligned progress”: the plan cannot reach a truthful provider-degradation result with its current execution order.
+
+CONTRACT3-4 — **Material: unresolved-reservation reconciliation has no frozen event contract.**
+
+- **Evidence:** §4.7 requires reconciliation to append a typed reservation-release/change event when positive evidence proves no worker launched. The canonical event list in §4.11 contains only `reservation_reconciled`; its payload, legal transitions, proof requirements, and effect on fingerprint refusal are undefined. NBF-01’s tests mention replay/cache repair but not the required no-launch, ambiguous-launch, and post-launch branches.
+- **Correction:** Freeze `reservation_reconciled` schema and state transitions, including evidence of “no launch,” release versus permanent hold, idempotency, and restart behavior at every listed crash boundary.
+- **Impact:** Fingerprint blocking, crash safety, and no-blind-relaunch completion criteria.
+- **North Star:** Without this, a crash can leave the system either silently duplicating a launch or permanently wedged without a typed disposition.
+
+CONTRACT3-5 — **Material: repository-wide signal inventory is not a verifiable artifact.**
+
+- **Evidence:** §4.16 and NBF-05 require a machine-readable inventory, but no canonical path, serialization format, generator/discovery rule, freshness check, or final-review input is specified. A test could pass using a hand-maintained incomplete fixture.
+- **Correction:** Name the canonical inventory artifact, define generated-versus-reviewed ownership, mechanically compare discovered signal sites against it, and make NBF-07 review that artifact.
+- **Impact:** Criterion 3 and the “every real signal is classified” completion condition.
+- **North Star:** “Deaths speak” cannot be demonstrated repository-wide without a complete, auditable inventory.
+[launch_hermes_agent] done in 192.9s (exit=0)
+0

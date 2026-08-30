@@ -1,0 +1,67 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+## SEQ4-1 — Pre-spawn exception semantics are internally contradictory
+
+**Materiality:** High; affects criteria 4, 7, 9, and crash safety.
+
+**Evidence:** §4.8 says `released_no_launch` creates no terminal worker fingerprint and permits a new reservation. §4.11 and NBF-02 acceptance say an exception before `mark_final_launch_entered()` becomes an `ordinary_terminal_failure` after canonical outcome recording. §4.12 says ordinary terminal failures reach existing consumers, while §4.10 forbids scheduling conditions from entering failure/breaker accounting.
+
+The plan does not define whether a pre-spawn exception:
+- records a terminal fingerprint;
+- increments failure/breaker counters;
+- may be retried identically;
+- is merely reconciled as no-launch.
+
+Those outcomes are materially different.
+
+**Smallest correction:** Define a distinct typed `no_launch` outcome, or explicitly specify that pre-spawn normalization is excluded from terminal-failure projection, fingerprint reservation, and breaker accounting. Define ordering: reconciliation first, then consumer projection. Add restart and identical-redispatch tests.
+
+**Criterion impact:** Final-launch exceptions, fingerprint blocking, scheduling/failure separation.
+
+**North Star disposition:** Supports “deaths speak” and prevents an unlaunched worker from producing contradictory death/failure state.
+
+---
+
+## SEQ4-2 — T8 dependencies omit later shared-file owners
+
+**Materiality:** High; creates an executable synchronization race.
+
+**Evidence:** NBF-06 declares dependencies only on NBF-01–03 but edits `auto.py`, `handlers/shared.py`, `phase_result.py`, `phase_result_classify.py`, `recovery_policy.py`, `incident/disposition.py`, and `incident/ledger.py`. NBF-04 also edits `auto.py` and disposition integration; NBF-05 edits the disposition CLI and wrapper behavior. If execution is dependency-driven rather than strictly batch-serialized, NBF-06 can implement against incomplete signal and scheduling transport contracts.
+
+**Smallest correction:** Add NBF-04 and NBF-05 as NBF-06 dependencies, or split shared-file ownership into explicit prerequisite substeps and add a synchronization barrier before T8 implementation/tests.
+
+**Criterion impact:** Typed scheduling transport, death context, T8 breaker isolation, integration validity.
+
+**North Star disposition:** Preserves one scheduling owner and one death-recording authority instead of allowing interim duplicate paths.
+
+---
+
+## SEQ4-3 — Two-scan confirmation lacks a durable contract
+
+**Materiality:** High; directly affects kill safety and restart behavior.
+
+**Evidence:** §4.17/§5 require two separated observations with stable process-start and progress identity. NBF-05 additionally requires cross-invocation watchdog/container incarnation state. No schema, storage owner, atomic update rule, TTL, restart behavior, or exact reset semantics is frozen. A wrapper restart could therefore lose the first scan or accidentally reuse confirmation state.
+
+**Smallest correction:** Freeze a confirmation record keyed by victim PID, process-start identity, relevant progress identity, and watchdog/container incarnation. Specify persistence, atomic replacement, expiry, and reset rules. Add restart, PID reuse, progress advance, and incarnation-change tests.
+
+**Criterion impact:** Signal closure, crash/restart safety, record-before-signal.
+
+**North Star disposition:** Enforces the explicit ban on single-scan supervision verdicts.
+
+---
+
+## SEQ4-4 — Final negative preflight verification is too narrow
+
+**Materiality:** Medium-high; criterion 1 can pass while a forbidden bypass remains.
+
+**Evidence:** §11 scans only `refresh_runtime_launch_seed_for_worker_dispatch` and `require_configured_runtime_launch`. The prohibited patterns and §4.2 also include `worker_launch_preflight`, chain-local refusal logic, standalone memory/source checks, and direct chain launch construction. The structural spy covers exercised paths but does not mechanically prove absence across all physical doors and chain origins.
+
+**Smallest correction:** Add a narrow AST/static checker covering every forbidden authority symbol and launch construction on the three doors plus chain-origin callers; run it in NBF-03 and NBF-07.
+
+**Criterion impact:** Unique admission authority and chain-bypass prevention.
+
+**North Star disposition:** Enforces “one door per invariant” by proving deletion, not merely successful routing.
+[launch_hermes_agent] done in 117.7s (exit=0)
+0

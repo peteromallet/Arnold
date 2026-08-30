@@ -1,0 +1,30 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+SIMP-1 — **material: yes**  
+**Sections:** §3.1, §3.4, NBF-02, NBF-06.  
+**Evidence:** cooldown handling is described in three layers: the admission gate emits/sleeps/reruns; `RecoveryPolicy` handles scheduling before accounting; NBF-06 removes `auto.py`’s post-failure reset. This risks a second scheduling loop alongside the gate.  
+**Smallest safe change:** make one shared `dispatch_with_admission` seam own condition handling: call the gate, emit `retry_wait`, sleep through injected clock/sleeper, and retry. The gate only validates and returns either a receipt or typed condition; `RecoveryPolicy` only classifies and bypasses breaker accounting. Delete the remaining `auto.py` repair path.  
+**Criterion impact:** preserves criterion 7 and simplifies its ownership.  
+**North Star:** directly enforces “one door per invariant”; scheduling remains distinct from failure.
+
+SIMP-2 — **material: yes**  
+**Sections:** §3.2, §3.5, NBF-01, NBF-02, NBF-06.  
+**Evidence:** fingerprint builders, changed-precondition records, fallback metadata, route state, and provider flip/return evidence are described as separate mechanisms. The plan also says route metadata is only a cache while requiring durable ledger state.  
+**Smallest safe change:** use one canonical ledger event identity for changed preconditions and route transitions. Store the provider streak/current route in existing fallback metadata; derive the admission fingerprint from that metadata plus the latest ledger event. Do not add a second provider-health or precondition state machine.  
+**Criterion impact:** preserves criteria 4, 7, and 8; same-fingerprint refusal and durable route evidence remain intact.  
+**North Star:** avoids redispatch on unchanged preconditions without duplicating control state.
+
+SIMP-3 — **material: yes**  
+**Sections:** §3.4, NBF-01, NBF-06.  
+**Evidence:** `SchedulingCondition` requires `disposition_id`, although the plan defines scheduling as explicitly not being a worker/phase failure. T8’s required payload only names `reason`, `phase`, `spec`, and `retry_after_s`. Requiring a worker-disposition identity couples provider scheduling to a death event and creates needless synthetic dispositions for scalar-pin probes or availability holds.  
+**Smallest safe change:** require a generic `cause_event_id`/evidence identity only when one exists; keep `disposition_id` optional for conditions caused by an actual worker death. Provider degradation can reference its observation/ledger event instead.  
+**Criterion impact:** preserves typed evidence and breaker exemption while matching T7/T8 semantics.  
+**North Star:** scheduling is not failure; deaths remain typed without manufacturing deaths.
+
+SIMP-4 — **material: no**  
+**Sections:** NBF-04, NBF-05, NBF-07.  
+Separating Python and shell disposition work, then running focused tests plus one post-rebase matrix, is justified. The structural spy and negative raw-preflight grep test different failure modes; neither should be removed. This is already the minimum credible proof for “deaths speak” and exactly-once admission.
+[launch_hermes_agent] done in 49.7s (exit=0)
+0

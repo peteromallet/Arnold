@@ -1,0 +1,24 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+PASS_NO_MATERIAL_SIMPLIFICATION
+
+W5 is internally stable. No remaining duplicate admission authority, ledger/store, scheduling loop, provider projection, terminal writer, signal helper, confirmation owner, or task owner materially undermines execution.
+
+The remaining apparent overlaps are explicitly subordinated:
+
+- `dispatch_with_admission` owns scheduling and linked-child creation; T8 only returns policy instructions.
+- The incident ledger remains the sole CAS, projection, confirmation, disposition, and reconciliation authority.
+- The disposition CLI delegates to the canonical helper and does not signal.
+- The authority checker is static verification, not a runtime gate.
+- `no_launch` and `unresolved_launch` are distinct from worker terminal outcomes and provider failures.
+- Route transition and child reservation remain one composite event with post-commit receipt derivation.
+- Native liveness remains route-specific and is not forced through OMP membership.
+- Nested OMP has one physical admission owner.
+- NBF-06 has the required dependency barrier and sole T8 ownership.
+- No family-wide lease, second store, second scheduler, pseudo-transaction, or speculative health probe remains.
+
+The plan can execute as written and still preserves the frozen criteria and North Star invariants. No further material investigation or simplification is required.
+[launch_hermes_agent] done in 128.7s (exit=0)
+0

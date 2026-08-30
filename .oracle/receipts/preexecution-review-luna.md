@@ -1,0 +1,26 @@
+# Invocation receipt — preexecution-review-luna
+
+- Role: fresh independent pre-execution contract reviewer
+- Review count: exactly one pass
+- Classification: normal
+- Selected model: GPT-5.6 Luna
+- Assignment rationale: user-selected normal-task model
+- Requested model: codex:gpt-5.6-luna
+- Resolved provider/model: openai-codex/gpt-5.6-luna
+- Command: `PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py --model=codex:gpt-5.6-luna --toolsets=file --query_file=.oracle/briefs/preexecution-review-luna.md --project_dir=<worktree> --metadata_file=<temp> --timeout=1800`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T20:22:11Z
+- Ended UTC: 2026-08-29T20:23:24Z
+- Exit status: 0
+- Elapsed seconds: 69.512
+- Brief SHA-256: 7a7d6188f98d604d00dc7b880fe128e551fea69dc2a50dab6b708924bdc8a474
+- Reviewed tasklist SHA-256: 8f7a36b5449ee8be5523955af29921f45e30061752d6997e8db359eaec74958a
+- Settled plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: 3f15a11ca44e9c60dc413298ec278066974c256a96f5c9b72336ae9e160566c8
+- Durable result path: .oracle/findings/preexecution-review-luna.txt
+- Verdict: PASS
+- North Star disposition: PASS
+- Secrets retained: none

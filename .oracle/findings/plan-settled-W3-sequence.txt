@@ -1,0 +1,19 @@
+[launch_hermes_agent] model=codex:gpt-5.6-luna → resolved=openai-codex/gpt-5.6-luna toolsets=['file'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] NOTE: omp gives the full toolset (Bash, Read, Edit, web, …); the file/web/terminal subset is a superset here.
+[launch_hermes_agent] cwd=/Users/peteromalley/Documents/Arnold-oracle-nbf
+Working...
+SEQ3-1 — **Blocking; physical transaction atomicity is unspecified.**
+
+- **Evidence:** Plan §4.6 requires `provider_route_flip` plus linked-child `admission_reserved` to commit atomically; §4.7 claims the boundary between appends “cannot become externally visible.” Current `IncidentLedger.append_event` validates and delegates one event to `journal.emit` (`incident/ledger.py:354-361`). The journal writes one NDJSON line per call (`incident/ledger.py:199-244`); `fcntl` serialization prevents interleaving but does not make two appends one crash-atomic commit.
+- **Smallest correction:** Freeze the on-disk transaction protocol in NBF-01: either one composite committed event, or prepare records plus a durable commit marker/transaction ID. Readers and replay must ignore incomplete transactions. Add real process-crash injection between transition and reservation writes, then reopen a fresh ledger and prove neither partial transition nor child reservation is projected.
+- **Criterion impact:** Crash safety, fingerprint CAS, and criterion 8 provider transitions.
+- **North Star disposition:** Without this, “one door per invariant” is not durable under restart and route state can speak inconsistently.
+
+SEQ3-2 — **Material; final-launch exception semantics are not sequenced.**
+
+- **Evidence:** §4.9 requires every final-launch closure to return `DispatchOutcome`; §4.10 only specifies the normal returned-outcome path. It does not define what happens when a closure raises before returning. Current `_impl.py` has nested retry/exception paths (`workers/_impl.py:7663-7777`, `7910+`) rather than a typed outcome boundary. A post-reservation exception can leave an active reservation without terminal outcome; a post-spawn exception makes launch state ambiguous.
+- **Smallest correction:** Require `dispatch_with_admission` to wrap each closure: normalize pre-launch exceptions into an ordinary terminal outcome; classify post-launch/ambiguous exceptions as unresolved and reconcile via observed process evidence before any retry. Add injected tests for raise-before-spawn, raise-after-spawn, and outcome-append failure; restart must never blindly relaunch.
+- **Criterion impact:** Logical-dispatch cardinality, restart reconciliation, typed provider outcomes, and breaker isolation.
+- **North Star disposition:** A worker death or uncertain launch must carry typed evidence before recovery; otherwise silent death remains possible.
+[launch_hermes_agent] done in 112.1s (exit=0)
+0

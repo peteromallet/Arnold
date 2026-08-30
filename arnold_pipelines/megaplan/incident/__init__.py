@@ -16,6 +16,11 @@ from arnold_pipelines.megaplan.incident.projection import (
     rebuild_projections,
 )
 from arnold_pipelines.megaplan.incident.schema import validate_incident_event
+from arnold_pipelines.megaplan.incident.schema import (
+    WorkerDisposition, ObservedProcessDeath, NonWorkerSignalDisposition,
+    ChangedPrecondition, ProviderFailureKey, SemanticDispatchFingerprint,
+    ReservationReconciled, SupervisionConfirmation,
+)
 
 __all__ = [
     "IncidentLedger",
@@ -24,4 +29,12 @@ __all__ = [
     "list_incidents",
     "rebuild_projections",
     "validate_incident_event",
+    "WorkerDisposition",
+    "ObservedProcessDeath",
+    "NonWorkerSignalDisposition",
+    "ChangedPrecondition",
+    "ProviderFailureKey",
+    "SemanticDispatchFingerprint",
+    "ReservationReconciled",
+    "SupervisionConfirmation",
 ]

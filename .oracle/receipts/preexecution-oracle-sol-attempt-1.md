@@ -1,0 +1,21 @@
+# Invocation receipt — preexecution-oracle-sol-attempt-1
+
+- Role: pre-execution Oracle freeze decision
+- Actual provider/model: OpenAI / gpt-5.6-sol
+- Reasoning effort: high
+- Sandbox: read-only
+- Session mode: ephemeral
+- Session id: 01a04f31-eb1d-7690-8d89-82f6d8173e65
+- Started UTC: 2026-08-29T20:24:25Z
+- Ended UTC: 2026-08-29T20:26:08Z
+- Exit status: 0
+- Brief SHA-256: 84a54603aa3ad4a21fc981cd5b83f101f73d4e2c1cac8c9ce8eb423617b5b4be
+- Reviewed tasklist SHA-256: 8f7a36b5449ee8be5523955af29921f45e30061752d6997e8db359eaec74958a
+- Post-finding revised tasklist SHA-256: 4083a2393f7c687f4f3e48e407abecac51b858ee9aac84b9e7c8bd899125a015
+- Settled plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: 3f0f48052d8e2d61ee3de0fa4a1cc8eefbaa6f7f4403bbe9ab0d75d7565368fc
+- Durable result path: .oracle/findings/preexecution-oracle-sol-attempt-1.txt
+- Verdict: ISSUES; three tasklist-only contradictions accepted and revised.
+- North Star disposition: PASS in substance; freeze denied pending fresh review.
+- Secrets retained: none

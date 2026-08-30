@@ -188,7 +188,39 @@ def classify_external_error_chain(exc: Exception) -> dict[str, Any] | None:
     return None
 
 
+def classify_dispatch_outcome(value: Any) -> str:
+    """Return the lossless routing class for a typed dispatch outcome.
+
+    This deliberately does not turn worker dispositions into ordinary
+    failures; consumers can use the result before invoking breaker policy.
+    """
+    kind = getattr(value, "kind", None)
+    if isinstance(value, dict):
+        kind = value.get("kind")
+    if kind in {"success", "no_launch", "ordinary_terminal_failure", "provider_exhausted", "worker_disposition", "unresolved_launch"}:
+        return str(kind)
+    raise ValueError(f"unknown dispatch outcome kind: {kind!r}")
+
+
+def is_scheduling_condition(value: Any) -> bool:
+    kind = getattr(value, "exit_kind", None)
+    if isinstance(value, dict):
+        kind = value.get("exit_kind")
+    return kind == "scheduling_condition"
+
+
+def terminal_outcome_kind(value: Any) -> str:
+    """Map a dispatch result to a canonical worker-terminal kind."""
+    kind = classify_dispatch_outcome(value)
+    if kind in {"no_launch", "unresolved_launch"}:
+        raise ValueError(f"{kind} has no worker terminal outcome")
+    return kind
+
+
 __all__ = [
     "classify_external_error_payload",
     "classify_external_error_chain",
+    "classify_dispatch_outcome",
+    "is_scheduling_condition",
+    "terminal_outcome_kind",
 ]

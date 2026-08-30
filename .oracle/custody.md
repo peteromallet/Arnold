@@ -1,7 +1,7 @@
 # Custody baseline — megado-nbf-guard-0826
 
 - Worktree: /Users/peteromalley/Documents/Arnold-oracle-nbf (branch megado-nbf-guard-0826)
-- Base SHA: f8725af516da8d4249eb0d63563c37776d80daf8 (== origin/main at 2026-08-27 ~12:10Z)
+- Historical base SHA: f8725af516da8d4249eb0d63563c37776d80daf8 (== origin/main at the original 2026-08-27 ~12:10Z custody capture; historical only, not the live source base)
 - Source ref: origin/main; remote https://github.com/peteromallet/Arnold.git
 - Base status: clean (no untracked carried)
 - Other worktrees protected, must survive:
@@ -23,6 +23,7 @@
 - Refreshed source ref: `origin/main` at
   `798c50619204010ed3f4297fbb57988fe9381924` after
   `git fetch origin main --prune`.
+- Current immutable source base for this resumed run: `origin/main@798c50619204010ed3f4297fbb57988fe9381924`.
 - Merge base before rebase:
   `af370f5ec62d467458e9c8d702b684e1b56ec136`.
 - Five branch-only commits must survive the rebase: `2a5f21a8e0`,

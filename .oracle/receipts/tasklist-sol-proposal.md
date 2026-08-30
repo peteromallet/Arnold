@@ -1,0 +1,23 @@
+# Invocation receipt — tasklist-sol-proposal
+
+- Role: Tasklist author
+- Classification: planning judgment (Sol-fixed role)
+- Actual provider/model: OpenAI / gpt-5.6-sol
+- Reasoning effort: high
+- Sandbox: read-only
+- Session mode: ephemeral
+- Session id: 01a04f2b-3cc4-7670-ae38-126661f31206
+- Command: `timeout 1800 codex exec --sandbox read-only --ephemeral -C <worktree> -c model=gpt-5.6-sol -c model_reasoning_effort=high -o /tmp/megado-nbf-tasklist-proposed.md <embedded-tasklist-brief> </dev/null`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T20:17:05Z
+- Ended UTC: 2026-08-29T20:20:48Z
+- Exit status: 0
+- Brief SHA-256: cfd3442a6f181601ab216a38b2587128bc0958680a4d507cb375a4e5a9a980cf
+- Settled plan SHA-256: cf92fa6664c8a45f60c930fdcf7cb4d657bd0906df692252d164468ab60c7042
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Raw proposed result SHA-256: abdeafb9eb5e3125483bce924b0ab17a94f67e389b09bfa3191bfc7b73983d8b
+- Durable proposal path: .oracle/tasklist.md
+- Status: PROPOSED; not frozen until independent pre-execution review passes.
+- Secrets retained: none

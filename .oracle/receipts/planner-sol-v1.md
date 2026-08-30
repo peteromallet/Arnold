@@ -1,0 +1,25 @@
+# Invocation receipt — planner-sol-v1
+
+- Role: Planner
+- Classification: planning judgment (Sol-fixed role; not an execution task)
+- Actual provider/model: OpenAI / gpt-5.6-sol
+- Reasoning effort: high
+- Sandbox: read-only
+- Session mode: ephemeral
+- Session id: 01a04ef1-4f19-7fd1-ac47-f29d35314ec7
+- Command: `timeout 1800 codex exec --sandbox read-only --ephemeral -C <worktree> -c model=gpt-5.6-sol -c model_reasoning_effort=high -o /tmp/megado-nbf-sol-plan-v1.md <embedded-brief> </dev/null`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T19:13:51Z
+- Ended UTC: 2026-08-29T19:25:45Z
+- Exit status: 0
+- Prompt path: .oracle/briefs/planner-sol.md
+- Prompt SHA-256: 6d070eae4e5a09f7575ffffaef91fc95c3cd1a32095baa3219f050d37e7fe8a0
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Frozen agent-goal SHA-256: d8344a0789eed2b6f638b051b015f9630ea2434e097ae6a02a7f6c8a0ac0a5b8
+- Result SHA-256: 770c61d4c63e1af0af1c92630fbce3ccdf956d66250c8134cb4db00c5b3dcb69
+- Durable result path: .oracle/plan.md
+- Result disposition: planner returned ALREADY_SETTLED; proceed to a full immutable-plan Luna streamlining wave.
+- Liveness caveat: `omp models --json` attempted a SQLite schema migration and failed under the read-only sandbox; the plan correctly treats catalog-read failure as a typed-refusal case rather than live acceptance evidence.
+- Secrets retained: none

@@ -1,0 +1,24 @@
+# Invocation receipt — plan-settled-W1-sequence
+
+- Role: independent settled-plan sequence critic
+- Classification: normal
+- Selected model: GPT-5.6 Luna
+- Assignment rationale: user-selected normal-task model
+- Requested model: codex:gpt-5.6-luna
+- Resolved provider/model: openai-codex/gpt-5.6-luna
+- Toolset declaration: file (launcher exposes its documented superset)
+- Command: `PYENV_VERSION=3.11.11 python ~/.claude/skills/subagent-launcher/launch_hermes_agent.py --model=codex:gpt-5.6-luna --toolsets=file --query_file=.oracle/briefs/plan-settled-W1-sequence.md --project_dir=<worktree> --metadata_file=<temp> --timeout=1800`
+- CWD: /Users/peteromalley/Documents/Arnold-oracle-nbf
+- Immutable source/base SHA: 798c50619204010ed3f4297fbb57988fe9381924
+- Invocation HEAD: 922241d0bdb3e993c3b554cc69f19948adef7bc3
+- Started UTC: 2026-08-29T19:27:16Z
+- Ended UTC: 2026-08-29T19:28:23Z
+- Exit status: 0
+- Elapsed seconds: 66.944
+- Brief SHA-256: 0ab3b22abd57be6bf4e364ce5f90299398a5e77373042bc59eecaf9e67d86bdc
+- Immutable plan SHA-256: 770c61d4c63e1af0af1c92630fbce3ccdf956d66250c8134cb4db00c5b3dcb69
+- Complete North Star SHA-256: d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e
+- Result SHA-256: b665fba7c5352f1eed65b1ec8b2f6abce4e12096baf17c8669f40bdf1c2fa36d
+- Durable result path: .oracle/findings/plan-settled-W1-sequence.txt
+- North Star disposition: reviewer explicitly evaluated alignment/anti-pattern impact for every finding.
+- Secrets retained: none
