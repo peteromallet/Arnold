@@ -7367,6 +7367,7 @@ def _production_worker_dispatch(
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
+        LaunchResult,
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
@@ -7410,27 +7411,39 @@ def _production_worker_dispatch(
     )
 
     def launch(_context: Any) -> Any:
+        def accepted(value: Any) -> Any:
+            worker = value.worker_result if hasattr(value, "worker_result") else value
+            identity = getattr(worker, "worker_identity", None)
+            if identity is None and isinstance(getattr(worker, "auth_metadata", None), dict):
+                identity = worker.auth_metadata.get("worker_identity")
+            if isinstance(identity, dict):
+                return LaunchResult(accepted=True, value=value, worker_identity=identity)
+            # Returning an untyped value deliberately fails closed in the
+            # controlled adapter; it must not fabricate the supervisor PID.
+            return value
         if wbc_dispatch is not None:
-            return wbc_dispatch.run(
+            return accepted(wbc_dispatch.run(
                 lambda _start: _run_step_with_worker_legacy(
                     step, state, plan_dir, args, root=root, resolved=am,
                     prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
                     read_only=read_only, output_path=output_path,
                     worker_options=worker_options, record_routing=True,
                 )
-            ).worker_result
-        return _run_step_with_worker_legacy(
+            ).worker_result)
+        return accepted(_run_step_with_worker_legacy(
             step, state, plan_dir, args, root=root, resolved=am,
             prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
             read_only=read_only, output_path=output_path,
             worker_options=worker_options, record_routing=True,
-        )
+        ))
 
     outcome = dispatch_with_admission(request, launch, return_worker=True)
     if isinstance(outcome, AdmissionRefusal):
         raise CliError(outcome.code, outcome.reason, extra=outcome.to_dict())
     if isinstance(outcome, SchedulingCondition):
         raise CliError("scheduling_condition", outcome.reason, extra=outcome.to_dict())
+    if isinstance(outcome, LaunchResult):
+        outcome = outcome.value
     if not isinstance(outcome, tuple) or len(outcome) != 4:
         raise CliError("internal_error", "canonical worker dispatch returned an invalid worker result")
     return outcome

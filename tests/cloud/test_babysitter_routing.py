@@ -8,10 +8,10 @@ from arnold_pipelines.megaplan.cloud.babysitter.routing import (
 )
 
 
-def test_babysitter_routing_defaults_to_legacy_deepseek() -> None:
+def test_babysitter_routing_defaults_to_omp_deepseek() -> None:
     route = resolve_babysitter_routing({})
-    assert route.mode == "legacy"
-    assert route.controller_backend == "hermes"
+    assert route.mode == "omp"
+    assert route.controller_backend == "omp"
     assert route.controller_model == "omp:deepseek/deepseek-v4-flash"
     assert route.investigator_model == route.controller_model
 
@@ -71,7 +71,7 @@ def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> Non
     assert spec.links["routing"] == route.as_dict()
 
 
-def test_legacy_managed_spec_keeps_hermes_controller(tmp_path: Path) -> None:
+def test_default_managed_spec_keeps_single_omp_controller(tmp_path: Path) -> None:
     goal = tmp_path / "goal.md"
     goal.write_text("prove movement", encoding="utf-8")
     route = resolve_babysitter_routing({})
@@ -93,7 +93,8 @@ def test_legacy_managed_spec_keeps_hermes_controller(tmp_path: Path) -> None:
     assert spec.backend == "babysitter"
     assert spec.model == route.controller_model
     assert spec.stdin_path is None
-    assert any("launch_hermes_agent.py" in arg for arg in spec.argv)
+    assert any("launch_omp_agent.py" in arg for arg in spec.argv)
+    assert all("launch_hermes_agent.py" not in arg for arg in spec.argv)
 
 
 def test_launch_receipt_contains_resolved_controller_and_investigator_models(tmp_path: Path) -> None:

@@ -7178,10 +7178,21 @@ def drive(
             repeated_failure_signature = None
             repeated_failure_occurrence = None
             repeated_failure_signature_count = 0
+            # A legacy worker's refusal is projected for the caller, but the
+            # auto driver does not own a second cooldown/retry door.  The
+            # canonical admission dispatcher is the only component allowed
+            # to sleep and retry; resume the plan through that seam.
             wait_s = float(getattr(condition, "retry_after_s", 0.0) or 0.0)
-            if wait_s > 0:
-                time.sleep(wait_s)
-            continue
+            return _outcome(
+                "paused",
+                final_state=state,
+                iterations=iteration,
+                reason=(
+                    f"phase '{next_step}' scheduled by canonical admission "
+                    f"(retry_after_s={wait_s})"
+                ),
+                last_phase=next_step,
+            )
         if result is None or getattr(result, "exit_kind", None) not in {
             ExitKind.internal_error.value,
             ExitKind.malformed_model_output.value,

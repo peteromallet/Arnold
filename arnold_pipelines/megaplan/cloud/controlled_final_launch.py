@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-import socket
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +110,11 @@ class ControlledFinalLaunch:
         # a prior worker's receipt.
         with _execution_context_environment(self.context):
             value = launch(self.context)
+        # Acceptance is a process-boundary fact.  Never manufacture the
+        # supervisor's identity after a closure returns: a worker may have
+        # exited, failed to start, or been delegated elsewhere.  Adapters must
+        # return an explicit identity captured by the launcher (or a typed
+        # LaunchResult carrying that identity) before this marker is written.
         started_at = getattr(value, "started_at", None) or datetime.now(timezone.utc).isoformat()
         finished_at = getattr(value, "finished_at", None) or datetime.now(timezone.utc).isoformat()
         worker_identity = getattr(value, "worker_identity", None)
@@ -118,8 +122,36 @@ class ControlledFinalLaunch:
             started_at = value.get("started_at") or started_at
             finished_at = value.get("finished_at") or finished_at
             worker_identity = value.get("worker_identity") or worker_identity
+            if worker_identity is None and all(key in value for key in ("host", "pid", "boot_id")):
+                worker_identity = value
+        # LaunchResult is imported lazily to avoid the worker_dispatch ↔
+        # controlled adapter import cycle.
+        from arnold_pipelines.megaplan.cloud.worker_dispatch import LaunchResult
+        if isinstance(value, LaunchResult):
+            if not value.accepted:
+                self._persist("ambiguous")
+                raise RuntimeError("launch result did not prove acceptance")
+            started_at = value.started_at or started_at
+            finished_at = value.finished_at or finished_at
+            worker_identity = value.worker_identity or worker_identity
+            if worker_identity is None and isinstance(value.value, dict) and all(
+                key in value.value for key in ("host", "pid", "boot_id")
+            ):
+                worker_identity = value.value
         if not isinstance(worker_identity, dict):
-            worker_identity = {"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "dispatch-process"}
+            self._persist("ambiguous")
+            raise RuntimeError("accepted launch requires explicit worker identity")
+        if (
+            not isinstance(worker_identity.get("host"), str)
+            or not worker_identity.get("host")
+            or not isinstance(worker_identity.get("boot_id"), str)
+            or not worker_identity.get("boot_id")
+            or isinstance(worker_identity.get("pid"), bool)
+            or not isinstance(worker_identity.get("pid"), int)
+            or worker_identity.get("pid") <= 0
+        ):
+            self._persist("ambiguous")
+            raise RuntimeError("accepted launch worker identity is malformed")
         self.accepted_started_at = started_at
         self.accepted_finished_at = finished_at
         self.accepted_worker_identity = worker_identity

@@ -32,11 +32,10 @@ def test_renderer_requires_single_flash_orchestrator_contract() -> None:
     goal = renderer.render_babysitter_goal("demo-session")
     for required in (
         "You are the BABYSITTER",
-        "codex:gpt-5.6-luna",
+        "omp:deepseek/deepseek-v4-flash",
         "codex exec",
         "codex:gpt-5.6-sol",
-        "Do not invoke Hermes, DeepSeek, or another provider",
-        "STEP 1 — DEPLOY CODEX INVESTIGATORS",
+        "STEP 1 — DEPLOY THE SWARM",
         "implement",
         "relaunch",
         "prove",
@@ -130,8 +129,8 @@ def test_renderer_cli_mentions_single_flash_contract(tmp_path: pathlib.Path) -> 
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "STEP 1 — DEPLOY CODEX INVESTIGATORS" in result.stdout
-    assert "codex:gpt-5.6-luna" in result.stdout
+    assert "STEP 1 — DEPLOY THE SWARM" in result.stdout
+    assert "omp:deepseek/deepseek-v4-flash" in result.stdout
     assert "failure_fingerprint" in result.stdout
     assert "stall_detected" in result.stdout
 

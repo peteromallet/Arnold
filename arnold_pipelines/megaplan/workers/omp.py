@@ -1190,6 +1190,7 @@ def _run_omp_with_admission(
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
+        LaunchResult,
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
@@ -1232,6 +1233,12 @@ def _run_omp_with_admission(
     token = _OMP_ADMISSION_ACTIVE.set(True)
     try:
         def launch(_context: Any) -> WorkerResult:
+            def accepted(value: WorkerResult) -> Any:
+                metadata = value.auth_metadata if isinstance(value.auth_metadata, dict) else {}
+                identity = getattr(value, "worker_identity", None) or metadata.get("worker_identity")
+                if isinstance(identity, dict):
+                    return LaunchResult(accepted=True, value=value, worker_identity=identity)
+                return value
             def final_launch(_start: Any = None) -> WorkerResult:
                 return run_omp_step(
                     step, state, plan_dir, root=root, fresh=fresh, model=selected_spec,
@@ -1240,8 +1247,8 @@ def _run_omp_with_admission(
                     prompt_kwargs=prompt_kwargs,
                 )
             if wbc_dispatch is not None:
-                return wbc_dispatch.run(final_launch).worker_result
-            return final_launch()
+                return accepted(wbc_dispatch.run(final_launch).worker_result)
+            return accepted(final_launch())
 
         result = dispatch_with_admission(request, launch, return_worker=True)
     finally:
@@ -1250,6 +1257,8 @@ def _run_omp_with_admission(
         raise CliError(result.code, result.reason, extra=result.to_dict())
     if isinstance(result, SchedulingCondition):
         raise CliError("scheduling_condition", result.reason, extra=result.to_dict())
+    if isinstance(result, LaunchResult):
+        result = result.value
     if not isinstance(result, WorkerResult):
         raise CliError("internal_error", "canonical OMP dispatch returned an invalid worker result")
     return result

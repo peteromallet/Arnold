@@ -1688,11 +1688,11 @@ def test_drive_defers_memory_cooldown_refusal_without_breaker_trip(
 
     outcome = auto.drive("demo", cwd=tmp_path, max_iterations=4, poll_sleep=0)
 
-    # Every iteration defers inside the cooldown: neither the deterministic
-    # failure counter nor the repeated-signature breaker may trip, and the
-    # plan must stay out of blocked.
-    assert outcome.status == "cap"
-    assert sleeps and all(s > 0 for s in sleeps)
+    # Legacy refusal transport is projected, then returned to the caller. The
+    # auto driver owns no second cooldown sleep/retry loop; canonical admission
+    # performs scheduling on the next invocation.
+    assert outcome.status == "paused"
+    assert sleeps == []
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["current_state"] == "critiqued"
 

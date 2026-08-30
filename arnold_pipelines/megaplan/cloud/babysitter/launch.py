@@ -548,6 +548,7 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
+        LaunchResult,
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
@@ -592,14 +593,47 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         production_intent=True,
         ledger_root=Path(ctx["run_root"]),
     )
-    result = dispatch_with_admission(
-        request, lambda _context: run_managed_command(spec), return_worker=True,
-    )
+    def launch(_context: Any) -> LaunchResult:
+        # ``run_managed_command`` keeps its historical integer API, but the
+        # admission seam needs the child process identity captured in the
+        # durable manifest before it can write ``accepted``.  Read that
+        # manifest after the command returns; never substitute this supervisor
+        # PID for a missing child PID.
+        return_code = run_managed_command(spec)
+        root = spec.run_root or Path(".megaplan/plans/resident-subagents")
+        if not root.is_absolute():
+            root = spec.project_dir / root
+        manifest_path = root / stable_managed_run_id(spec.run_kind, spec.identity_key) / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return LaunchResult(accepted=False, value=return_code)
+        pid = manifest.get("worker_pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            return LaunchResult(accepted=False, value=return_code)
+        identity = {
+            "host": str(manifest.get("worker_host") or os.uname().nodename),
+            "pid": pid,
+            "boot_id": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
+        }
+        if not identity["boot_id"]:
+            return LaunchResult(accepted=False, value=return_code)
+        return LaunchResult(
+            accepted=True,
+            value=return_code,
+            worker_identity=identity,
+            started_at=str(manifest.get("worker_started_at") or "") or None,
+            finished_at=str(manifest.get("finished_at") or "") or None,
+        )
+
+    result = dispatch_with_admission(request, launch, return_worker=True)
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
     if isinstance(result, SchedulingCondition):
         raise RuntimeError(f"babysitter admission scheduled: {result.reason}")
-    if not isinstance(result, int):
+    if isinstance(result, LaunchResult):
+        result = result.value
+    if not isinstance(result, int) or isinstance(result, bool):
         raise RuntimeError("babysitter admission returned an invalid managed result")
     return result
 

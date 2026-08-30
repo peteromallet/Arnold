@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import shutil
-import socket
 import subprocess
 import time
 from dataclasses import dataclass, field, replace
@@ -117,6 +116,9 @@ class WorkerExecutionContextRef:
         values = {name: payload[name] for name in expected}
         if any(not isinstance(value, str) or not value for value in values.values()):
             raise ValueError("worker execution context fields must be non-empty strings")
+        fingerprint = values["semantic_dispatch_fingerprint"]
+        if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+            raise ValueError("worker execution context fingerprint is not canonical")
         return cls(**values)
 
 
@@ -248,6 +250,12 @@ class LaunchResult:
     """Optional adapter result for closures that are not already outcomes."""
     accepted: bool
     value: Any = None
+    # These fields are intentionally explicit.  A completed return value does
+    # not prove that a worker was accepted; the launcher must carry the
+    # identity observed at the real process boundary into the adapter.
+    worker_identity: Mapping[str, Any] | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 def _family(provider: str, model: str, selected_spec: str) -> str:
@@ -322,7 +330,29 @@ def _default_native_liveness(agent: str, model: str) -> Mapping[str, Any]:
         identity = f"{binary}:{resolved}:{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}"
     except OSError as exc:
         raise CliError("route_liveness_unreadable", f"native backend proof is unreadable: {exc}") from exc
-    return {"kind": "native_backend", "identity": identity, "digest": _digest(identity), "backend": binary, "provider": agent, "model": model, "observed_at": _now()}
+    # Executable presence is only a locator, not proof that this route can
+    # construct the requested model.  Ask the installed backend to parse the
+    # exact model selection without starting a generation.  The command is
+    # deliberately ``--help``: it exercises the native CLI's model option and
+    # credentials/config parsing while remaining side-effect free.
+    try:
+        probe = subprocess.run(
+            [resolved, "exec", "--model", model, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CliError("route_liveness_unavailable", f"native model probe failed: {exc}") from exc
+    if probe.returncode != 0:
+        raise CliError(
+            "route_liveness_missing",
+            f"native backend rejected model {model!r}",
+            extra={"backend": binary, "stderr": (probe.stderr or "")[-1000:]},
+        )
+    proof = {"binary": identity, "model": model, "probe": "exec --model <model> --help"}
+    return {"kind": "native_backend", "identity": _digest(proof), "digest": _digest(proof), "backend": binary, "provider": agent, "model": model, "observed_at": _now(), "authoritative": True}
 
 
 def _validate_basic(request: WorkerAdmissionRequest) -> AdmissionRefusal | None:
@@ -354,6 +384,43 @@ def _validate_basic(request: WorkerAdmissionRequest) -> AdmissionRefusal | None:
     return None
 
 
+def _validate_authoritative_runtime_bindings(request: WorkerAdmissionRequest) -> AdmissionRefusal | None:
+    """Compare production identity claims with machine-owned observations.
+
+    Transport fields are useful for correlation, but a caller must not be able
+    to invent a source revision or point a dispatch at a different seed.  Test
+    and embedded callers may use a small runtime vector; strict comparison is
+    enabled whenever the vector carries real provenance or the production
+    seed/manifest selectors are present.
+    """
+    vector = request.runtime_vector if isinstance(request.runtime_vector, Mapping) else {}
+    if vector.get("source_revision"):
+        try:
+            from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+            observed = runtime_provenance()
+        except Exception as exc:
+            return _refusal(request, "source_runtime_unavailable", f"authoritative runtime provenance unavailable: {exc}")
+        if str(vector.get("source_revision")) != str(observed.get("source_revision") or ""):
+            return _refusal(request, "source_runtime_invalid", "source revision is not the executing revision")
+        if request.source_revision != observed.get("source_revision"):
+            return _refusal(request, "source_runtime_invalid", "request source revision is not authoritative")
+    seed_selector = os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+    if seed_selector:
+        path = Path(seed_selector)
+        if path.is_file():
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if request.seed_identity != actual:
+                return _refusal(request, "runtime_binding_invalid", "seed identity does not match configured launch seed")
+    manifest_selector = os.environ.get("ARNOLD_RUNTIME_MANIFEST")
+    if manifest_selector:
+        path = Path(manifest_selector)
+        if path.is_file():
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if request.manifest_identity != actual:
+                return _refusal(request, "runtime_binding_invalid", "manifest identity does not match configured runtime manifest")
+    return None
+
+
 def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest | Mapping[str, Any] | None = None, **legacy_kwargs: Any) -> Any:
     """Admit one production logical dispatch, or preserve the old seed API.
 
@@ -372,6 +439,9 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
     basic = _validate_basic(request)
     if basic:
         return basic
+    authoritative = _validate_authoritative_runtime_bindings(request)
+    if authoritative:
+        return authoritative
     try:
         parsed = parse_agent_spec(request.selected_spec)
         agent = parsed.agent
@@ -390,7 +460,14 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
             provider = agent
             model = model
             family = _family(provider, model, normalized_spec)
-            liveness = (request.route_liveness_resolver or (lambda p, m, _s: _default_native_liveness(agent, m)))(provider, model, normalized_spec)
+            # A caller hook may provide an early diagnostic, but it cannot
+            # mint native admission.  The canonical probe below always runs
+            # against the installed executable and the exact selected model.
+            if request.route_liveness_resolver is not None:
+                observed = request.route_liveness_resolver(provider, model, normalized_spec)
+                if not isinstance(observed, Mapping) or not observed.get("identity") or not observed.get("digest"):
+                    return _refusal(request, "route_liveness_invalid", "route resolver did not return positive proof")
+            liveness = _default_native_liveness(agent, model)
         if request.authorized_route_identity not in {request.selected_spec.strip(), normalized_spec}:
             return _refusal(request, "route_authorization_invalid", "authorized route does not match selected route")
         if not isinstance(liveness, Mapping) or not liveness.get("identity") or not liveness.get("digest"):
@@ -433,9 +510,16 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
 
 
 def _worker_identity(value: Any) -> Mapping[str, Any]:
-    if isinstance(value, Mapping) and all(key in value for key in ("host", "pid", "boot_id")):
-        return value
-    return {"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "dispatch-process"}
+    if not isinstance(value, Mapping) or not all(key in value for key in ("host", "pid", "boot_id")):
+        raise ValueError("accepted outcome requires launcher-provided worker identity")
+    if (
+        not isinstance(value.get("host"), str) or not value.get("host")
+        or not isinstance(value.get("boot_id"), str) or not value.get("boot_id")
+        or isinstance(value.get("pid"), bool) or not isinstance(value.get("pid"), int)
+        or value.get("pid") <= 0
+    ):
+        raise ValueError("accepted outcome worker identity is malformed")
+    return dict(value)
 
 
 def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str, finished: str) -> DispatchOutcome:
@@ -453,13 +537,15 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
         # keeps success/provider/disposition payloads lossless while rejecting
         # a closure that smuggles incompatible fields under a different kind.
         return DispatchOutcome.from_dict(normalized.to_dict())
+    launch_metadata: LaunchResult | None = None
     if isinstance(value, LaunchResult):
         if not value.accepted:
             raise RuntimeError("launch operation did not positively establish no-acceptance")
+        launch_metadata = value
         value = value.value
     if isinstance(value, Mapping) and "kind" in value:
         data = dict(value)
-        data.update({"schema_version": 1, "plan_id": receipt.plan_id, "phase": receipt.phase, "dispatch_family_id": receipt.dispatch_family_id, "logical_dispatch_id": receipt.logical_dispatch_id, "admission_receipt_id": receipt.admission_receipt_id, "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint, "selected_spec": receipt.normalized_spec, "launch_state": "accepted", "started_at": data.get("started_at") or started, "finished_at": data.get("finished_at") or finished, "worker_identity": _worker_identity(data.get("worker_identity"))})
+        data.update({"schema_version": 1, "plan_id": receipt.plan_id, "phase": receipt.phase, "dispatch_family_id": receipt.dispatch_family_id, "logical_dispatch_id": receipt.logical_dispatch_id, "admission_receipt_id": receipt.admission_receipt_id, "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint, "selected_spec": receipt.normalized_spec, "launch_state": "accepted", "started_at": data.get("started_at") or (launch_metadata.started_at if launch_metadata else None) or started, "finished_at": data.get("finished_at") or (launch_metadata.finished_at if launch_metadata else None) or finished, "worker_identity": _worker_identity(data.get("worker_identity") or (launch_metadata.worker_identity if launch_metadata else None))})
         return DispatchOutcome.from_dict(data)
     # The native doors historically return the compatibility tuple
     # ``(WorkerResult, agent, mode, refreshed)``.  Preserve the worker payload
@@ -468,8 +554,16 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
     if isinstance(value, tuple) and len(value) == 4:
         worker, agent, mode, refreshed = value
         payload = getattr(worker, "payload", worker)
-        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(worker, "worker_identity", None)), started_at=started, finished_at=finished, success_payload={"worker_payload": payload, "agent": agent, "mode": mode, "refreshed": refreshed})
-    return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(value, "worker_identity", None)), started_at=started, finished_at=finished, success_payload=getattr(value, "payload", value))
+        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(worker, "worker_identity", None) or (launch_metadata.worker_identity if launch_metadata else None)), started_at=(launch_metadata.started_at if launch_metadata else None) or started, finished_at=(launch_metadata.finished_at if launch_metadata else None) or finished, success_payload={"worker_payload": payload, "agent": agent, "mode": mode, "refreshed": refreshed})
+    if isinstance(value, Mapping) and all(key in value for key in ("host", "pid", "boot_id")):
+        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(value), started_at=started, finished_at=finished, success_payload=dict(value))
+    # Integers (managed-command return codes), None, booleans, and arbitrary
+    # objects are not typed worker outcomes.  Requiring a LaunchResult or a
+    # canonical DispatchOutcome prevents a successful return code from being
+    # serialized as an accepted worker launch.
+    if not launch_metadata:
+        raise ValueError("final launch must return a typed outcome with worker identity")
+    return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(value, "worker_identity", None) or launch_metadata.worker_identity), started_at=launch_metadata.started_at or started, finished_at=launch_metadata.finished_at or finished, success_payload=getattr(value, "payload", value))
 
 
 def build_authorized_linked_child_request(
@@ -480,6 +574,7 @@ def build_authorized_linked_child_request(
     authorizing_event_id: str,
     physical_door_id: str | None = None,
     dispatch_family_id: str | None = None,
+    ledger: IncidentLedger | None = None,
     **changes: Any,
 ) -> WorkerAdmissionRequest:
     if isinstance(parent, Mapping) and parent.get("kind") in {"no_launch", "unresolved_launch"}:
@@ -505,6 +600,44 @@ def build_authorized_linked_child_request(
         raise ValueError("linked child must use a fresh logical dispatch id")
     if not authorizing_event_id:
         raise ValueError("linked child requires durable authorizing event")
+    if ledger is not None:
+        # The marker is only a transport hint.  When the authoritative ledger
+        # is available, reread both sides of the authorization and bind the
+        # child to the exact parent context before returning a request.
+        records = [record.get("payload", {}) for record in ledger.read_nbf_events()]
+        terminal = next(
+            (record for record in records
+             if record.get("event_type") == "worker_terminal_outcome"
+             and record.get("terminal_outcome_id") == parent_terminal),
+            None,
+        )
+        if terminal is None or terminal.get("outcome_kind") not in {
+            "success", "ordinary_terminal_failure", "provider_exhausted", "worker_disposition",
+        }:
+            raise ValueError("linked child parent marker is not a canonical terminal")
+        for name, expected in (
+            ("plan_id", parent.plan_id),
+            ("phase", parent.phase),
+            ("logical_dispatch_id", parent.logical_dispatch_id),
+            ("physical_door_id", parent.physical_door_id),
+        ):
+            if terminal.get(name) != expected:
+                raise ValueError(f"linked child parent context mismatch: {name}")
+        authorizer = next(
+            (record for record in records if record.get("event_id") == authorizing_event_id),
+            None,
+        )
+        if authorizer is None or authorizer.get("event_type") not in {
+            "changed_precondition", "provider_recovery_verified", "authorization_granted",
+        }:
+            raise ValueError("linked child authorizer is not a persisted canonical event")
+        bound_parent = (
+            authorizer.get("parent_terminal_event_id")
+            or authorizer.get("terminal_outcome_event_id")
+            or authorizer.get("parent_event_id")
+        )
+        if bound_parent and bound_parent != parent_terminal:
+            raise ValueError("linked child authorizer is bound to a different parent")
     return replace(
         parent,
         logical_dispatch_id=logical_dispatch_id,

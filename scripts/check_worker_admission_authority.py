@@ -38,6 +38,18 @@ def _call_names(tree: ast.AST) -> Iterable[tuple[str, int]]:
             elif isinstance(node.func, ast.Attribute):
                 yield node.func.attr, node.lineno
 
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
+    """Map call line numbers to the innermost function that owns them."""
+    owners: dict[int, str] = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call):
+                owners[node.lineno] = function.name
+    return owners
+
 def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
     for path in paths:
@@ -61,6 +73,7 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             and ((isinstance(node.func, ast.Name) and node.func.id == "dispatch_with_admission")
                  or (isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch_with_admission"))
         ]
+        owners = _enclosing_functions(tree)
         # The shared dispatcher owns admission.  A door may invoke it once,
         # but may not supply a replacement gate capable of minting a receipt or
         # bypassing source/runtime/liveness checks.  Resolver/readers belong on
@@ -79,6 +92,27 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                 "code": "duplicate_admission_door",
                 "detail": f"found {len(dispatch_calls)} dispatch_with_admission calls; each physical door must have one",
             })
+        for node in dispatch_calls:
+            owner = owners.get(node.lineno, "")
+            expected = {
+                "_impl.py": "_production_worker_dispatch",
+                "omp.py": "_run_omp_with_admission",
+                "launch.py": "_admit_managed_launch",
+            }.get(path.name)
+            if expected and owner != expected:
+                diagnostics.append({
+                    "path": str(path),
+                    "line": node.lineno,
+                    "code": "dispatch_outside_authorized_door",
+                    "detail": f"canonical dispatch must be owned by {expected}, got {owner or 'module'}",
+                })
+            if not any(keyword.arg == "return_worker" and getattr(keyword.value, "value", None) is True for keyword in node.keywords):
+                diagnostics.append({
+                    "path": str(path),
+                    "line": node.lineno,
+                    "code": "dispatch_without_typed_worker_return",
+                    "detail": "production doors must retain the typed worker result for terminal normalization",
+                })
         if path.name == "_impl.py":
             if "dispatch_with_admission" not in source:
                 diagnostics.append({"path": str(path), "code": "missing_canonical_dispatch"})
