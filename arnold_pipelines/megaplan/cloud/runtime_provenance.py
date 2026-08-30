@@ -225,6 +225,11 @@ def runtime_provenance(
         "source_revision": source_revision,
         "runtime_revision": source_revision,
         "imports": imports,
+        # These are captured from the executing interpreter at the same
+        # instant as the import/source observations.  Production callers must
+        # bind the complete vector, not just a caller-selected revision.
+        "interpreter": str(Path(sys.executable).resolve()),
+        "sys_path": [str(Path(item).resolve(strict=False)) if item else "" for item in sys.path],
     }
 
 

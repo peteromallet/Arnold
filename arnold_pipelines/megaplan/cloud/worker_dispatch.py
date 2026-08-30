@@ -30,6 +30,22 @@ SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
 
+# These identifiers are assigned by the production call sites.  They are not
+# user-configurable metadata: a request entering one of these doors is a
+# production request even if an untrusted transport payload says otherwise.
+_PRODUCTION_DOOR_PREFIXES = ("workers.", "cloud.babysitter.")
+
+
+def _machine_production_intent(request: Any) -> bool:
+    door = getattr(request, "physical_door_id", "")
+    # Canonical doors force production on.  Explicit production is retained
+    # for isolated/test adapters whose physical door is not a production
+    # entrypoint; it can opt into the same strict checks but cannot downgrade a
+    # canonical door by setting the transport flag false.
+    return bool(getattr(request, "production_intent", False)) or (
+        isinstance(door, str) and door.startswith(_PRODUCTION_DOOR_PREFIXES)
+    )
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -423,7 +439,8 @@ def _validate_authoritative_runtime_bindings(request: WorkerAdmissionRequest) ->
     seed/manifest selectors are present.
     """
     vector = request.runtime_vector if isinstance(request.runtime_vector, Mapping) else {}
-    if request.production_intent:
+    production_intent = _machine_production_intent(request)
+    if production_intent:
         if not isinstance(request.runtime_vector, Mapping):
             return _refusal(request, "runtime_binding_missing", "production runtime vector must be a mapping")
         try:
@@ -438,8 +455,17 @@ def _validate_authoritative_runtime_bindings(request: WorkerAdmissionRequest) ->
         interpreter = str(Path(os.sys.executable).resolve())
         if request.dependency_interpreter_identity != interpreter:
             return _refusal(request, "runtime_binding_invalid", "dependency interpreter is not the executing interpreter")
+        # Bind every material runtime locator that the provenance producer
+        # records.  Missing claims are not equivalent to an empty claim: a
+        # transport caller cannot omit import-root/sys.path/interpreter data
+        # and thereby evade the machine-owned comparison.
+        for key in ("import_root", "imports", "interpreter", "sys_path"):
+            if key not in vector:
+                return _refusal(request, "runtime_binding_missing", f"production runtime vector lacks {key}")
+            if vector.get(key) != observed.get(key):
+                return _refusal(request, "runtime_binding_invalid", f"runtime {key} is not the executing observation")
     seed_selector = os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
-    if request.production_intent and not seed_selector:
+    if production_intent and not seed_selector:
         return _refusal(request, "runtime_binding_missing", "production launch seed selector is missing")
     if seed_selector:
         path = Path(seed_selector)
@@ -449,7 +475,7 @@ def _validate_authoritative_runtime_bindings(request: WorkerAdmissionRequest) ->
         if request.seed_identity != actual:
             return _refusal(request, "runtime_binding_invalid", "seed identity does not match configured launch seed")
     manifest_selector = os.environ.get("ARNOLD_RUNTIME_MANIFEST")
-    if request.production_intent and not manifest_selector:
+    if production_intent and not manifest_selector:
         return _refusal(request, "runtime_binding_missing", "production runtime manifest selector is missing")
     if manifest_selector:
         path = Path(manifest_selector)
@@ -458,7 +484,7 @@ def _validate_authoritative_runtime_bindings(request: WorkerAdmissionRequest) ->
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if request.manifest_identity != actual:
             return _refusal(request, "runtime_binding_invalid", "manifest identity does not match configured runtime manifest")
-    if request.production_intent and (not request.seed_identity or not request.manifest_identity):
+    if production_intent and (not request.seed_identity or not request.manifest_identity):
         return _refusal(request, "runtime_binding_missing", "production seed and manifest identities are required")
     return None
 
@@ -496,7 +522,13 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
             normalized_model = validate_omp_catalog_model(provider, model_id)
             normalized_spec = f"omp:{normalized_model}"
             family = _family(provider, model_id, normalized_spec)
-            liveness = (request.route_liveness_resolver or (lambda p, m, _s: resolve_omp_live_membership(p, m, timeout_s=min(10.0, float(request.timeout_budget_s)))))(provider, model_id, normalized_spec)
+            # Production admission is authoritative only when it consults the
+            # machine-owned OMP registry.  A positive caller resolver is a
+            # diagnostic seam for embedded tests, never an admission proof.
+            if _machine_production_intent(request):
+                liveness = resolve_omp_live_membership(provider, model_id, timeout_s=min(10.0, float(request.timeout_budget_s)))
+            else:
+                liveness = (request.route_liveness_resolver or (lambda p, m, _s: resolve_omp_live_membership(p, m, timeout_s=min(10.0, float(request.timeout_budget_s)))))(provider, model_id, normalized_spec)
         else:
             normalized_spec = request.selected_spec.strip()
             provider = agent
@@ -536,7 +568,7 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
             from arnold_pipelines.megaplan.runtime.memory_headroom import classify_memory_headroom, read_cgroup_memory_snapshot
             memory_reader = lambda spec: classify_memory_headroom(spec, read_cgroup_memory_snapshot())
         memory = memory_reader(normalized_spec)
-        if request.production_intent and (not isinstance(memory, Mapping) or memory.get("ok") is not True):
+        if _machine_production_intent(request) and (not isinstance(memory, Mapping) or memory.get("ok") is not True):
             return _refusal(request, "insufficient_memory_headroom", "positive memory headroom proof is required", memory=dict(memory or {}))
         fingerprint = semantic_dispatch_fingerprint(phase=request.phase, selected_spec=normalized_spec, model_family=family, prompt_or_phase_input_identity=request.prompt_or_phase_input_identity, source_revision=request.source_revision, runtime_vector=request.runtime_vector, manifest_identity=request.manifest_identity, seed_identity=request.seed_identity, dependency_interpreter_identity=request.dependency_interpreter_identity, timeout_policy_identity=_digest(request.timeout_budget_s), configured_fallback_chain_identity=request.configured_fallback_chain_identity, authorized_route_identity=request.authorized_route_identity)
         ledger = request.ledger or IncidentLedger(request.ledger_root)
@@ -546,7 +578,7 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
         reservation_event_id = str(payload.get("event_id") or payload.get("reservation_event_id") or "")
         receipt_id = str(payload.get("admission_receipt_id") or ledger.derive_receipt(payload))
         context = WorkerExecutionContextRef(str(request.ledger_root or Path.cwd()), request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, receipt_id, fingerprint, normalized_spec, request.physical_door_id)
-        return WorkerAdmissionReceipt(receipt_id, request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, request.parent_logical_dispatch_id, request.authorizing_event_id, request.physical_door_id, request.admission_attempt, normalized_spec, provider, model, family, str(liveness.get("kind")), str(liveness.get("identity")), str(liveness.get("digest")), float(request.timeout_budget_s), request.source_revision, request.runtime_vector, request.manifest_identity, request.seed_identity, request.dependency_interpreter_identity, fingerprint, request.projection_key, int(payload.get("expected_projection_version", 0)), reservation_event_id, request.changed_precondition_event_id, payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None, _now(), context, request.production_intent)
+        return WorkerAdmissionReceipt(receipt_id, request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, request.parent_logical_dispatch_id, request.authorizing_event_id, request.physical_door_id, request.admission_attempt, normalized_spec, provider, model, family, str(liveness.get("kind")), str(liveness.get("identity")), str(liveness.get("digest")), float(request.timeout_budget_s), request.source_revision, request.runtime_vector, request.manifest_identity, request.seed_identity, request.dependency_interpreter_identity, fingerprint, request.projection_key, int(payload.get("expected_projection_version", 0)), reservation_event_id, request.changed_precondition_event_id, payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None, _now(), context, _machine_production_intent(request))
     except (CliError, ValueError, OSError) as exc:
         return _refusal(request, getattr(exc, "code", "admission_rejected"), str(exc))
 
@@ -568,9 +600,28 @@ def _worker_identity(value: Any, *, require_verified: bool = False) -> Mapping[s
             raise ValueError("production worker identity lacks process start identity")
         if value.get("host") != os.uname().nodename:
             raise ValueError("production worker identity host does not match this machine")
-        # A live PID must still be the process that was attested.  Completed
-        # managed workers are allowed to disappear; their durable manifest's
-        # process_start_identity remains the authoritative terminal proof.
+        # Boot identity is kernel-owned.  A caller-provided opaque string is
+        # never sufficient to attest a worker (and is especially dangerous
+        # across PID reuse or host restart).
+        try:
+            boot_path = Path("/proc/sys/kernel/random/boot_id")
+            if boot_path.is_file():
+                observed_boot = boot_path.read_text(encoding="utf-8").strip()
+            else:
+                observed_boot_result = subprocess.run(
+                    ["sysctl", "-n", "kern.boottime"], check=False,
+                    capture_output=True, text=True, timeout=2,
+                )
+                observed_boot = observed_boot_result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            observed_boot = ""
+        if not observed_boot or value.get("boot_id") != observed_boot:
+            raise ValueError("production worker boot identity cannot be machine-verified")
+        # A live PID must still be the process that was attested.  There is no
+        # terminal exception for a dead PID: once the process cannot be
+        # inspected, admission cannot claim that it crossed the launch
+        # boundary.  Durable managed manifests are evidence for recovery, not
+        # a substitute for this production acceptance proof.
         try:
             os.kill(value["pid"], 0)
             observed_start = ""
@@ -589,10 +640,12 @@ def _worker_identity(value: Any, *, require_verified: bool = False) -> Mapping[s
                     observed_start = observed.stdout.strip() if observed.returncode == 0 else ""
                 except (OSError, subprocess.SubprocessError):
                     observed_start = ""
-            if observed_start and observed_start != value["process_start_identity"]:
+            if not observed_start:
+                raise ValueError("production worker process start cannot be machine-inspected")
+            if observed_start != value["process_start_identity"]:
                 raise ValueError("production worker process start identity mismatch")
         except ProcessLookupError:
-            pass
+            raise ValueError("production worker PID is not live")
         except PermissionError:
             raise ValueError("production worker identity cannot be inspected")
     return dict(value)
@@ -678,8 +731,11 @@ def build_authorized_linked_child_request(
         raise ValueError("linked child must use a fresh logical dispatch id")
     if not authorizing_event_id:
         raise ValueError("linked child requires durable authorizing event")
-    if parent.production_intent and ledger is None:
+    production_parent = _machine_production_intent(parent)
+    if production_parent and ledger is None:
         raise ValueError("production linked child requires the authoritative ledger")
+    if production_parent and not isinstance(ledger, IncidentLedger):
+        raise ValueError("production linked child requires a canonical IncidentLedger")
     if ledger is not None:
         # The marker is only a transport hint.  When the authoritative ledger
         # is available, reread both sides of the authorization and bind the
@@ -732,6 +788,9 @@ def build_authorized_linked_child_request(
                 raise ValueError(f"linked child authorizer context mismatch: {name}")
         if terminal.get("admission_receipt_id") is None or terminal.get("semantic_dispatch_fingerprint") is None:
             raise ValueError("linked child parent lacks canonical receipt/fingerprint context")
+    requested_production = changes.pop("production_intent", None)
+    if production_parent and requested_production is False:
+        raise ValueError("linked child cannot downgrade production intent")
     return replace(
         parent,
         logical_dispatch_id=logical_dispatch_id,
@@ -743,6 +802,7 @@ def build_authorized_linked_child_request(
         configured_spec=changes.pop("configured_spec", selected_spec),
         changed_precondition_event_id=changes.pop("changed_precondition_event_id", None),
         admission_attempt=1,
+        production_intent=production_parent,
         **changes,
     )
 
@@ -822,6 +882,60 @@ def reconcile_no_launch(
     )
 
 
+def reconcile_ambiguous_launch(
+    receipt: WorkerAdmissionReceipt,
+    *,
+    evidence_event_ids: tuple[str, ...] | list[str],
+    ledger: IncidentLedger,
+    evidence_kind: str = "controlled_adapter",
+    observed_at: str | None = None,
+) -> DispatchOutcome:
+    """Durably hold a post-entry launch whose terminal result is unknowable."""
+    ids = tuple(str(item) for item in evidence_event_ids if str(item))
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("ambiguous reconciliation requires unique evidence IDs")
+    history = ledger.read_nbf_events()
+    cited = {
+        item.get("event_id")
+        for record in history
+        for item in [record.get("payload", {})]
+        if item.get("event_id") in ids
+        and item.get("event_type") == "controlled_adapter_state"
+        and item.get("reservation_event_id") == receipt.reservation_event_id
+        and item.get("admission_receipt_id") == receipt.admission_receipt_id
+        and item.get("launch_state_identity") in {"entered", "ambiguous"}
+    }
+    if set(ids) != cited:
+        raise ValueError("ambiguous reconciliation evidence is not bound to entered launch")
+    when = observed_at or _now()
+    reconciliation_id = _digest((receipt.reservation_event_id, "permanent_hold_ambiguous", ids))
+    reconciliation = ReservationReconciled(
+        reconciliation_id=reconciliation_id,
+        plan_id=receipt.plan_id,
+        phase=receipt.phase,
+        projection_key=receipt.projection_key,
+        logical_dispatch_id=receipt.logical_dispatch_id,
+        admission_receipt_id=receipt.admission_receipt_id,
+        reservation_event_id=receipt.reservation_event_id,
+        semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+        resolution="permanent_hold_ambiguous",
+        evidence_kind=evidence_kind,
+        evidence_event_ids=ids,
+        launch_state_identity="ambiguous",
+        observed_at=when,
+        recorded_at=when,
+        actor="dispatch-with-admission",
+    )
+    event = ledger.reconcile_reservation(reconciliation)
+    return DispatchOutcome(
+        kind="unresolved_launch", launch_state="ambiguous", plan_id=receipt.plan_id,
+        phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id,
+        logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=None,
+        semantic_dispatch_fingerprint=None, selected_spec=receipt.normalized_spec,
+        reconciliation_event_id=str((event.get("payload", event)).get("reconciliation_id") or reconciliation_id),
+    )
+
+
 def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any], launch: Callable[[WorkerExecutionContextRef], Any], *, gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any] | None = None, ledger: IncidentLedger | None = None, clock: Callable[[], float] = time.monotonic, sleeper: Callable[[float], None] = time.sleep, deadline_s: float | None = None, return_worker: bool = False) -> Any:
     """Run one logical dispatch through admission and one controlled closure."""
     if not isinstance(request, WorkerAdmissionRequest):
@@ -860,20 +974,18 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
             return decision
         if not isinstance(decision, WorkerAdmissionReceipt):
             raise TypeError("admission gate returned an unsupported decision")
-        from arnold_pipelines.megaplan.cloud.controlled_final_launch import ControlledFinalLaunch
+        from arnold_pipelines.megaplan.cloud.controlled_final_launch import ControlledFinalLaunch, PreLaunchNoLaunch
         controlled = ControlledFinalLaunch(decision, ledger=ledger or current.ledger)
         active_ledger = ledger or current.ledger or IncidentLedger(current.ledger_root)
         # A scheduler may establish positive no-launch evidence before the
         # final closure is entered.  Resolve that reservation through the same
         # canonical reconciliation door; callers cannot simply return a marker
         # that bypasses the ledger.
-        pre_entry_evidence = getattr(launch, "no_launch_evidence", None)
-        if pre_entry_evidence is not None:
-            evidence_ids = tuple(str(item) for item in pre_entry_evidence if str(item))
-            return reconcile_no_launch(decision, evidence_event_ids=evidence_ids, ledger=active_ledger)
         try:
             started = _now()
             value = controlled.run(launch)
+            if isinstance(value, PreLaunchNoLaunch):
+                return reconcile_no_launch(decision, evidence_event_ids=value.evidence_event_ids, ledger=active_ledger)
             finished = _now()
             outcome = _normalize_outcome(value, decision, controlled.accepted_started_at or started, controlled.accepted_finished_at or finished)
             if outcome.kind in {"no_launch", "unresolved_launch"}:
@@ -904,5 +1016,14 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                 )
                 if evidence_ids:
                     return reconcile_no_launch(decision, evidence_event_ids=evidence_ids, ledger=active_ledger)
+            evidence_ids = tuple(
+                record.get("payload", {}).get("event_id")
+                for record in active_ledger.read_nbf_events()
+                if record.get("payload", {}).get("event_type") == "controlled_adapter_state"
+                and record.get("payload", {}).get("reservation_event_id") == decision.reservation_event_id
+                and record.get("payload", {}).get("launch_state_identity") in {"entered", "ambiguous"}
+            )
+            if evidence_ids:
+                return reconcile_ambiguous_launch(decision, evidence_event_ids=evidence_ids, ledger=active_ledger)
             return DispatchOutcome(kind="unresolved_launch", launch_state="ambiguous", plan_id=decision.plan_id, phase=decision.phase, dispatch_family_id=decision.dispatch_family_id, logical_dispatch_id=decision.logical_dispatch_id, admission_receipt_id=None, semantic_dispatch_fingerprint=None, selected_spec=decision.normalized_spec, reconciliation_event_id=None)
 __all__ = ["AdmissionRefusal", "LaunchResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]

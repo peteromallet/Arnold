@@ -23,21 +23,59 @@ FORBIDDEN_RAW = {
 }
 
 
-def _call_names(tree: ast.AST) -> Iterable[tuple[str, int]]:
+def _aliases(tree: ast.AST) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for item in node.names:
-                aliases[item.asname or item.name] = item.name
+                module = node.module or ""
+                aliases[item.asname or item.name] = f"{module}.{item.name}".strip(".")
         elif isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[-1]] = item.name
+    # Resolve the simple alias/data-flow forms used to hide a launch or the
+    # canonical admission call (``spawn = subprocess.Popen; spawn(...)``).
+    # This is deliberately monotonic and bounded to syntactic name/attribute
+    # assignments; dynamic values remain unprovable and are handled below as
+    # a no-WBC launch diagnostic.
+    for _ in range(4):
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = node.value if isinstance(node, ast.AnnAssign) else node.value
+            resolved = _resolve_expr(value, aliases)
+            if not resolved or not (
+                resolved.startswith("subprocess.")
+                or resolved.endswith("dispatch_with_admission")
+                or resolved.endswith(".run")
+                or resolved in {"dispatch", "wbc_dispatch"}
+            ):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and aliases.get(target.id) != resolved:
+                    aliases[target.id] = resolved
+                    changed = True
+        if not changed:
+            break
+    return aliases
+
+
+def _resolve_expr(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        base = _resolve_expr(node.value, aliases)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _call_names(tree: ast.AST) -> Iterable[tuple[str, int]]:
+    aliases = _aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
-                yield aliases.get(node.func.id, node.func.id), node.lineno
-            elif isinstance(node.func, ast.Attribute):
-                yield node.func.attr, node.lineno
+            yield _resolve_expr(node.func, aliases), node.lineno
 
 
 def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
@@ -61,18 +99,21 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             diagnostics.append({"path": str(path), "code": "unreadable_or_invalid", "detail": str(exc)})
             continue
         for name, line in _call_names(tree):
-            if name in FORBIDDEN_RAW:
+            if name in FORBIDDEN_RAW or name.rsplit(".", 1)[-1] in FORBIDDEN_RAW:
                 diagnostics.append({
                     "path": str(path),
                     "line": line,
                     "code": "raw_runtime_preflight" if name != "worker_launch_preflight" else "chain_local_preflight",
                     "symbol": name,
                 })
+        aliases = _aliases(tree)
         dispatch_calls = [
             node for node in ast.walk(tree)
             if isinstance(node, ast.Call)
-            and ((isinstance(node.func, ast.Name) and node.func.id == "dispatch_with_admission")
-                 or (isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch_with_admission"))
+            and (
+                _resolve_expr(node.func, aliases) == "dispatch_with_admission"
+                or _resolve_expr(node.func, aliases).endswith(".dispatch_with_admission")
+            )
         ]
         owners = _enclosing_functions(tree)
         # A caller-supplied/synthetic door is not allowed to hide a physical
@@ -84,17 +125,27 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             raw_launches = [
                 node for node in ast.walk(tree)
                 if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "subprocess"
-                and node.func.attr in {"Popen", "run", "call", "check_call", "check_output"}
+                and _resolve_expr(node.func, aliases) in {
+                    "subprocess.Popen", "subprocess.run", "subprocess.call",
+                    "subprocess.check_call", "subprocess.check_output",
+                }
             ]
+            dynamic_raw_launches = [
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in {"Popen", "run", "call", "check_call", "check_output"}
+            ]
+            raw_launches.extend(dynamic_raw_launches)
             if raw_launches:
                 diagnostics.extend({
                     "path": str(path),
                     "line": node.lineno,
                     "code": "raw_launch_access",
-                    "symbol": f"subprocess.{node.func.attr}",
+                    "symbol": _resolve_expr(node.func, aliases) or "dynamic subprocess launch",
                 } for node in raw_launches)
             direct_launches = [
                 (name, line) for name, line in _call_names(tree)
@@ -105,10 +156,8 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             wbc_calls = [
                 node for node in ast.walk(tree)
                 if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id in {"wbc_dispatch", "dispatch"}
+                and _resolve_expr(node.func, aliases).split(".")[-1] in {"run", "dispatch"}
+                and not _resolve_expr(node.func, aliases).startswith("subprocess.")
             ]
             if wbc_calls:
                 dispatch_lines = [node.lineno for node in dispatch_calls]

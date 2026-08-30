@@ -19,6 +19,13 @@ class LaunchStateRecord:
     receipt_id: str
 
 
+@dataclass(frozen=True)
+class PreLaunchNoLaunch:
+    """Machine-produced proof that the final closure was never entered."""
+
+    evidence_event_ids: tuple[str, ...]
+
+
 class ControlledFinalLaunch:
     """The only primitive exposed to a production final-launch closure.
 
@@ -99,6 +106,11 @@ class ControlledFinalLaunch:
             raise RuntimeError("controlled final launch closure may be called only once")
         if not callable(launch):
             raise TypeError("final launch must be callable")
+        producer = getattr(launch, "pre_entry_no_launch", None)
+        if callable(producer):
+            evidence = tuple(str(item) for item in (producer(self.context) or ()) if str(item))
+            if evidence:
+                return PreLaunchNoLaunch(evidence)
         self._called = True
         self._persist("entered")
         # The receipt is part of the process boundary, not merely an argument
@@ -171,7 +183,7 @@ class ControlledFinalLaunch:
 
 
 
-__all__ = ["ControlledFinalLaunch", "LaunchStateRecord"]
+__all__ = ["ControlledFinalLaunch", "LaunchStateRecord", "PreLaunchNoLaunch"]
 
 
 @contextmanager

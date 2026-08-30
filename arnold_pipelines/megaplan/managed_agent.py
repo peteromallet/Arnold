@@ -298,6 +298,21 @@ def _pid_start_ticks(pid: object) -> str:
         return observed.stdout.strip() if observed.returncode == 0 else ""
 
 
+def _machine_boot_identity() -> str:
+    """Read the kernel-owned boot identity used in worker attestations."""
+    try:
+        path = Path("/proc/sys/kernel/random/boot_id")
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+        observed = subprocess.run(
+            ["sysctl", "-n", "kern.boottime"], check=False,
+            capture_output=True, text=True, timeout=2,
+        )
+        return observed.stdout.strip() if observed.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def _pid_matches(pid: object, expected_sha256: str, expected_start_ticks: str = "") -> bool:
     if not _pid_live(pid):
         return False
@@ -1027,7 +1042,10 @@ def _run_managed_command_locked(
 
         manifest["worker_start_ticks"] = _pid_start_ticks(child.pid)
         manifest["worker_host"] = os.uname().nodename
-        manifest["worker_identity_verified"] = bool(manifest["worker_start_ticks"])
+        manifest["worker_boot_id"] = _machine_boot_identity()
+        manifest["worker_identity_verified"] = bool(
+            manifest["worker_start_ticks"] and manifest["worker_boot_id"]
+        )
         manifest["worker_started_at"] = utc_now()
         manifest["worker_cmdline_sha256"] = hashlib.sha256(raw_cmdline).hexdigest()
         _append_status(manifest, "running", evidence="worker_process_started")

@@ -614,9 +614,11 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         identity = {
             "host": str(manifest.get("worker_host") or os.uname().nodename),
             "pid": pid,
-            "boot_id": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
+            "boot_id": str(manifest.get("worker_boot_id") or ""),
             "process_start_identity": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
             "verified": manifest.get("worker_identity_verified") is True,
+            "attestation_source": "managed_agent_manifest",
+            "manifest_path": str(manifest_path.resolve()),
         }
         if not identity["boot_id"]:
             return LaunchResult(accepted=False, value=return_code)

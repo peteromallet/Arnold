@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts.check_worker_admission_authority import check_files
 
 
@@ -25,3 +27,21 @@ def test_checker_resolves_import_aliases(tmp_path) -> None:
     )
     result = check_files([door])
     assert any(item["code"] == "raw_runtime_preflight" for item in result["diagnostics"])
+
+
+@pytest.mark.parametrize(
+    "source,code",
+    [
+        ("import subprocess as sp\ndef door():\n    return sp.Popen(['echo', 'bad'])\n", "raw_launch_access"),
+        ("from subprocess import Popen as Spawn\ndef door():\n    return Spawn(['echo', 'bad'])\n", "raw_launch_access"),
+        ("from arnold_pipelines.megaplan.cloud.worker_dispatch import dispatch_with_admission as admit\ndef door():\n    return admit(req, launch)\n", "dispatch_without_typed_worker_return"),
+        ("from subprocess import Popen\ndef door():\n    spawn = Popen\n    return spawn(['echo', 'bad'])\n", "raw_launch_access"),
+        ("import subprocess\ndef door():\n    spawn = getattr(subprocess, 'Popen')\n    return spawn(['echo', 'bad'])\n", "raw_launch_access"),
+    ],
+)
+def test_checker_rejects_aliased_and_dynamic_launch_or_admission_bypass(tmp_path, source, code) -> None:
+    door = tmp_path / "synthetic.py"
+    door.write_text(source, encoding="utf-8")
+    result = check_files([door])
+    assert not result["ok"]
+    assert any(item["code"] == code for item in result["diagnostics"])
