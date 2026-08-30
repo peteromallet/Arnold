@@ -7,6 +7,19 @@ from arnold_pipelines.megaplan.incident.schema import ChangedPrecondition, Reser
 WORKER = {"host": "test-host", "pid": 1234, "boot_id": "boot-1"}
 
 
+def _mark_accepted(ledger, reservation, *, phase="ph", spec="spec", logical="log", door="default-door"):
+    kwargs = dict(reservation_event_id=reservation["payload"]["event_id"],
+                  admission_receipt_id=reservation["payload"]["admission_receipt_id"],
+                  physical_door_id=door)
+    ledger.append_controlled_adapter_state(**kwargs, launch_state_identity="not_started")
+    ledger.append_controlled_adapter_state(**kwargs, launch_state_identity="entered")
+    ledger.append_controlled_adapter_state(
+        **kwargs, launch_state_identity="accepted", phase=phase,
+        selected_spec=spec, primary_spec=spec, logical_dispatch_id=logical,
+        worker_identity=WORKER, started_at="2026-01-01T00:00:00Z",
+        finished_at="2026-01-01T00:00:01Z")
+
+
 def _reserve_process(root, logical, result):
     try:
         IncidentLedger(root).reserve(plan_id="p", phase="ph", projection_key="pk", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id=logical, dispatch_family_id="fam")
@@ -40,7 +53,7 @@ def test_torn_composite_write_exposes_neither_transition_nor_receipt(tmp_path, m
     ledger = IncidentLedger(tmp_path)
     key = ProviderFailureKey.derive(phase="ph", selected_spec="spec", provider_failure_class="availability", provider_epoch_identity="epoch").value
     parent = ledger.reserve(plan_id="p", phase="ph", projection_key="parent", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="parent", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=parent["payload"]["event_id"], admission_receipt_id=parent["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="parent", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, parent, logical="parent")
     outcome = DispatchOutcome("provider_exhausted", "accepted", "p", "ph", "fam", "parent", parent["payload"]["admission_receipt_id"], "f" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", provider_evidence={"observation_id":"o","retryability_class":"availability","exhausted_attempt_count":1,"terminal_provider_evidence_id":"ev","precondition_identity":"pre","provider_epoch_identity":"epoch","provider_failure_key":key,"observed_at":"2026-01-01T00:00:00Z"})
     terminal = ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=parent["payload"]["event_id"], projection_key="parent")
     lease = ledger.create_probe_lease(provider_failure_key=key, expires_at=9999999999, parent_reservation_event_id=parent["payload"]["event_id"], phase="ph", route_identity="spec->backup")
@@ -93,7 +106,7 @@ with ledger._locked() as (fd, records):
 def _terminal(ledger, *, logical="log", projection="pk", kind="success"):
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key=projection, semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id=logical, dispatch_family_id="fam", selected_spec="spec")
     kwargs = {"success_payload": {"ok": True}} if kind == "success" else {"terminal_failure": {"error": "x"}}
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id=logical, worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical=logical)
     outcome = DispatchOutcome(kind, "accepted", "p", "ph", "fam", logical, reservation["payload"]["admission_receipt_id"], "f" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", **kwargs)
     return reservation, outcome
 
@@ -126,7 +139,7 @@ def test_post_append_receipt_boundary_failure_reopens_with_byte_identical_receip
     ledger = IncidentLedger(tmp_path)
     key = ProviderFailureKey.derive(phase="ph", selected_spec="spec", provider_failure_class="availability", provider_epoch_identity="epoch").value
     parent = ledger.reserve(plan_id="p", phase="ph", projection_key="parent", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="parent", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=parent["payload"]["event_id"], admission_receipt_id=parent["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="parent", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, parent, logical="parent")
     outcome = DispatchOutcome("provider_exhausted", "accepted", "p", "ph", "fam", "parent", parent["payload"]["admission_receipt_id"], "f" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", provider_evidence={"observation_id":"o","retryability_class":"availability","exhausted_attempt_count":1,"terminal_provider_evidence_id":"ev","precondition_identity":"pre","provider_epoch_identity":"epoch","provider_failure_key":key,"observed_at":"2026-01-01T00:00:00Z"})
     terminal = ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=parent["payload"]["event_id"], projection_key="parent")
     lease = ledger.create_probe_lease(provider_failure_key=key, expires_at=9999999999, parent_reservation_event_id=parent["payload"]["event_id"], phase="ph", route_identity="spec->backup")
@@ -163,7 +176,7 @@ def _append_distinct_terminal(root, reservation_event_id, outcome, projection_ke
 def test_two_process_terminal_linkage_is_atomic(tmp_path):
     ledger = IncidentLedger(tmp_path)
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="pk", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="log", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="log", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="log")
     common = dict(launch_state="accepted", plan_id="p", phase="ph", dispatch_family_id="fam", logical_dispatch_id="log", admission_receipt_id=reservation["payload"]["admission_receipt_id"], semantic_dispatch_fingerprint="f" * 64, selected_spec="spec", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
     success = DispatchOutcome(kind="success", success_payload={"ok": True}, terminal_outcome_event_id="terminal-success", **common)
     failure = DispatchOutcome(kind="ordinary_terminal_failure", terminal_failure={"error": "x"}, terminal_outcome_event_id="terminal-failure", **common)
@@ -216,7 +229,15 @@ def test_accepted_marker_single_field_mismatch_rejects(tmp_path):
         reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="pk", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="log", dispatch_family_id="fam", selected_spec="spec")
         marker = {"reservation_event_id": reservation["payload"]["event_id"], "admission_receipt_id": reservation["payload"]["admission_receipt_id"], "physical_door_id": "default-door", "launch_state_identity": "accepted", "phase": "ph", "selected_spec": "spec", "primary_spec": "spec", "logical_dispatch_id": "log", "worker_identity": WORKER, "started_at": "2026-01-01T00:00:00Z", "finished_at": "2026-01-01T00:00:01Z"}
         marker[field] = bad
-        ledger.append_controlled_adapter_state(**{k: v for k, v in marker.items() if k not in {"physical_door_id", "launch_state_identity"}}, physical_door_id=marker["physical_door_id"], launch_state_identity=marker["launch_state_identity"])
+        lifecycle = {"reservation_event_id": reservation["payload"]["event_id"], "admission_receipt_id": reservation["payload"]["admission_receipt_id"], "physical_door_id": "default-door"}
+        ledger.append_controlled_adapter_state(**lifecycle, launch_state_identity="not_started")
+        ledger.append_controlled_adapter_state(**lifecycle, launch_state_identity="entered")
+        marker_call = lambda: ledger.append_controlled_adapter_state(**{k: v for k, v in marker.items() if k not in {"physical_door_id", "launch_state_identity"}}, physical_door_id=marker["physical_door_id"], launch_state_identity=marker["launch_state_identity"])
+        if field in {"phase", "selected_spec", "logical_dispatch_id", "physical_door_id"}:
+            with pytest.raises(ValueError):
+                marker_call()
+        else:
+            marker_call()
         outcome = DispatchOutcome("success", "accepted", "p", "ph", "fam", "log", reservation["payload"]["admission_receipt_id"], "f" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", success_payload={"ok": True})
         with pytest.raises(ValueError):
             ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=reservation["payload"]["event_id"], projection_key="pk")
@@ -229,7 +250,7 @@ def test_blind_release_and_accepted_launch_release_reject(tmp_path):
     common = dict(reconciliation_id="r", plan_id="p", phase="ph", projection_key="pk", logical_dispatch_id="log", admission_receipt_id=reservation["payload"]["admission_receipt_id"], reservation_event_id=reservation["payload"]["event_id"], semantic_dispatch_fingerprint="f" * 64, resolution="released_no_launch", evidence_kind="controlled_adapter", evidence_event_ids=("missing",), launch_state_identity="not_started", observed_at="2026-01-01T00:00:00Z", recorded_at="2026-01-01T00:00:00Z", actor="test")
     with pytest.raises(ValueError):
         ledger.reconcile_reservation(ReservationReconciled(**common))
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="unspecified", primary_spec="unspecified", logical_dispatch_id="log", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, spec="unspecified", logical="log")
     common["evidence_event_ids"] = ("entered",)
     with pytest.raises(ValueError):
         ledger.reconcile_reservation(ReservationReconciled(**common))

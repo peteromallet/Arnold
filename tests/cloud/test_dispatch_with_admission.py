@@ -84,3 +84,116 @@ def test_wrapped_integer_is_not_a_typed_success(tmp_path: Path) -> None:
     assert isinstance(receipt, WorkerAdmissionReceipt)
     with raises(ValueError, match="primitive launch results"):
         _normalize_outcome(LaunchResult(accepted=True, value=7, worker_identity=WORKER), receipt, "s", "f")
+
+
+def test_launchresult_mapping_is_completed_nullable_dispatch_schema(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
+
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    outcome = _normalize_outcome(
+        LaunchResult(
+            accepted=True,
+            value={
+                "kind": "success",
+                "worker_identity": WORKER,
+                "started_at": "started",
+                "finished_at": "finished",
+                # Nullable DispatchOutcome fields are intentionally omitted;
+                # normalization must materialize them as None.
+            },
+            worker_identity=WORKER,
+            started_at="started",
+            finished_at="finished",
+        ),
+        receipt,
+        "fallback-start",
+        "fallback-finish",
+    )
+    assert outcome.kind == "success"
+    assert outcome.terminal_failure is None
+    assert outcome.provider_evidence is None
+    assert outcome.reconciliation_event_id is None
+
+
+def test_launchresult_mapping_missing_required_identity_is_rejected(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import require_production_worker_dispatch_runtime
+    from pytest import raises
+
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    with raises(ValueError, match="worker identity"):
+        _normalize_outcome(
+            LaunchResult(
+                accepted=True,
+                value={"kind": "success", "started_at": "started", "finished_at": "finished"},
+            ),
+            receipt,
+            "s",
+            "f",
+        )
+
+
+def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_path: Path) -> None:
+    import hashlib
+    import json
+    from dataclasses import replace
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        _validate_worker_identity_for_receipt,
+        require_production_worker_dispatch_runtime,
+    )
+
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    receipt = replace(receipt, production_intent=True)
+    manifest_path = tmp_path / receipt.logical_dispatch_id / "manifest.json"
+    manifest_path.parent.mkdir()
+    manifest = {
+        "schema_version": "arnold-managed-agent-run-v2",
+        "custodian": "arnold.megaplan.managed_agent",
+        "run_id": receipt.logical_dispatch_id,
+        "status": "completed",
+        "worker_pid": 99999999,
+        "worker_host": "test-host",
+        "worker_boot_id": "boot-1",
+        "worker_start_ticks": "start-1",
+        "worker_identity_verified": True,
+        "worker_cmdline_sha256": "a" * 64,
+    }
+    raw = json.dumps(manifest, sort_keys=True).encode()
+    manifest_path.write_bytes(raw)
+    identity = {
+        "host": "test-host",
+        "pid": 99999999,
+        "boot_id": "boot-1",
+        "process_start_identity": "start-1",
+        "verified": True,
+        "attestation_source": "managed_agent_manifest",
+        "manifest_path": str(manifest_path),
+        "managed_run_id": receipt.logical_dispatch_id,
+        "managed_manifest_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    assert _validate_worker_identity_for_receipt(identity, receipt)["pid"] == 99999999
+
+
+def test_completed_managed_child_rejects_forged_manifest_digest(tmp_path: Path) -> None:
+    import pytest
+    from dataclasses import replace
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        _validate_worker_identity_for_receipt,
+        require_production_worker_dispatch_runtime,
+    )
+
+    receipt = require_production_worker_dispatch_runtime(request(tmp_path))
+    assert isinstance(receipt, WorkerAdmissionReceipt)
+    receipt = replace(receipt, production_intent=True)
+    identity = {
+        "host": "test-host", "pid": 99999999, "boot_id": "boot-1",
+        "process_start_identity": "start-1", "verified": True,
+        "attestation_source": "managed_agent_manifest",
+        "manifest_path": str(tmp_path / receipt.logical_dispatch_id / "manifest.json"),
+        "managed_run_id": receipt.logical_dispatch_id,
+        "managed_manifest_sha256": "b" * 64,
+    }
+    with pytest.raises(ValueError, match="manifest"):
+        _validate_worker_identity_for_receipt(identity, receipt)

@@ -470,6 +470,10 @@ class ChangedPrecondition:
     actor: str
     dispatch_family_id: str | None = None
     logical_dispatch_id: str | None = None
+    parent_logical_dispatch_id: str | None = None
+    parent_terminal_event_id: str | None = None
+    parent_dispatch_family_id: str | None = None
+    parent_physical_door_id: str | None = None
     source_revision: str | None = None
     runtime_vector: Any = None
     interpreter_identity: str | None = None
@@ -500,6 +504,15 @@ class ChangedPrecondition:
             raise ValueError("unsupported changed-precondition reason")
         for n in ("event_id", "producer_kind", "producer_version", "plan_id", "phase", "authoritative_subject", "before_content_id", "after_content_id", "evidence_event_id", "evidence_digest", "recorded_at", "actor"):
             _required(getattr(self, n), n)
+        parent_fields = (
+            self.parent_logical_dispatch_id,
+            self.parent_terminal_event_id,
+            self.parent_dispatch_family_id,
+            self.parent_physical_door_id,
+        )
+        if any(value is not None for value in parent_fields):
+            if any(not isinstance(value, str) or not value.strip() for value in parent_fields):
+                raise ValueError("changed precondition parent binding is incomplete")
         if self.before_content_id == self.after_content_id:
             raise ValueError("changed precondition requires unequal authoritative identities")
         for n in ("before_content_id", "after_content_id", "evidence_digest"):
@@ -542,7 +555,45 @@ class ChangedPrecondition:
             raise ValueError("provider recovery cannot change provider failure key")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"schema_version": self.schema_version, "event_type": self.event_type, **{n: getattr(self, n) for n in ("event_id", "producer_kind", "producer_version", "plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "reason", "authoritative_subject", "before_content_id", "after_content_id", "evidence_event_id", "evidence_digest", "source_revision", "runtime_vector", "interpreter_identity", "route_identity", "timeout_policy_identity", "repair_commit_sha", "provider_failure_key_before", "provider_failure_key_after", "before_snapshot", "after_snapshot", "evidence_snapshot", "recorded_at", "actor")}}
+        return {
+            "schema_version": self.schema_version,
+            "event_type": self.event_type,
+            **{
+                n: getattr(self, n)
+                for n in (
+                    "event_id",
+                    "producer_kind",
+                    "producer_version",
+                    "plan_id",
+                    "phase",
+                    "dispatch_family_id",
+                    "logical_dispatch_id",
+                    "parent_logical_dispatch_id",
+                    "parent_terminal_event_id",
+                    "parent_dispatch_family_id",
+                    "parent_physical_door_id",
+                    "reason",
+                    "authoritative_subject",
+                    "before_content_id",
+                    "after_content_id",
+                    "evidence_event_id",
+                    "evidence_digest",
+                    "source_revision",
+                    "runtime_vector",
+                    "interpreter_identity",
+                    "route_identity",
+                    "timeout_policy_identity",
+                    "repair_commit_sha",
+                    "provider_failure_key_before",
+                    "provider_failure_key_after",
+                    "before_snapshot",
+                    "after_snapshot",
+                    "evidence_snapshot",
+                    "recorded_at",
+                    "actor",
+                )
+            },
+        }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ChangedPrecondition":
@@ -577,6 +628,15 @@ def _validate_changed_precondition_wire(
         raise ValueError("unsupported changed-precondition reason")
     for name in ("event_id", "producer_kind", "producer_version", "plan_id", "phase", "authoritative_subject", "before_content_id", "after_content_id", "evidence_event_id", "evidence_digest", "recorded_at", "actor"):
         _required(payload.get(name), f"changed_precondition.{name}")
+    parent_values = tuple(payload.get(name) for name in (
+        "parent_logical_dispatch_id",
+        "parent_terminal_event_id",
+        "parent_dispatch_family_id",
+        "parent_physical_door_id",
+    ))
+    if any(value is not None for value in parent_values):
+        if any(not isinstance(value, str) or not value.strip() for value in parent_values):
+            raise ValueError("changed precondition parent binding is incomplete")
     for name in ("before_content_id", "after_content_id", "evidence_digest"):
         _sha256_identity(payload.get(name), name)
     if payload["before_content_id"] == payload["after_content_id"]:
@@ -744,6 +804,10 @@ def _produce_authoritative(
     actor: str,
     dispatch_family_id: str | None = None,
     logical_dispatch_id: str | None = None,
+    parent_logical_dispatch_id: str | None = None,
+    parent_terminal_event_id: str | None = None,
+    parent_dispatch_family_id: str | None = None,
+    parent_physical_door_id: str | None = None,
     provider_failure_key_before: str | None = None,
     provider_failure_key_after: str | None = None,
 ) -> ChangedPrecondition:
@@ -787,6 +851,10 @@ def _produce_authoritative(
         actor=actor,
         dispatch_family_id=dispatch_family_id,
         logical_dispatch_id=logical_dispatch_id,
+        parent_logical_dispatch_id=parent_logical_dispatch_id,
+        parent_terminal_event_id=parent_terminal_event_id,
+        parent_dispatch_family_id=parent_dispatch_family_id,
+        parent_physical_door_id=parent_physical_door_id,
         provider_failure_key_before=before_key,
         provider_failure_key_after=after_key,
         before_snapshot=before_source,
@@ -797,6 +865,91 @@ def _produce_authoritative(
     _validate_producer_binding(result)
     return result
 
+
+@dataclass(frozen=True)
+class AuthorizationGranted:
+    """Durable, parent-bound authority for one linked child dispatch."""
+
+    event_id: str
+    plan_id: str
+    phase: str
+    parent_logical_dispatch_id: str
+    parent_terminal_event_id: str
+    parent_dispatch_family_id: str
+    parent_physical_door_id: str
+    reason: str
+    recorded_at: str
+    actor: str
+    schema_version: int = NBF_SCHEMA_VERSION
+    event_type: str = "authorization_granted"
+    FIELDS = {
+        "schema_version",
+        "event_type",
+        "event_id",
+        "plan_id",
+        "phase",
+        "parent_logical_dispatch_id",
+        "parent_terminal_event_id",
+        "parent_dispatch_family_id",
+        "parent_physical_door_id",
+        "reason",
+        "recorded_at",
+        "actor",
+    }
+
+    def __post_init__(self) -> None:
+        if self.schema_version != NBF_SCHEMA_VERSION or self.event_type != "authorization_granted":
+            raise ValueError("invalid authorization grant schema")
+        for name in (
+            "event_id",
+            "plan_id",
+            "phase",
+            "parent_logical_dispatch_id",
+            "parent_terminal_event_id",
+            "parent_dispatch_family_id",
+            "parent_physical_door_id",
+            "reason",
+            "recorded_at",
+            "actor",
+        ):
+            _required(getattr(self, name), f"authorization_granted.{name}")
+        _iso_timestamp(self.recorded_at, "authorization_granted.recorded_at")
+        expected = _digest({
+            "event_type": self.event_type,
+            "plan_id": self.plan_id,
+            "phase": self.phase,
+            "parent_logical_dispatch_id": self.parent_logical_dispatch_id,
+            "parent_terminal_event_id": self.parent_terminal_event_id,
+            "parent_dispatch_family_id": self.parent_dispatch_family_id,
+            "parent_physical_door_id": self.parent_physical_door_id,
+            "reason": self.reason,
+        })
+        if self.event_id != expected:
+            raise ValueError("authorization grant identity does not match parent binding")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            name: getattr(self, name)
+            for name in (
+                "schema_version",
+                "event_type",
+                "event_id",
+                "plan_id",
+                "phase",
+                "parent_logical_dispatch_id",
+                "parent_terminal_event_id",
+                "parent_dispatch_family_id",
+                "parent_physical_door_id",
+                "reason",
+                "recorded_at",
+                "actor",
+            )
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AuthorizationGranted":
+        _strict_record_fields(payload, cls.FIELDS, cls.__name__)
+        return cls(**payload)
 
 @dataclass(frozen=True)
 class ReservationReconciled:
@@ -905,6 +1058,10 @@ def _produce_reason_specific(
     actor: str,
     dispatch_family_id: str | None = None,
     logical_dispatch_id: str | None = None,
+    parent_logical_dispatch_id: str | None = None,
+    parent_terminal_event_id: str | None = None,
+    parent_dispatch_family_id: str | None = None,
+    parent_physical_door_id: str | None = None,
     source_revision: str | None = None,
     runtime_vector: Any = None,
     interpreter_identity: str | None = None,
@@ -926,6 +1083,10 @@ def _produce_reason_specific(
         actor=actor,
         dispatch_family_id=dispatch_family_id,
         logical_dispatch_id=logical_dispatch_id,
+        parent_logical_dispatch_id=parent_logical_dispatch_id,
+        parent_terminal_event_id=parent_terminal_event_id,
+        parent_dispatch_family_id=parent_dispatch_family_id,
+        parent_physical_door_id=parent_physical_door_id,
         provider_failure_key_before=provider_failure_key_before,
         provider_failure_key_after=provider_failure_key_after,
     )
@@ -951,8 +1112,56 @@ def produce_authorized_route_changed(*, plan_id: str, phase: str, authoritative_
     return _produce_reason_specific("authorized_route_changed", plan_id=plan_id, phase=phase, authoritative_subject=authoritative_subject, before=before, after=after, evidence_event_id=evidence_event_id, evidence=evidence, actor=actor, dispatch_family_id=dispatch_family_id, logical_dispatch_id=logical_dispatch_id, source_revision=source_revision, runtime_vector=runtime_vector, interpreter_identity=interpreter_identity, route_identity=route_identity, timeout_policy_identity=timeout_policy_identity, repair_commit_sha=repair_commit_sha, provider_failure_key_before=provider_failure_key_before, provider_failure_key_after=provider_failure_key_after)
 
 
-def produce_provider_recovery_verified(*, plan_id: str, phase: str, authoritative_subject: str, before: Any, after: Any, evidence_event_id: str, evidence: Any, actor: str, dispatch_family_id: str | None = None, logical_dispatch_id: str | None = None, source_revision: str | None = None, runtime_vector: Any = None, interpreter_identity: str | None = None, route_identity: str | None = None, timeout_policy_identity: str | None = None, repair_commit_sha: str | None = None, provider_failure_key_before: str | None = None, provider_failure_key_after: str | None = None) -> ChangedPrecondition:
-    return _produce_reason_specific("provider_recovery_verified", plan_id=plan_id, phase=phase, authoritative_subject=authoritative_subject, before=before, after=after, evidence_event_id=evidence_event_id, evidence=evidence, actor=actor, dispatch_family_id=dispatch_family_id, logical_dispatch_id=logical_dispatch_id, source_revision=source_revision, runtime_vector=runtime_vector, interpreter_identity=interpreter_identity, route_identity=route_identity, timeout_policy_identity=timeout_policy_identity, repair_commit_sha=repair_commit_sha, provider_failure_key_before=provider_failure_key_before, provider_failure_key_after=provider_failure_key_after)
+def produce_provider_recovery_verified(
+    *,
+    plan_id: str,
+    phase: str,
+    authoritative_subject: str,
+    before: Any,
+    after: Any,
+    evidence_event_id: str,
+    evidence: Any,
+    actor: str,
+    dispatch_family_id: str | None = None,
+    logical_dispatch_id: str | None = None,
+    parent_logical_dispatch_id: str | None = None,
+    parent_terminal_event_id: str | None = None,
+    parent_dispatch_family_id: str | None = None,
+    parent_physical_door_id: str | None = None,
+    source_revision: str | None = None,
+    runtime_vector: Any = None,
+    interpreter_identity: str | None = None,
+    route_identity: str | None = None,
+    timeout_policy_identity: str | None = None,
+    repair_commit_sha: str | None = None,
+    provider_failure_key_before: str | None = None,
+    provider_failure_key_after: str | None = None,
+) -> ChangedPrecondition:
+    return _produce_reason_specific(
+        "provider_recovery_verified",
+        plan_id=plan_id,
+        phase=phase,
+        authoritative_subject=authoritative_subject,
+        before=before,
+        after=after,
+        evidence_event_id=evidence_event_id,
+        evidence=evidence,
+        actor=actor,
+        dispatch_family_id=dispatch_family_id,
+        logical_dispatch_id=logical_dispatch_id,
+        parent_logical_dispatch_id=parent_logical_dispatch_id,
+        parent_terminal_event_id=parent_terminal_event_id,
+        parent_dispatch_family_id=parent_dispatch_family_id,
+        parent_physical_door_id=parent_physical_door_id,
+        source_revision=source_revision,
+        runtime_vector=runtime_vector,
+        interpreter_identity=interpreter_identity,
+        route_identity=route_identity,
+        timeout_policy_identity=timeout_policy_identity,
+        repair_commit_sha=repair_commit_sha,
+        provider_failure_key_before=provider_failure_key_before,
+        provider_failure_key_after=provider_failure_key_after,
+    )
 
 
 def produce_verified_repair_committed(*, plan_id: str, phase: str, authoritative_subject: str, before: Any, after: Any, evidence_event_id: str, evidence: Any, actor: str, dispatch_family_id: str | None = None, logical_dispatch_id: str | None = None, source_revision: str | None = None, runtime_vector: Any = None, interpreter_identity: str | None = None, route_identity: str | None = None, timeout_policy_identity: str | None = None, repair_commit_sha: str | None = None, provider_failure_key_before: str | None = None, provider_failure_key_after: str | None = None) -> ChangedPrecondition:
@@ -1035,6 +1244,8 @@ def validate_nbf_event(
         )
     if typ == "reservation_reconciled":
         return ReservationReconciled.from_dict(payload).to_dict()
+    if typ == "authorization_granted":
+        return AuthorizationGranted.from_dict(payload).to_dict()
     # Transaction records are intentionally closed but their payloads are
     # simple scalar identity maps.  Reject unknown fields while allowing
     # forward-compatible evidence under the event-specific ``extra`` map.
@@ -1050,7 +1261,7 @@ def validate_nbf_event(
         "provider_observation": {"schema_version", "event_type", "event_id", "observation_id", "provider_failure_key", "selected_spec", "phase", "provider_failure_class", "provider_epoch_identity", "recorded_at", "actor"},
         "provider_probe_started": {"schema_version", "event_type", "event_id", "probe_lease_id", "provider_failure_key", "expires_at", "recorded_at", "actor"},
         "provider_probe_result": {"schema_version", "event_type", "event_id", "probe_lease_id", "provider_failure_key", "passed", "evidence_digest", "recorded_at", "actor"},
-        "provider_recovery_verified": {"schema_version", "event_type", "event_id", "changed_precondition_event_id", "provider_failure_key_before", "provider_failure_key_after", "recorded_at", "actor"},
+        "provider_recovery_verified": {"schema_version", "event_type", "event_id", "changed_precondition_event_id", "provider_failure_key_before", "provider_failure_key_after", "parent_logical_dispatch_id", "parent_terminal_event_id", "parent_dispatch_family_id", "parent_physical_door_id", "recorded_at", "actor"},
         "controlled_adapter_state": {"schema_version", "event_type", "event_id", "reservation_event_id", "admission_receipt_id", "physical_door_id", "launch_state_identity", "recorded_at", "actor"},
     }
     fields = required.get(typ)
@@ -1060,9 +1271,26 @@ def validate_nbf_event(
         _strict_record_fields_with_optional(
             payload,
             fields | {"admission_receipt_id"},
-            {"primary_spec", "configured_fallback_chain_identity", "execution_context_identity"},
+            {
+                "primary_spec",
+                "configured_fallback_chain_identity",
+                "execution_context_identity",
+                "parent_logical_dispatch_id",
+                "parent_terminal_event_id",
+                "parent_dispatch_family_id",
+                "parent_physical_door_id",
+                "authorizing_event_id",
+            },
             str(typ),
         )
+        if payload.get("authorizing_event_id"):
+            for name in (
+                "parent_logical_dispatch_id",
+                "parent_terminal_event_id",
+                "parent_dispatch_family_id",
+                "parent_physical_door_id",
+            ):
+                _required(payload.get(name), f"{typ}.{name}")
     elif typ == "worker_terminal_outcome":
         unknown = set(payload) - (fields | {"primary_spec", "configured_fallback_chain_identity"})
         missing = fields - set(payload)
@@ -1176,6 +1404,21 @@ def validate_nbf_event(
             if not isinstance(payload.get("passed"), bool):
                 raise ValueError("provider probe result passed must be boolean")
             _sha256_identity(payload["evidence_digest"], f"{typ}.evidence_digest")
+    if typ == "provider_recovery_verified":
+        for name in (
+            "changed_precondition_event_id",
+            "provider_failure_key_before",
+            "provider_failure_key_after",
+            "parent_logical_dispatch_id",
+            "parent_terminal_event_id",
+            "parent_dispatch_family_id",
+            "parent_physical_door_id",
+        ):
+            _required(payload.get(name), f"{typ}.{name}")
+        _sha256_identity(payload["provider_failure_key_before"], f"{typ}.provider_failure_key_before")
+        _sha256_identity(payload["provider_failure_key_after"], f"{typ}.provider_failure_key_after")
+        if payload["provider_failure_key_before"] != payload["provider_failure_key_after"]:
+            raise ValueError("provider recovery cannot change provider failure key")
     if typ == "controlled_adapter_state":
         if payload.get("launch_state_identity") not in {"not_started", "entered", "accepted", "closed", "ambiguous"}:
             raise ValueError("controlled adapter state is invalid")
@@ -1214,7 +1457,7 @@ def _record_from_json(cls: Any, raw: str) -> Any:
     return cls.from_dict(value)
 
 
-for _record_type in (WorkerDisposition, ObservedProcessDeath, NonWorkerSignalDisposition, ChangedPrecondition, ReservationReconciled, SupervisionConfirmation, ProviderFailureKey, SemanticDispatchFingerprint):
+for _record_type in (WorkerDisposition, ObservedProcessDeath, NonWorkerSignalDisposition, ChangedPrecondition, AuthorizationGranted, ReservationReconciled, SupervisionConfirmation, ProviderFailureKey, SemanticDispatchFingerprint):
     _record_type.to_json = _record_to_json  # type: ignore[attr-defined]
     _record_type.from_json = classmethod(_record_from_json)  # type: ignore[attr-defined]
 

@@ -23,6 +23,33 @@ FORBIDDEN_RAW = {
 }
 
 
+def _constant_string(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _constant_string(node.left)
+        right = _constant_string(node.right)
+        return left + right if left and right else ""
+    return ""
+
+
+def _resolve_expr(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        base = _resolve_expr(node.value, aliases)
+        name = f"{base}.{node.attr}" if base else node.attr
+        return aliases.get(name, name)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+        if len(node.args) >= 2:
+            base = _resolve_expr(node.args[0], aliases)
+            attr = _constant_string(node.args[1])
+            if base and attr:
+                name = f"{base}.{attr}"
+                return aliases.get(name, name)
+    return ""
+
+
 def _aliases(tree: ast.AST) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -33,42 +60,28 @@ def _aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[-1]] = item.name
-    # Resolve the simple alias/data-flow forms used to hide a launch or the
-    # canonical admission call (``spawn = subprocess.Popen; spawn(...)``).
-    # This is deliberately monotonic and bounded to syntactic name/attribute
-    # assignments; dynamic values remain unprovable and are handled below as
-    # a no-WBC launch diagnostic.
-    for _ in range(4):
+    for _ in range(16):
         changed = False
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 continue
-            value = node.value if isinstance(node, ast.AnnAssign) else node.value
-            resolved = _resolve_expr(value, aliases)
-            if not resolved or not (
-                resolved.startswith("subprocess.")
-                or resolved.endswith("dispatch_with_admission")
-                or resolved.endswith(".run")
-                or resolved in {"dispatch", "wbc_dispatch"}
-            ):
+            resolved = _resolve_expr(node.value, aliases)
+            if not resolved:
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
-                if isinstance(target, ast.Name) and aliases.get(target.id) != resolved:
-                    aliases[target.id] = resolved
+                if isinstance(target, ast.Name):
+                    key = target.id
+                elif isinstance(target, ast.Attribute):
+                    key = _resolve_expr(target, aliases)
+                else:
+                    continue
+                if key and aliases.get(key) != resolved:
+                    aliases[key] = resolved
                     changed = True
         if not changed:
             break
     return aliases
-
-
-def _resolve_expr(node: ast.AST, aliases: dict[str, str]) -> str:
-    if isinstance(node, ast.Name):
-        return aliases.get(node.id, node.id)
-    if isinstance(node, ast.Attribute):
-        base = _resolve_expr(node.value, aliases)
-        return f"{base}.{node.attr}" if base else node.attr
-    return ""
 
 
 def _call_names(tree: ast.AST) -> Iterable[tuple[str, int]]:
@@ -81,12 +94,27 @@ def _call_names(tree: ast.AST) -> Iterable[tuple[str, int]]:
 def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
     """Map call line numbers to the innermost function that owns them."""
     owners: dict[int, str] = {}
-    for function in ast.walk(tree):
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in ast.walk(function):
-            if isinstance(node, ast.Call):
-                owners[node.lineno] = function.name
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.stack: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if self.stack:
+                owners[node.lineno] = self.stack[-1]
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
     return owners
 
 def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
@@ -108,7 +136,8 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                 })
         aliases = _aliases(tree)
         dispatch_calls = [
-            node for node in ast.walk(tree)
+            node
+            for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and (
                 _resolve_expr(node.func, aliases) == "dispatch_with_admission"
@@ -116,37 +145,44 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             )
         ]
         owners = _enclosing_functions(tree)
-        # A caller-supplied/synthetic door is not allowed to hide a physical
-        # launch behind a different helper.  Canonical workers contain legacy
-        # repository-management subprocess calls, so those files are checked
-        # by the narrower ownership rules below; every other door is treated
-        # as an attempted launch surface and must route through admission.
+        raw_process_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _resolve_expr(node.func, aliases) in {
+                "subprocess.Popen",
+                "subprocess.run",
+                "subprocess.call",
+                "subprocess.check_call",
+                "subprocess.check_output",
+            }
+        ]
+        allowed_canonical_subprocess_owners = {
+            "run_command",
+            "output",
+            "_prepare_zero_recovery_model_runtime",
+            "_zero_recovery_source_identity",
+            "_quiesce_zero_recovery_model_uid",
+            "_ps_children",
+            "_subtree_cputime_sample",
+            "_worktree_mutation_fingerprint",
+        }
+        for node in raw_process_calls:
+            name = _resolve_expr(node.func, aliases)
+            owner = owners.get(node.lineno)
+            if (
+                path in CANONICAL_DOORS
+                and name != "subprocess.Popen"
+                and owner in allowed_canonical_subprocess_owners
+            ):
+                continue
+            diagnostics.append({
+                "path": str(path),
+                "line": node.lineno,
+                "code": "raw_launch_access",
+                "symbol": name or "dynamic subprocess launch",
+            })
         if path not in CANONICAL_DOORS:
-            raw_launches = [
-                node for node in ast.walk(tree)
-                if isinstance(node, ast.Call)
-                and _resolve_expr(node.func, aliases) in {
-                    "subprocess.Popen", "subprocess.run", "subprocess.call",
-                    "subprocess.check_call", "subprocess.check_output",
-                }
-            ]
-            dynamic_raw_launches = [
-                node for node in ast.walk(tree)
-                if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "getattr"
-                and len(node.args) >= 2
-                and isinstance(node.args[1], ast.Constant)
-                and node.args[1].value in {"Popen", "run", "call", "check_call", "check_output"}
-            ]
-            raw_launches.extend(dynamic_raw_launches)
-            if raw_launches:
-                diagnostics.extend({
-                    "path": str(path),
-                    "line": node.lineno,
-                    "code": "raw_launch_access",
-                    "symbol": _resolve_expr(node.func, aliases) or "dynamic subprocess launch",
-                } for node in raw_launches)
             direct_launches = [
                 (name, line) for name, line in _call_names(tree)
                 if name in {"run_managed_command", "run_omp_step", "worker_launch_preflight"}
@@ -154,7 +190,8 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             for name, line in direct_launches:
                 diagnostics.append({"path": str(path), "line": line, "code": "no_wbc_bypass", "symbol": name})
             wbc_calls = [
-                node for node in ast.walk(tree)
+                node
+                for node in ast.walk(tree)
                 if isinstance(node, ast.Call)
                 and _resolve_expr(node.func, aliases).split(".")[-1] in {"run", "dispatch"}
                 and not _resolve_expr(node.func, aliases).startswith("subprocess.")
@@ -162,7 +199,10 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
             if wbc_calls:
                 dispatch_lines = [node.lineno for node in dispatch_calls]
                 if not dispatch_lines or any(node.lineno < min(dispatch_lines) for node in wbc_calls):
-                    diagnostics.extend({"path": str(path), "line": node.lineno, "code": "wbc_before_admission"} for node in wbc_calls)
+                    diagnostics.extend(
+                        {"path": str(path), "line": node.lineno, "code": "wbc_before_admission"}
+                        for node in wbc_calls
+                    )
         # The shared dispatcher owns admission.  A door may invoke it once,
         # but may not supply a replacement gate capable of minting a receipt or
         # bypassing source/runtime/liveness checks.  Resolver/readers belong on

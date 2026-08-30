@@ -49,7 +49,6 @@ import json
 import os
 import runpy
 import sys
-import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -60,6 +59,7 @@ from arnold_pipelines.megaplan.cloud.babysitter.routing import (
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
     machine_origin_provenance,
+    reserve_managed_command,
     run_managed_command,
     stable_managed_run_id,
 )
@@ -605,7 +605,8 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
             root = spec.project_dir / root
         manifest_path = root / stable_managed_run_id(spec.run_kind, spec.identity_key) / "manifest.json"
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_raw = manifest_path.read_bytes()
+            manifest = json.loads(manifest_raw)
         except (OSError, json.JSONDecodeError):
             return LaunchResult(accepted=False, value=return_code)
         pid = manifest.get("worker_pid")
@@ -615,12 +616,14 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
             "host": str(manifest.get("worker_host") or os.uname().nodename),
             "pid": pid,
             "boot_id": str(manifest.get("worker_boot_id") or ""),
-            "process_start_identity": str(manifest.get("worker_start_ticks") or manifest.get("worker_started_at") or ""),
+            "process_start_identity": str(manifest.get("worker_start_ticks") or ""),
             "verified": manifest.get("worker_identity_verified") is True,
             "attestation_source": "managed_agent_manifest",
             "manifest_path": str(manifest_path.resolve()),
+            "managed_run_id": str(manifest.get("run_id") or ""),
+            "managed_manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
         }
-        if not identity["boot_id"]:
+        if not identity["boot_id"] or not identity["managed_run_id"]:
             return LaunchResult(accepted=False, value=return_code)
         return LaunchResult(
             accepted=True,
@@ -638,24 +641,43 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         )
 
     def pre_entry_no_launch(context: Any) -> tuple[str, ...]:
-        """Produce no-launch evidence from the machine-owned run manifest.
-
-        A previously terminal run with no worker PID is the only safe
-        pre-entry short circuit.  The adapter state event is read back from
-        the canonical ledger, so this cannot be a caller-invented marker.
-        """
+        """Return canonical evidence that this invocation did not launch."""
         root = spec.run_root or Path(".megaplan/plans/resident-subagents")
         if not root.is_absolute():
             root = spec.project_dir / root
-        candidate = root / stable_managed_run_id(spec.run_kind, spec.identity_key) / "manifest.json"
+        candidate = (
+            root
+            / stable_managed_run_id(spec.run_kind, spec.identity_key)
+            / "manifest.json"
+        )
         try:
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return ()
-        if payload.get("status") not in {"completed", "failed", "cancelled", "interrupted", "superseded"}:
+        status = payload.get("status")
+        if status in {"launching", "running", "adopting"}:
+            if not _pid_live(payload.get("worker_pid")):
+                return ()
+        elif status not in {
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "superseded",
+            "unknown",
+        }:
             return ()
-        if payload.get("worker_pid"):
+        if status in {
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "superseded",
+            "unknown",
+        } and payload.get("worker_pid") and _pid_live(payload.get("worker_pid")):
             return ()
+        # Manifest state is only corroboration.  The adapter marker is the
+        # canonical reconciliation evidence for this reservation.
         from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
         ledger = IncidentLedger(Path(context.ledger_root))
         return tuple(
@@ -695,32 +717,24 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         os.environ["ARNOLD_REPAIR_SESSION"] = _babysitter_session
     os.environ["ARNOLD_BABYSITTER_SESSION"] = _babysitter_session
     try:
-        if _dedup_already_running(ctx):
-            _eprint(
-                f"[babysitter] already_running session={ctx['session']} "
-                f"occurrence={ctx['occurrence']} — exiting 0"
-            )
-            return 0
-
         ctx["engine_root"] = _resolve_engine_root()
         goal_path = _resolve_goal_file(ctx)
         ctx["goal_path"] = str(goal_path)
 
+        # The identity is stable across retries.  Reserve the managed
+        # manifest before admission so deduplication and a terminal no-launch
+        # can use the same canonical reservation/reconciliation path.
         identity_key = (
-            f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}:"
-            f"{time.time_ns()}"
+            f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}"
         )
         ctx["identity_key"] = identity_key
         managed_run_id = stable_managed_run_id(RUN_KIND, identity_key)
         ctx["managed_run_id"] = managed_run_id
         ctx["managed_manifest_path"] = str(ctx["run_root"] / managed_run_id / "manifest.json")
         spec = _managed_spec(ctx, goal_path=goal_path, identity_key=identity_key)
+        reserve_managed_command(spec)
 
         _write_receipts(ctx, _receipt_payload(ctx, status="running"))
-        # The managed supervisor reserves the run itself (clean
-        # created=True "supervisor_start" path — no pre-reservation, which
-        # would be misread as a dead-supervisor restart) and then blocks
-        # until the Flash agent finishes.
         rc = _admit_managed_launch(ctx, spec)
         managed_terminal = "unknown"
         try:

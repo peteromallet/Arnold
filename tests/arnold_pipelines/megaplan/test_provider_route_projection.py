@@ -7,6 +7,19 @@ import pytest
 WORKER = {"host": "test-host", "pid": 1234, "boot_id": "boot-1"}
 
 
+def _mark_accepted(ledger, reservation, *, phase="ph", spec="spec", logical="log"):
+    kwargs = dict(reservation_event_id=reservation["payload"]["event_id"],
+                  admission_receipt_id=reservation["payload"]["admission_receipt_id"],
+                  physical_door_id="default-door")
+    ledger.append_controlled_adapter_state(**kwargs, launch_state_identity="not_started")
+    ledger.append_controlled_adapter_state(**kwargs, launch_state_identity="entered")
+    ledger.append_controlled_adapter_state(
+        **kwargs, launch_state_identity="accepted", phase=phase,
+        selected_spec=spec, primary_spec=spec, logical_dispatch_id=logical,
+        worker_identity=WORKER, started_at="2026-01-01T00:00:00Z",
+        finished_at="2026-01-01T00:00:01Z")
+
+
 def test_provider_key_and_fingerprint_exclude_volatile_identity():
     a = ProviderFailureKey.derive(phase="p", selected_spec=" spec ", provider_failure_class="timeout", provider_epoch_identity="epoch")
     b = ProviderFailureKey.derive(phase="p", selected_spec="spec", provider_failure_class="timeout", provider_epoch_identity="epoch")
@@ -31,7 +44,7 @@ def test_keyed_streak_replay_matching_different_and_success(tmp_path):
     for i, out in enumerate((_provider_outcome(key,"a"), _provider_outcome(key,"b"))):
         r=ledger.reserve(plan_id="p",phase="ph",projection_key="pk"+str(i),semantic_dispatch_fingerprint="f"*64,logical_dispatch_id="l"+str(i),dispatch_family_id="fam",selected_spec="spec")
         out = DispatchOutcome.from_dict({**out.to_dict(), "logical_dispatch_id": "l" + str(i), "admission_receipt_id": r["payload"]["admission_receipt_id"]})
-        ledger.append_controlled_adapter_state(reservation_event_id=r["payload"]["event_id"], admission_receipt_id=r["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="l" + str(i), worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+        _mark_accepted(ledger, r, logical="l" + str(i))
         ledger.append_terminal_outcome(outcome=out,reservation_event_id=r["payload"]["event_id"],projection_key="pk"+str(i))
     assert ledger.projection()["observation_streak"] == 2
     fresh=IncidentLedger(tmp_path); assert fresh.projection()["observation_streak"] == 2
@@ -45,7 +58,7 @@ def test_provider_streak_is_keyed_not_global(tmp_path):
         out = _provider_outcome(key, str(i), selected_spec=spec, logical_dispatch_id="l" + str(i))
         r = ledger.reserve(plan_id="p", phase="ph", projection_key="pk" + str(i), semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="l" + str(i), dispatch_family_id="fam", selected_spec=spec)
         out = DispatchOutcome.from_dict({**out.to_dict(), "admission_receipt_id": r["payload"]["admission_receipt_id"]})
-        ledger.append_controlled_adapter_state(reservation_event_id=r["payload"]["event_id"], admission_receipt_id=r["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec=spec, primary_spec=spec, logical_dispatch_id="l" + str(i), worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+        _mark_accepted(ledger, r, spec=spec, logical="l" + str(i))
         ledger.append_terminal_outcome(outcome=out, reservation_event_id=r["payload"]["event_id"], projection_key="pk" + str(i))
     projection = ledger.projection()
     assert {stream["provider_failure_key"] for stream in projection["provider_streaks"].values()} == {key_a, key_b}
@@ -69,7 +82,7 @@ def _append_provider(ledger, *, key, spec="spec", logical="log", projection="pk"
                                  semantic_dispatch_fingerprint="f" * 64,
                                  logical_dispatch_id=logical, dispatch_family_id="fam",
                                  selected_spec=spec)
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec=spec, primary_spec=spec, logical_dispatch_id=logical, worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, spec=spec, logical=logical)
     outcome = _provider_outcome(key, suffix, selected_spec=spec,
                                 logical_dispatch_id=logical)
     outcome = DispatchOutcome.from_dict({**outcome.to_dict(),
@@ -99,7 +112,7 @@ def test_success_resets_only_applicable_key(tmp_path):
     _append_provider(ledger, key=key_a, logical="a2", projection="a2", suffix="a2")
     _append_provider(ledger, key=key_b, logical="b1", projection="b1", suffix="b1")
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="b2", semantic_dispatch_fingerprint="f" * 64, logical_dispatch_id="b2", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="b2", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="b2")
     success = DispatchOutcome("success", "accepted", "p", "ph", "fam", "b2", reservation["payload"]["admission_receipt_id"], "f" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", success_payload={"ok": True}, provider_failure_key=key_b)
     ledger.append_terminal_outcome(outcome=success, reservation_event_id=reservation["payload"]["event_id"], projection_key="b2")
     streams = ledger.projection()["provider_streaks"]
@@ -119,7 +132,7 @@ def test_success_for_non_latest_key_does_not_reset_latest(tmp_path):
     _append_provider(ledger, key=key_a, logical="a2", projection="a2", suffix="a2")
     _append_provider(ledger, key=key_b, logical="b1", projection="b1", suffix="b1")
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="a3", semantic_dispatch_fingerprint="a" * 64, logical_dispatch_id="a3", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="a3", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="a3")
     success = DispatchOutcome("success", "accepted", "p", "ph", "fam", "a3", reservation["payload"]["admission_receipt_id"], "a" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", success_payload={"ok": True}, provider_failure_key=key_a)
     ledger.append_terminal_outcome(outcome=success, reservation_event_id=reservation["payload"]["event_id"], projection_key="a3")
     assert _streaks(ledger)[key_a] == (0, False)
@@ -135,7 +148,7 @@ def test_ordinary_failure_breaks_only_applicable_stream(tmp_path):
     _append_provider(ledger, key=key_b, logical="b1", projection="b1", suffix="b1")
     _append_provider(ledger, key=key_b, logical="b2", projection="b2", suffix="b2")
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="a-failure", semantic_dispatch_fingerprint="c" * 64, logical_dispatch_id="a-failure", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="a-failure", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="a-failure")
     failure = DispatchOutcome("ordinary_terminal_failure", "accepted", "p", "ph", "fam", "a-failure", reservation["payload"]["admission_receipt_id"], "c" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", terminal_failure={"error": "ordinary"}, provider_failure_key=key_a)
     ledger.append_terminal_outcome(outcome=failure, reservation_event_id=reservation["payload"]["event_id"], projection_key="a-failure")
     assert _streaks(ledger)[key_a] == (0, True)
@@ -161,7 +174,7 @@ def test_cross_key_isolation_after_success_and_disposition(tmp_path):
     _append_provider(ledger, key=key_b, logical="b1", projection="b1", suffix="b1")
     _append_provider(ledger, key=key_b, logical="b2", projection="b2", suffix="b2")
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="a-disposition", semantic_dispatch_fingerprint="d" * 64, logical_dispatch_id="a-disposition", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="a-disposition", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="a-disposition")
     disposition = WorkerDisposition("a-disp", "in_band", "p", "ph", "fam", "a-disposition", reservation["payload"]["admission_receipt_id"], "d" * 64, "spec", "watchdog", "killer", "wedge", "SIGTERM", 1.0, WORKER, "2026-01-01T00:00:00Z", {"x": 1})
     ledger.append_disposition(disposition)
     outcome = DispatchOutcome("worker_disposition", "accepted", "p", "ph", "fam", "a-disposition", reservation["payload"]["admission_receipt_id"], "d" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", disposition_id="a-disp", provider_failure_key=key_a)
@@ -259,7 +272,7 @@ def test_disposition_breaks_consecutiveness_without_degradation(tmp_path):
     key = ProviderFailureKey.derive(phase="ph", selected_spec="spec", provider_failure_class="availability", provider_epoch_identity="epoch").value
     _append_provider(ledger, key=key, logical="p1", projection="p1", suffix="p1")
     reservation = ledger.reserve(plan_id="p", phase="ph", projection_key="d", semantic_dispatch_fingerprint="d" * 64, logical_dispatch_id="d", dispatch_family_id="fam", selected_spec="spec")
-    ledger.append_controlled_adapter_state(reservation_event_id=reservation["payload"]["event_id"], admission_receipt_id=reservation["payload"]["admission_receipt_id"], physical_door_id="default-door", launch_state_identity="accepted", phase="ph", selected_spec="spec", primary_spec="spec", logical_dispatch_id="d", worker_identity=WORKER, started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:00:01Z")
+    _mark_accepted(ledger, reservation, logical="d")
     disposition = WorkerDisposition("disp", "in_band", "p", "ph", "fam", "d", reservation["payload"]["admission_receipt_id"], "d" * 64, "spec", "watchdog", "k", "wedge", "SIGTERM", 1.0, WORKER, "2026-01-01T00:00:00Z", {"x": 1})
     ledger.append_disposition(disposition)
     outcome = DispatchOutcome("worker_disposition", "accepted", "p", "ph", "fam", "d", reservation["payload"]["admission_receipt_id"], "d" * 64, "spec", WORKER, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", disposition_id="disp", provider_failure_key=key)

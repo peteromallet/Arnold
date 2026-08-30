@@ -116,6 +116,18 @@ def _terminal_ledger(tmp_path, outcome, suffix="terminal"):
         reservation_event_id=reservation["payload"]["event_id"],
         admission_receipt_id=receipt,
         physical_door_id="default-door",
+        launch_state_identity="not_started",
+    )
+    ledger.append_controlled_adapter_state(
+        reservation_event_id=reservation["payload"]["event_id"],
+        admission_receipt_id=receipt,
+        physical_door_id="default-door",
+        launch_state_identity="entered",
+    )
+    ledger.append_controlled_adapter_state(
+        reservation_event_id=reservation["payload"]["event_id"],
+        admission_receipt_id=receipt,
+        physical_door_id="default-door",
         launch_state_identity="accepted",
         phase=outcome.phase,
         selected_spec=outcome.selected_spec,

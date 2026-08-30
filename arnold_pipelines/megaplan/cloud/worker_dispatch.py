@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from arnold_pipelines.megaplan.types import CliError, parse_agent_spec
 SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
+_TRUSTED_OMP_RUNTIME_BINDING: dict[str, str] | None = None
 
 # These identifiers are assigned by the production call sites.  They are not
 # user-configurable metadata: a request entering one of these doors is a
@@ -159,6 +161,9 @@ class WorkerAdmissionRequest:
     expected_projection_version: int | None = None
     timeout_budget_s: float = DEFAULT_TIMEOUT_BUDGET_S
     parent_logical_dispatch_id: str | None = None
+    parent_terminal_event_id: str | None = None
+    parent_dispatch_family_id: str | None = None
+    parent_physical_door_id: str | None = None
     authorizing_event_id: str | None = None
     admission_attempt: int = 1
     production_intent: bool = True
@@ -315,11 +320,88 @@ def _extract_omp_models(value: Any) -> set[str]:
     return result
 
 
-def resolve_omp_live_membership(provider: str, model: str, *, timeout_s: float = 10.0, runner: Callable[..., Any] | None = None) -> Mapping[str, Any]:
-    """Require exact membership in the machine-readable OMP model surface."""
+def _resolve_omp_runtime_binding(
+    *,
+    trusted_executable: str | Path | None = None,
+) -> dict[str, str]:
+    candidate = shutil.which("omp")
+    if not candidate:
+        raise CliError("route_liveness_unavailable", "trusted omp executable is not available")
+    resolved = Path(candidate).resolve(strict=False)
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise CliError("omp_runtime_untrusted", "resolved omp executable is not a runnable file")
+    # Only a call-site supplied executable (or the installed runtime shape
+    # below) is trusted.  An environment variable is transport input and must
+    # not be able to bless an arbitrary executable.
+    expected_raw = trusted_executable
+    if expected_raw:
+        expected = Path(str(expected_raw)).expanduser().resolve(strict=False)
+        if resolved != expected:
+            raise CliError(
+                "omp_runtime_untrusted",
+                "omp PATH resolution does not match the trusted executable",
+                extra={"resolved_executable": str(resolved), "trusted_executable": str(expected)},
+            )
+    else:
+        # The resolved Bun entrypoint is the installed OMP runtime.  A random
+        # executable named ``omp`` from a prepended PATH is not an authority.
+        parts = set(resolved.parts)
+        if not (
+            resolved.name == "cli.js"
+            and "dist" in parts
+            and any("pi-coding-agent" in part for part in parts)
+        ):
+            raise CliError(
+                "omp_runtime_untrusted",
+                "resolved omp executable is outside the trusted coding-agent runtime",
+                extra={"resolved_executable": str(resolved)},
+            )
+    try:
+        import omp_rpc
+        rpc_path = Path(str(omp_rpc.__file__)).resolve(strict=True)
+        rpc_bytes = rpc_path.read_bytes()
+    except (ImportError, OSError, TypeError) as exc:
+        raise CliError("omp_runtime_untrusted", "true omp_rpc import path is unavailable") from exc
+    executable_bytes = resolved.read_bytes()
+    return {
+        "executable_path": str(resolved),
+        "executable_sha256": hashlib.sha256(executable_bytes).hexdigest(),
+        "runtime_import_path": str(rpc_path),
+        "runtime_import_sha256": hashlib.sha256(rpc_bytes).hexdigest(),
+        "interpreter": str(Path(sys.executable).resolve()),
+        "path_environment": os.environ.get("PATH", ""),
+        "path_environment_sha256": hashlib.sha256(os.environ.get("PATH", "").encode()).hexdigest(),
+    }
+
+
+def resolve_omp_live_membership(
+    provider: str,
+    model: str,
+    *,
+    timeout_s: float = 10.0,
+    runner: Callable[..., Any] | None = None,
+    trusted_executable: str | Path | None = None,
+) -> Mapping[str, Any]:
+    """Require exact membership from one trusted OMP runtime identity."""
+    global _TRUSTED_OMP_RUNTIME_BINDING
+    binding = _resolve_omp_runtime_binding(trusted_executable=trusted_executable)
+    if _TRUSTED_OMP_RUNTIME_BINDING is None:
+        _TRUSTED_OMP_RUNTIME_BINDING = dict(binding)
+    elif _TRUSTED_OMP_RUNTIME_BINDING != binding:
+        raise CliError(
+            "omp_runtime_untrusted",
+            "OMP executable/runtime identity changed during admission",
+            extra={"trusted_runtime": _TRUSTED_OMP_RUNTIME_BINDING, "observed_runtime": binding},
+        )
     run = runner or subprocess.run
     try:
-        completed = run(["omp", "models", "--json"], capture_output=True, text=True, timeout=timeout_s, check=False)
+        completed = run(
+            [binding["executable_path"], "models", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise CliError("route_liveness_unavailable", f"omp models --json failed: {exc}") from exc
     if getattr(completed, "returncode", 1) != 0:
@@ -333,7 +415,15 @@ def resolve_omp_live_membership(provider: str, model: str, *, timeout_s: float =
     if normalized not in members:
         raise CliError("route_liveness_missing", f"OMP route {normalized!r} is not an exact live member", extra={"members": sorted(members)})
     digest = _digest(sorted(members))
-    return {"kind": "omp_membership", "identity": normalized, "digest": digest, "provider": provider, "model": model, "observed_at": _now()}
+    return {
+        "kind": "omp_membership",
+        "identity": normalized,
+        "digest": digest,
+        "provider": provider,
+        "model": model,
+        "observed_at": _now(),
+        "executable": dict(binding),
+    }
 
 
 def _extract_native_models(value: Any) -> set[str]:
@@ -573,7 +663,27 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
         fingerprint = semantic_dispatch_fingerprint(phase=request.phase, selected_spec=normalized_spec, model_family=family, prompt_or_phase_input_identity=request.prompt_or_phase_input_identity, source_revision=request.source_revision, runtime_vector=request.runtime_vector, manifest_identity=request.manifest_identity, seed_identity=request.seed_identity, dependency_interpreter_identity=request.dependency_interpreter_identity, timeout_policy_identity=_digest(request.timeout_budget_s), configured_fallback_chain_identity=request.configured_fallback_chain_identity, authorized_route_identity=request.authorized_route_identity)
         ledger = request.ledger or IncidentLedger(request.ledger_root)
         execution_context_identity = _digest({"plan_id": request.plan_id, "phase": request.phase, "logical_dispatch_id": request.logical_dispatch_id, "physical_door_id": request.physical_door_id, "semantic_dispatch_fingerprint": fingerprint})
-        reserved = ledger.reserve(plan_id=request.plan_id, phase=request.phase, projection_key=request.projection_key, semantic_dispatch_fingerprint=fingerprint, logical_dispatch_id=request.logical_dispatch_id, dispatch_family_id=request.dispatch_family_id, physical_door_id=request.physical_door_id, expected_projection_version=request.expected_projection_version, changed_precondition_event_id=request.changed_precondition_event_id, selected_spec=normalized_spec, primary_spec=normalized_spec, configured_fallback_chain_identity=request.configured_fallback_chain_identity, execution_context_identity=execution_context_identity, actor="worker-admission")
+        reserved = ledger.reserve(
+            plan_id=request.plan_id,
+            phase=request.phase,
+            projection_key=request.projection_key,
+            semantic_dispatch_fingerprint=fingerprint,
+            logical_dispatch_id=request.logical_dispatch_id,
+            dispatch_family_id=request.dispatch_family_id,
+            physical_door_id=request.physical_door_id,
+            expected_projection_version=request.expected_projection_version,
+            changed_precondition_event_id=request.changed_precondition_event_id,
+            parent_logical_dispatch_id=request.parent_logical_dispatch_id,
+            parent_terminal_event_id=request.parent_terminal_event_id,
+            authorizing_event_id=request.authorizing_event_id,
+            parent_dispatch_family_id=request.parent_dispatch_family_id,
+            parent_physical_door_id=request.parent_physical_door_id,
+            selected_spec=normalized_spec,
+            primary_spec=normalized_spec,
+            configured_fallback_chain_identity=request.configured_fallback_chain_identity,
+            execution_context_identity=execution_context_identity,
+            actor="worker-admission",
+        )
         payload = reserved.get("payload", reserved) if isinstance(reserved, Mapping) else {}
         reservation_event_id = str(payload.get("event_id") or payload.get("reservation_event_id") or "")
         receipt_id = str(payload.get("admission_receipt_id") or ledger.derive_receipt(payload))
@@ -600,9 +710,6 @@ def _worker_identity(value: Any, *, require_verified: bool = False) -> Mapping[s
             raise ValueError("production worker identity lacks process start identity")
         if value.get("host") != os.uname().nodename:
             raise ValueError("production worker identity host does not match this machine")
-        # Boot identity is kernel-owned.  A caller-provided opaque string is
-        # never sufficient to attest a worker (and is especially dangerous
-        # across PID reuse or host restart).
         try:
             boot_path = Path("/proc/sys/kernel/random/boot_id")
             if boot_path.is_file():
@@ -617,11 +724,6 @@ def _worker_identity(value: Any, *, require_verified: bool = False) -> Mapping[s
             observed_boot = ""
         if not observed_boot or value.get("boot_id") != observed_boot:
             raise ValueError("production worker boot identity cannot be machine-verified")
-        # A live PID must still be the process that was attested.  There is no
-        # terminal exception for a dead PID: once the process cannot be
-        # inspected, admission cannot claim that it crossed the launch
-        # boundary.  Durable managed manifests are evidence for recovery, not
-        # a substitute for this production acceptance proof.
         try:
             os.kill(value["pid"], 0)
             observed_start = ""
@@ -651,20 +753,101 @@ def _worker_identity(value: Any, *, require_verified: bool = False) -> Mapping[s
     return dict(value)
 
 
+def _validate_managed_completed_identity(
+    value: Mapping[str, Any],
+    receipt: WorkerAdmissionReceipt,
+) -> Mapping[str, Any]:
+    """Validate a completed managed child from its canonical manifest.
+
+    A completed child is necessarily dead by the time the supervisor reads its
+    result.  The manifest is accepted only at the exact path derived from the
+    admitted receipt, with the child process identity and terminal transition
+    bound to that file.  A caller-supplied path, status, or digest cannot
+    substitute for the managed run's durable identity.
+    """
+    if value.get("attestation_source") != "managed_agent_manifest":
+        raise ValueError("managed completed identity has an invalid attestation source")
+    manifest_path_raw = value.get("manifest_path")
+    if not isinstance(manifest_path_raw, str) or not manifest_path_raw:
+        raise ValueError("managed completed identity lacks manifest path")
+    expected_path = (
+        Path(receipt.execution_context.ledger_root).resolve()
+        / receipt.logical_dispatch_id
+        / "manifest.json"
+    )
+    manifest_path = Path(manifest_path_raw).resolve(strict=False)
+    if manifest_path != expected_path:
+        raise ValueError("managed completed identity manifest path is not receipt-bound")
+    try:
+        raw = manifest_path.read_bytes()
+        manifest = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("managed completed identity manifest is unreadable") from exc
+    if not isinstance(manifest, Mapping):
+        raise ValueError("managed completed identity manifest is not an object")
+    from arnold_pipelines.megaplan.managed_agent import (
+        MANAGED_AGENT_CUSTODIAN,
+        MANAGED_AGENT_SCHEMA,
+        TERMINAL_STATUSES,
+    )
+    if manifest.get("schema_version") != MANAGED_AGENT_SCHEMA or manifest.get("custodian") != MANAGED_AGENT_CUSTODIAN:
+        raise ValueError("managed completed identity manifest is not canonical")
+    if manifest.get("run_id") != receipt.logical_dispatch_id:
+        raise ValueError("managed completed identity run is not receipt-bound")
+    if manifest.get("status") not in TERMINAL_STATUSES:
+        raise ValueError("managed completed identity is not terminal")
+    pid = manifest.get("worker_pid")
+    if pid != value.get("pid") or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise ValueError("managed completed identity PID does not match manifest")
+    expected = {
+        "host": manifest.get("worker_host"),
+        "boot_id": manifest.get("worker_boot_id"),
+        "process_start_identity": manifest.get("worker_start_ticks"),
+    }
+    for name, expected_value in expected.items():
+        if value.get(name) != expected_value or not isinstance(expected_value, str) or not expected_value:
+            raise ValueError(f"managed completed identity {name} does not match manifest")
+    if manifest.get("worker_identity_verified") is not True:
+        raise ValueError("managed completed identity was not verified at process start")
+    manifest_digest = hashlib.sha256(raw).hexdigest()
+    if value.get("managed_manifest_sha256") != manifest_digest:
+        raise ValueError("managed completed identity manifest digest mismatch")
+    if value.get("managed_run_id") != manifest.get("run_id"):
+        raise ValueError("managed completed identity run identity mismatch")
+    if not isinstance(manifest.get("worker_cmdline_sha256"), str) or len(manifest["worker_cmdline_sha256"]) != 64:
+        raise ValueError("managed completed identity lacks worker command binding")
+    return dict(value)
+
+
+def _validate_worker_identity_for_receipt(
+    value: Any,
+    receipt: WorkerAdmissionReceipt,
+) -> Mapping[str, Any]:
+    if not receipt.production_intent:
+        return _worker_identity(value)
+    if isinstance(value, Mapping) and value.get("attestation_source") == "managed_agent_manifest":
+        return _validate_managed_completed_identity(value, receipt)
+    return _worker_identity(value, require_verified=True)
+
+
 def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str, finished: str) -> DispatchOutcome:
     if isinstance(value, DispatchOutcome):
-        # A closure is invoked only after the adapter has persisted ``entered``.
-        # It therefore cannot truthfully return ``no_launch``: that state must
-        # be produced by the pre-launch scheduler or by explicit reconciliation
-        # of a persisted not_started marker.  Treating it as a successful
-        # closure would serialize an accepted marker and a no-launch result for
-        # the same reservation.
         if value.kind in {"no_launch", "unresolved_launch"}:
             raise ValueError("final launch closure returned a scheduling outcome after entry")
-        normalized = replace(value, plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, launch_state="accepted", started_at=value.started_at or started, finished_at=value.finished_at or finished, worker_identity=_worker_identity(value.worker_identity, require_verified=receipt.production_intent))
-        # Re-run the strict constructor after transport normalization.  This
-        # keeps success/provider/disposition payloads lossless while rejecting
-        # a closure that smuggles incompatible fields under a different kind.
+        normalized = replace(
+            value,
+            plan_id=receipt.plan_id,
+            phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            launch_state="accepted",
+            started_at=value.started_at or started,
+            finished_at=value.finished_at or finished,
+            worker_identity=_validate_worker_identity_for_receipt(value.worker_identity, receipt),
+        )
         return DispatchOutcome.from_dict(normalized.to_dict())
     launch_metadata: LaunchResult | None = None
     if isinstance(value, LaunchResult):
@@ -674,27 +857,98 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
         value = value.value
     if isinstance(value, Mapping) and "kind" in value:
         data = dict(value)
-        data.update({"schema_version": 1, "plan_id": receipt.plan_id, "phase": receipt.phase, "dispatch_family_id": receipt.dispatch_family_id, "logical_dispatch_id": receipt.logical_dispatch_id, "admission_receipt_id": receipt.admission_receipt_id, "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint, "selected_spec": receipt.normalized_spec, "launch_state": "accepted", "started_at": data.get("started_at") or (launch_metadata.started_at if launch_metadata else None) or started, "finished_at": data.get("finished_at") or (launch_metadata.finished_at if launch_metadata else None) or finished, "worker_identity": _worker_identity(data.get("worker_identity") or (launch_metadata.worker_identity if launch_metadata else None), require_verified=receipt.production_intent)})
+        data.update(
+            {
+                "schema_version": 1,
+                "plan_id": receipt.plan_id,
+                "phase": receipt.phase,
+                "dispatch_family_id": receipt.dispatch_family_id,
+                "logical_dispatch_id": receipt.logical_dispatch_id,
+                "admission_receipt_id": receipt.admission_receipt_id,
+                "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint,
+                "selected_spec": receipt.normalized_spec,
+                "launch_state": "accepted",
+                "started_at": data.get("started_at")
+                or (launch_metadata.started_at if launch_metadata else None)
+                or started,
+                "finished_at": data.get("finished_at")
+                or (launch_metadata.finished_at if launch_metadata else None)
+                or finished,
+                "worker_identity": _validate_worker_identity_for_receipt(
+                    data.get("worker_identity")
+                    or (launch_metadata.worker_identity if launch_metadata else None),
+                    receipt,
+                ),
+            }
+        )
+        for field_name in DispatchOutcome._FIELDS:
+            data.setdefault(field_name, None)
         return DispatchOutcome.from_dict(data)
-    # The native doors historically return the compatibility tuple
-    # ``(WorkerResult, agent, mode, refreshed)``.  Preserve the worker payload
-    # as an explicit success payload rather than collapsing it to ``str`` or
-    # dropping it while building the canonical terminal event.
     if isinstance(value, tuple) and len(value) == 4:
         worker, agent, mode, refreshed = value
         payload = getattr(worker, "payload", worker)
-        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(worker, "worker_identity", None) or (launch_metadata.worker_identity if launch_metadata else None), require_verified=receipt.production_intent), started_at=(launch_metadata.started_at if launch_metadata else None) or started, finished_at=(launch_metadata.finished_at if launch_metadata else None) or finished, success_payload={"worker_payload": payload, "agent": agent, "mode": mode, "refreshed": refreshed})
+        return DispatchOutcome(
+            kind="success",
+            launch_state="accepted",
+            plan_id=receipt.plan_id,
+            phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            worker_identity=_validate_worker_identity_for_receipt(
+                getattr(worker, "worker_identity", None)
+                or (launch_metadata.worker_identity if launch_metadata else None),
+                receipt,
+            ),
+            started_at=(launch_metadata.started_at if launch_metadata else None) or started,
+            finished_at=(launch_metadata.finished_at if launch_metadata else None) or finished,
+            success_payload={
+                "worker_payload": payload,
+                "agent": agent,
+                "mode": mode,
+                "refreshed": refreshed,
+            },
+        )
     if isinstance(value, Mapping) and all(key in value for key in ("host", "pid", "boot_id")):
-        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(value, require_verified=receipt.production_intent), started_at=started, finished_at=finished, success_payload=dict(value))
-    # Integers (managed-command return codes), None, booleans, and arbitrary
-    # objects are not typed worker outcomes.  Requiring a LaunchResult or a
-    # canonical DispatchOutcome prevents a successful return code from being
-    # serialized as an accepted worker launch.
+        return DispatchOutcome(
+            kind="success",
+            launch_state="accepted",
+            plan_id=receipt.plan_id,
+            phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            worker_identity=_validate_worker_identity_for_receipt(value, receipt),
+            started_at=started,
+            finished_at=finished,
+            success_payload=dict(value),
+        )
     if not launch_metadata:
         raise ValueError("final launch must return a typed outcome with worker identity")
     if isinstance(value, (int, float, bool, str, bytes, type(None))):
         raise ValueError("primitive launch results are not typed worker outcomes")
-    return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(value, "worker_identity", None) or launch_metadata.worker_identity, require_verified=receipt.production_intent), started_at=launch_metadata.started_at or started, finished_at=launch_metadata.finished_at or finished, success_payload=getattr(value, "payload", value))
+    return DispatchOutcome(
+        kind="success",
+        launch_state="accepted",
+        plan_id=receipt.plan_id,
+        phase=receipt.phase,
+        dispatch_family_id=receipt.dispatch_family_id,
+        logical_dispatch_id=receipt.logical_dispatch_id,
+        admission_receipt_id=receipt.admission_receipt_id,
+        semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+        selected_spec=receipt.normalized_spec,
+        worker_identity=_validate_worker_identity_for_receipt(
+            getattr(value, "worker_identity", None) or launch_metadata.worker_identity,
+            receipt,
+        ),
+        started_at=launch_metadata.started_at or started,
+        finished_at=launch_metadata.finished_at or finished,
+        success_payload=getattr(value, "payload", value),
+    )
 
 
 def build_authorized_linked_child_request(
@@ -717,14 +971,20 @@ def build_authorized_linked_child_request(
         }:
             raise ValueError("linked child requires a canonical terminal parent")
     parent_terminal_from_outcome = parent.get("terminal_outcome_event_id") if isinstance(parent, Mapping) else None
+    parent_terminal_from_request = (
+        parent.get("parent_terminal_event_id")
+        if isinstance(parent, Mapping)
+        else getattr(parent, "parent_terminal_event_id", None)
+    )
     if not isinstance(parent, WorkerAdmissionRequest):
         parent_payload = dict(parent)
-        # The terminal-parent marker is authorization context, not part of the
-        # admission request wire schema.  Accept it on a request mapping while
-        # keeping ``WorkerAdmissionRequest.from_dict`` strict.
         parent_payload.pop("terminal_outcome_event_id", None)
         parent = WorkerAdmissionRequest.from_dict(parent_payload)
-    parent_terminal = changes.pop("parent_terminal_event_id", None) or parent_terminal_from_outcome
+    parent_terminal = (
+        changes.pop("parent_terminal_event_id", None)
+        or parent_terminal_from_outcome
+        or parent_terminal_from_request
+    )
     if not parent_terminal:
         raise ValueError("linked child requires a canonical terminal parent event")
     if logical_dispatch_id == parent.logical_dispatch_id:
@@ -786,6 +1046,8 @@ def build_authorized_linked_child_request(
         ):
             if authorizer.get(name) != expected:
                 raise ValueError(f"linked child authorizer context mismatch: {name}")
+        if authorizer.get("consumed") is True:
+            raise ValueError("linked child authorizer has already been consumed")
         if terminal.get("admission_receipt_id") is None or terminal.get("semantic_dispatch_fingerprint") is None:
             raise ValueError("linked child parent lacks canonical receipt/fingerprint context")
     requested_production = changes.pop("production_intent", None)
@@ -795,6 +1057,9 @@ def build_authorized_linked_child_request(
         parent,
         logical_dispatch_id=logical_dispatch_id,
         parent_logical_dispatch_id=parent.logical_dispatch_id,
+        parent_terminal_event_id=parent_terminal,
+        parent_dispatch_family_id=parent.dispatch_family_id,
+        parent_physical_door_id=parent.physical_door_id,
         authorizing_event_id=authorizing_event_id,
         physical_door_id=physical_door_id or parent.physical_door_id,
         dispatch_family_id=dispatch_family_id or parent.dispatch_family_id,

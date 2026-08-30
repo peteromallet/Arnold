@@ -45,3 +45,20 @@ def test_checker_rejects_aliased_and_dynamic_launch_or_admission_bypass(tmp_path
     result = check_files([door])
     assert not result["ok"]
     assert any(item["code"] == code for item in result["diagnostics"])
+
+
+def test_checker_rejects_raw_and_dynamic_launch_inside_canonical_door(tmp_path, monkeypatch) -> None:
+    import scripts.check_worker_admission_authority as authority
+
+    door = tmp_path / "canonical-door.py"
+    door.write_text(
+        "import subprocess as sp\n"
+        "def launch():\n"
+        "    spawn = getattr(sp, 'Popen')\n"
+        "    return spawn(['echo', 'bad'])\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(authority, "CANONICAL_DOORS", frozenset({door}))
+    result = authority.check_files([door])
+    assert not result["ok"]
+    assert any(item["code"] == "raw_launch_access" for item in result["diagnostics"])

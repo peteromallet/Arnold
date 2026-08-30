@@ -138,7 +138,10 @@ class ControlledFinalLaunch:
                 worker_identity = value
         # LaunchResult is imported lazily to avoid the worker_dispatch ↔
         # controlled adapter import cycle.
-        from arnold_pipelines.megaplan.cloud.worker_dispatch import LaunchResult
+        from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+            LaunchResult,
+            _validate_worker_identity_for_receipt,
+        )
         if isinstance(value, LaunchResult):
             if not value.accepted:
                 self._persist("ambiguous")
@@ -150,27 +153,13 @@ class ControlledFinalLaunch:
                 key in value.value for key in ("host", "pid", "boot_id")
             ):
                 worker_identity = value.value
-        if not isinstance(worker_identity, dict):
+        try:
+            worker_identity = dict(
+                _validate_worker_identity_for_receipt(worker_identity, self.receipt)
+            )
+        except (TypeError, ValueError, OSError):
             self._persist("ambiguous")
-            raise RuntimeError("accepted launch requires explicit worker identity")
-        if (
-            not isinstance(worker_identity.get("host"), str)
-            or not worker_identity.get("host")
-            or not isinstance(worker_identity.get("boot_id"), str)
-            or not worker_identity.get("boot_id")
-            or isinstance(worker_identity.get("pid"), bool)
-            or not isinstance(worker_identity.get("pid"), int)
-            or worker_identity.get("pid") <= 0
-        ):
-            self._persist("ambiguous")
-            raise RuntimeError("accepted launch worker identity is malformed")
-        if self.receipt.production_intent:
-            if worker_identity.get("verified") is not True or not worker_identity.get("process_start_identity"):
-                self._persist("ambiguous")
-                raise RuntimeError("production launch worker identity is not process-attested")
-            if worker_identity.get("host") != os.uname().nodename:
-                self._persist("ambiguous")
-                raise RuntimeError("production launch worker identity host mismatch")
+            raise RuntimeError("accepted launch worker identity is not process-attested")
         self.accepted_started_at = started_at
         self.accepted_finished_at = finished_at
         self.accepted_worker_identity = worker_identity

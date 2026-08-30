@@ -490,6 +490,7 @@ class IncidentLedger:
         terminals: dict[str, dict[str, Any]] = {}
         dispositions: dict[str, dict[str, Any]] = {}
         changes: dict[str, dict[str, Any]] = {}
+        authorizations: dict[str, dict[str, Any]] = {}
         confirmations: dict[str, dict[str, Any]] = {}
         provider_streams: dict[str, dict[str, Any]] = {}
         latest_stream_key: str | None = None
@@ -500,7 +501,9 @@ class IncidentLedger:
                 continue
             p = record["payload"]
             typ = p.get("event_type")
-            if typ == "admission_reserved":
+            if typ == "authorization_granted":
+                authorizations[p["event_id"]] = {**p, "consumed": False}
+            elif typ == "admission_reserved":
                 key = p["reservation_key"]
                 reservations[key] = {
                     **p,
@@ -512,6 +515,9 @@ class IncidentLedger:
                 consumed = p.get("changed_precondition_event_id")
                 if consumed in changes:
                     changes[consumed]["consumed"] = True
+                authorized = p.get("authorizing_event_id")
+                if authorized in authorizations:
+                    authorizations[authorized]["consumed"] = True
             elif typ == "provider_route_child_reserved":
                 key = p["reservation_key"]
                 reservations[key] = {
@@ -609,12 +615,45 @@ class IncidentLedger:
                             reservation["accepted_launch"] = True
                             reservation["accepted_launch_marker"] = dict(p)
         latest = provider_streams.get(latest_stream_key, {"provider_failure_key": None, "observation_streak": 0})
-        return {"projection_version": len(records), "reservations": reservations, "terminals": terminals, "dispositions": dispositions, "changed_preconditions": changes, "confirmations": confirmations, "active_provider_failure_key": active_provider_key, "observation_streak": latest.get("observation_streak", 0), "provider_streaks": provider_streams}
+        return {
+            "projection_version": len(records),
+            "reservations": reservations,
+            "terminals": terminals,
+            "dispositions": dispositions,
+            "changed_preconditions": changes,
+            "authorizations": authorizations,
+            "confirmations": confirmations,
+            "active_provider_failure_key": active_provider_key,
+            "observation_streak": latest.get("observation_streak", 0),
+            "provider_streaks": provider_streams,
+        }
 
     def projection(self) -> dict[str, Any]:
         return self._project_records(self.read_nbf_events())
 
-    def reserve(self, *, plan_id: str, phase: str, projection_key: str, semantic_dispatch_fingerprint: str, logical_dispatch_id: str, dispatch_family_id: str, physical_door_id: str = "default-door", expected_projection_version: int | None = None, changed_precondition_event_id: str | None = None, selected_spec: str = "unspecified", primary_spec: str | None = None, configured_fallback_chain_identity: str = "", execution_context_identity: str = "", actor: str = "megaplan") -> dict[str, Any]:
+    def reserve(
+        self,
+        *,
+        plan_id: str,
+        phase: str,
+        projection_key: str,
+        semantic_dispatch_fingerprint: str,
+        logical_dispatch_id: str,
+        dispatch_family_id: str,
+        physical_door_id: str = "default-door",
+        expected_projection_version: int | None = None,
+        changed_precondition_event_id: str | None = None,
+        parent_logical_dispatch_id: str | None = None,
+        parent_terminal_event_id: str | None = None,
+        parent_dispatch_family_id: str | None = None,
+        parent_physical_door_id: str | None = None,
+        authorizing_event_id: str | None = None,
+        selected_spec: str = "unspecified",
+        primary_spec: str | None = None,
+        configured_fallback_chain_identity: str = "",
+        execution_context_identity: str = "",
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
         key = reservation_key(projection_key, semantic_dispatch_fingerprint)
         with self._locked() as (fd, records):
             projection = self._project_records(records)
@@ -623,8 +662,81 @@ class IncidentLedger:
             current = projection["reservations"].get(key)
             if current and not current.get("closed"):
                 raise ValueError("active reservation already exists for projection key and fingerprint")
-            if current and current.get("reconciliation") != "released_no_launch" and not changed_precondition_event_id:
-                raise ValueError("terminal fingerprint requires a changed precondition")
+            if (
+                current
+                and current.get("reconciliation") != "released_no_launch"
+                and not changed_precondition_event_id
+                and not authorizing_event_id
+            ):
+                raise ValueError("terminal fingerprint requires a changed precondition or linked authorization")
+            if bool(authorizing_event_id) != bool(parent_terminal_event_id):
+                raise ValueError("linked reservation requires parent terminal and authorizing event")
+            if authorizing_event_id:
+                if not parent_logical_dispatch_id or not parent_dispatch_family_id or not parent_physical_door_id:
+                    raise ValueError("linked reservation requires complete parent identity")
+                parent = projection["terminals"].get(parent_terminal_event_id)
+                if not parent or parent.get("outcome_kind") not in {
+                    "success",
+                    "ordinary_terminal_failure",
+                    "provider_exhausted",
+                    "worker_disposition",
+                }:
+                    raise ValueError("linked reservation requires a canonical terminal parent")
+                parent_context = {
+                    "plan_id": plan_id,
+                    "phase": phase,
+                    "parent_logical_dispatch_id": parent.get("logical_dispatch_id"),
+                    "parent_dispatch_family_id": parent.get("dispatch_family_id"),
+                    "parent_physical_door_id": parent.get("physical_door_id"),
+                }
+                supplied_context = {
+                    "plan_id": plan_id,
+                    "phase": phase,
+                    "parent_logical_dispatch_id": parent_logical_dispatch_id,
+                    "parent_dispatch_family_id": parent_dispatch_family_id,
+                    "parent_physical_door_id": parent_physical_door_id,
+                }
+                for name, expected in parent_context.items():
+                    if supplied_context[name] != expected:
+                        raise ValueError(f"linked reservation parent context mismatch: {name}")
+                if any(
+                    record.get("payload", {}).get("authorizing_event_id") == authorizing_event_id
+                    for record in records
+                    if record.get("payload", {}).get("event_type")
+                    in {"admission_reserved", "provider_route_child_reserved"}
+                ):
+                    raise ValueError("linked reservation authorizer has already been consumed")
+                authorizer = projection["authorizations"].get(authorizing_event_id)
+                if authorizer is None:
+                    authorizer = projection["changed_preconditions"].get(authorizing_event_id)
+                if authorizer is None:
+                    authorizer = next(
+                        (
+                            record.get("payload", {})
+                            for record in records
+                            if record.get("payload", {}).get("event_id") == authorizing_event_id
+                            and record.get("payload", {}).get("event_type") == "provider_recovery_verified"
+                        ),
+                        None,
+                    )
+                if not authorizer or authorizer.get("consumed") is True:
+                    raise ValueError("linked reservation authorizer is missing or already consumed")
+                if authorizer.get("parent_terminal_event_id") != parent_terminal_event_id:
+                    raise ValueError("linked reservation authorizer is bound to a different parent")
+                for name in (
+                    "plan_id",
+                    "phase",
+                    "parent_logical_dispatch_id",
+                    "parent_dispatch_family_id",
+                    "parent_physical_door_id",
+                ):
+                    if authorizer.get(name) != supplied_context[name]:
+                        raise ValueError(f"linked reservation authorizer context mismatch: {name}")
+                if (
+                    authorizer.get("event_type") == "changed_precondition"
+                    and changed_precondition_event_id not in {None, authorizing_event_id}
+                ):
+                    raise ValueError("linked reservation authorizer mismatch")
             if changed_precondition_event_id:
                 change = projection["changed_preconditions"].get(changed_precondition_event_id)
                 if not change or change.get("consumed"):
@@ -633,10 +745,42 @@ class IncidentLedger:
                     raise ValueError("changed precondition context mismatch")
                 if change.get("logical_dispatch_id") not in (None, logical_dispatch_id):
                     raise ValueError("changed precondition logical identity mismatch")
-                if change.get("provider_failure_key_before") and change.get("provider_failure_key_after") and change.get("provider_failure_key_before") == change.get("provider_failure_key_after") and change.get("reason") != "provider_recovery_verified":
+                if (
+                    change.get("provider_failure_key_before")
+                    and change.get("provider_failure_key_after")
+                    and change.get("provider_failure_key_before") == change.get("provider_failure_key_after")
+                    and change.get("reason") != "provider_recovery_verified"
+                ):
                     raise ValueError("unchanged provider key cannot authorize this reservation")
-            event_id = _stable_id("admission_reserved", key, logical_dispatch_id, str(projection["projection_version"]))
-            payload = {"schema_version": 1, "event_type": "admission_reserved", "event_id": event_id, "plan_id": plan_id, "phase": phase, "projection_key": projection_key, "reservation_key": key, "semantic_dispatch_fingerprint": semantic_dispatch_fingerprint, "logical_dispatch_id": logical_dispatch_id, "dispatch_family_id": dispatch_family_id, "physical_door_id": physical_door_id, "selected_spec": selected_spec, "expected_projection_version": projection["projection_version"], "changed_precondition_event_id": changed_precondition_event_id, "recorded_at": _now(), "actor": actor, "admission_receipt_id": derive_receipt_id(
+            event_id = _stable_id(
+                "admission_reserved",
+                key,
+                logical_dispatch_id,
+                str(projection["projection_version"]),
+            )
+            payload = {
+                "schema_version": 1,
+                "event_type": "admission_reserved",
+                "event_id": event_id,
+                "plan_id": plan_id,
+                "phase": phase,
+                "projection_key": projection_key,
+                "reservation_key": key,
+                "semantic_dispatch_fingerprint": semantic_dispatch_fingerprint,
+                "logical_dispatch_id": logical_dispatch_id,
+                "dispatch_family_id": dispatch_family_id,
+                "physical_door_id": physical_door_id,
+                "selected_spec": selected_spec,
+                "expected_projection_version": projection["projection_version"],
+                "changed_precondition_event_id": changed_precondition_event_id,
+                "parent_logical_dispatch_id": parent_logical_dispatch_id,
+                "parent_terminal_event_id": parent_terminal_event_id,
+                "parent_dispatch_family_id": parent_dispatch_family_id,
+                "parent_physical_door_id": parent_physical_door_id,
+                "authorizing_event_id": authorizing_event_id,
+                "recorded_at": _now(),
+                "actor": actor,
+                "admission_receipt_id": derive_receipt_id(
                     reservation_event_id=event_id,
                     plan_id=plan_id,
                     phase=phase,
@@ -644,15 +788,76 @@ class IncidentLedger:
                     logical_dispatch_id=logical_dispatch_id,
                     physical_door_id=physical_door_id,
                     semantic_dispatch_fingerprint=semantic_dispatch_fingerprint,
-                )}
+                ),
+            }
             payload["primary_spec"] = primary_spec or selected_spec
             payload["configured_fallback_chain_identity"] = configured_fallback_chain_identity
             if execution_context_identity:
                 payload["execution_context_identity"] = execution_context_identity
-            # The receipt is returned only after _emit_locked has fsynced the
-            # reservation.  The payload still carries the deterministic value
-            # so replay can validate the exact committed context.
             return self._append_nbf_locked(fd, payload, records)
+    def append_authorization_granted(
+        self,
+        *,
+        plan_id: str,
+        phase: str,
+        parent_logical_dispatch_id: str,
+        parent_terminal_event_id: str,
+        parent_dispatch_family_id: str,
+        parent_physical_door_id: str,
+        reason: str = "linked_child",
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        from arnold_pipelines.megaplan.incident.schema import AuthorizationGranted, _digest
+
+        with self._locked() as (fd, records):
+            projection = self._project_records(records)
+            parent = projection["terminals"].get(parent_terminal_event_id)
+            if not parent or parent.get("outcome_kind") not in {
+                "success",
+                "ordinary_terminal_failure",
+                "provider_exhausted",
+                "worker_disposition",
+            }:
+                raise ValueError("authorization requires a canonical terminal parent")
+            expected = {
+                "plan_id": plan_id,
+                "phase": phase,
+                "parent_logical_dispatch_id": parent_logical_dispatch_id,
+                "parent_dispatch_family_id": parent_dispatch_family_id,
+                "parent_physical_door_id": parent_physical_door_id,
+            }
+            actual = {
+                "plan_id": parent.get("plan_id"),
+                "phase": parent.get("phase"),
+                "parent_logical_dispatch_id": parent.get("logical_dispatch_id"),
+                "parent_dispatch_family_id": parent.get("dispatch_family_id"),
+                "parent_physical_door_id": parent.get("physical_door_id"),
+            }
+            if actual != expected:
+                raise ValueError("authorization parent context mismatch")
+            event_id = _digest({
+                "event_type": "authorization_granted",
+                "plan_id": plan_id,
+                "phase": phase,
+                "parent_logical_dispatch_id": parent_logical_dispatch_id,
+                "parent_terminal_event_id": parent_terminal_event_id,
+                "parent_dispatch_family_id": parent_dispatch_family_id,
+                "parent_physical_door_id": parent_physical_door_id,
+                "reason": reason,
+            })
+            grant = AuthorizationGranted(
+                event_id=event_id,
+                plan_id=plan_id,
+                phase=phase,
+                parent_logical_dispatch_id=parent_logical_dispatch_id,
+                parent_terminal_event_id=parent_terminal_event_id,
+                parent_dispatch_family_id=parent_dispatch_family_id,
+                parent_physical_door_id=parent_physical_door_id,
+                reason=reason,
+                recorded_at=_now(),
+                actor=actor,
+            )
+            return self._append_nbf_locked(fd, grant.to_dict(), records)
 
     def append_controlled_adapter_state(self, *, reservation_event_id: str, admission_receipt_id: str, physical_door_id: str, launch_state_identity: str, phase: str | None = None, selected_spec: str | None = None, primary_spec: str | None = None, logical_dispatch_id: str | None = None, worker_identity: Any = None, started_at: str | None = None, finished_at: str | None = None, actor: str = "controlled-adapter") -> dict[str, Any]:
         """Persist the adapter's launch proof through the canonical NBF door."""
@@ -673,7 +878,38 @@ class IncidentLedger:
             reservation = next((r.get("payload", {}) for r in records if r.get("payload", {}).get("event_type") in {"admission_reserved", "provider_route_child_reserved"} and r.get("payload", {}).get("event_id") == reservation_event_id), None)
             if reservation is None or reservation.get("admission_receipt_id", admission_receipt_id) != admission_receipt_id:
                 raise ValueError("controlled adapter state is not bound to reservation receipt")
+            expected_door = reservation.get("physical_door_id") or reservation.get("child_physical_door_id")
+            if not expected_door or physical_door_id != expected_door:
+                raise ValueError("controlled adapter state physical door is not canonical")
+            prior_states = [
+                r.get("payload", {}).get("launch_state_identity")
+                for r in records
+                if r.get("payload", {}).get("event_type") == "controlled_adapter_state"
+                and r.get("payload", {}).get("reservation_event_id") == reservation_event_id
+                and r.get("payload", {}).get("admission_receipt_id") == admission_receipt_id
+            ]
+            if prior_states:
+                current = prior_states[-1]
+                legal_next = {
+                    "not_started": {"entered"},
+                    "entered": {"accepted", "ambiguous"},
+                    "accepted": {"closed"},
+                    "ambiguous": set(),
+                    "closed": set(),
+                }
+                if launch_state_identity not in legal_next.get(current, set()):
+                    raise ValueError(
+                        f"controlled adapter illegal launch-state transition: {current}->{launch_state_identity}"
+                    )
+            elif launch_state_identity != "not_started":
+                raise ValueError("controlled adapter fresh reservation must begin at not_started")
             if launch_state_identity == "accepted":
+                for name, value in (
+                    ("phase", phase), ("selected_spec", selected_spec),
+                    ("logical_dispatch_id", logical_dispatch_id),
+                ):
+                    if value != reservation.get(name):
+                        raise ValueError(f"controlled adapter accepted context mismatch: {name}")
                 prior = [r.get("payload", {}) for r in records if r.get("payload", {}).get("event_type") == "controlled_adapter_state" and r.get("payload", {}).get("reservation_event_id") == reservation_event_id and r.get("payload", {}).get("launch_state_identity") == "accepted"]
                 if prior and prior[0] != payload:
                     raise ValueError("accepted launch marker already exists")
