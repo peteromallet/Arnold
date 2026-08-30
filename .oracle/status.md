@@ -1,6 +1,8 @@
-# NBF execution contract frozen — 2026-08-29
+# NBF execution contract — Batch 1 PASS checkpoint — 2026-08-30
 
-- State: `FROZEN`; implementation has not started.
+- State: `BATCH_1_PASS` at checkpoint `878a9b2980f0eab6642ed51c30e687903a7213b9`.
+- Oracle: Grok 4.6, per the authoritative model policy; verdict:
+  `PASS_BATCH_1`.
 - Settled plan v8 SHA-256: `0ec216cca92a6f99f7d73e78494a46f8acb08e22c506a58948640ea2c57421e1`
 - Proposed tasklist v8 SHA-256: `88adb2e2e849285c7f83c924ef32c4fab12f1d05d3d4820dab0813f40c445e43`
 - Frozen tasklist v8 SHA-256: `9d206c8ff7d524f7b1247d4879dc3a1a32b0b0d953b49bc57ffe1aee68411589`
@@ -8,7 +10,19 @@
 - Sol freeze receipt SHA-256: `6e5a2b51c2b4954506a171884cbc2c2fe31bbf826b620ef13aa30ef1283f942e`
 - North Star SHA-256: `d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e`
 - Immutable source base: `origin/main@798c50619204010ed3f4297fbb57988fe9381924`
-- Next step: Batch 1 — execute `NBF-01` with GPT-5.6 Luna, then obtain its Sol Oracle gate before Batch 2.
+- PASS artifacts and production evidence:
+  - `.oracle/checkins/batch-1-rework6-luna.md` — `de278150f2245ce7330694470f5b474788aaf1e234c712a5099dfbda2aeef850`
+  - `.oracle/receipts/oracle-nbf01-rework6-luna.md` — `ce5136fde4af45a8d64f372b733ae1868c4b718258177bff88e6f262527ca4ba`
+  - `.oracle/checkins/batch-1-rework6-grok.md` — `1a3cac2973d67ea270bd324ee742fcd074a696bff49ab55cd7e20b9aaa8d6b79`
+  - `.oracle/receipts/oracle-nbf01-rework6-grok.md` — `5ede0d4cf30e0cef5c1dfbdf6fab7aed36269e818b1122bac3def59928e0832a`
+  - attempt-6 production diff — `ab2b9cb2743a2cc9d73e0f5cbffb650a313da60833500217dd7db5aa13e2bd2e`
+- Wrapper correction: `.oracle/receipts/oracle-nbf01-rework6-grok-wrapper-exit-correction.md` — `43c1d6b250136d1449575c811d39976a9da177030d4d50cde2e88e0bf02c50f5`.
+  The primary Grok wrapper returned exit 1 on provider spending-limit 403 only
+  after PASS artifacts were complete; the existing exit-0 record is Luna-only.
+- Batch 2 is eligible after this PASS and appears to be in progress in the
+  preserved dirty worktree. No Batch-1 blocker remains; future Grok Oracle
+  spending-limit availability is the only recorded later-gate availability
+  risk.
 
 # Prior status — Megado run resumed, custody/source reconciliation
 
