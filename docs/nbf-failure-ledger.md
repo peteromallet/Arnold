@@ -45,3 +45,10 @@ AND a live worker exists ≥10 min with advancing events seq. PID/prose ≠ proo
 
 | 18 | 22:37→02:29 | openrouter glm-5.3-flash upstream idle-timeout outage on the large revise prompt (6× failures 22:37–00:00, more post-fix to 02:29); OLD drive loop then re-dispatched revise 3× from blocked, each rejected `invalid_transition`, breaker counted the synthetic rejections → `deterministic_phase_failure` masked the provider outage and durably parked the chain (occurrence 81827f38514f) | external failure not terminal in `drive()` + `_project_auto_dispatch` cursor fallback promoted a raw phase from blocked | engine (auto.py) | commit `7a1380ddee` (terminal-exit on external_error; no raw phase dispatch from blocked; pre-dispatch invariant; 2 regressions; 29/29 + 169 suites green); manifest gen 15 + seed rebind; post-fix behavior verified live (terminal block, no masking, seq 332); gen8 re-admission via `override recover-blocked` + canonical drive `nbf-drive-81827f38514f-gen8` pid 2872776 | FIXED (provider stability on large prompts remains environmental) |
 | 20 | 2026-08-30 17:08Z | C1 `native-c1-completion-contract` review repeated `runtime_launch_attestation_mismatch` ×3; chain blocked | `runtime interpreter identity drifted` at the review dispatch boundary; current seed/runtime interpreter vector no longer matches the editable-install interpreter after rebind/profile changes | identity/dispatch | OPEN: feed to Codex Sol planner; determine whether seed rebuild should be automatic at every production dispatch or whether the active plan must be rebound before review; admin notification required |
+
+Entry 20 follow-up: Codex Sol reviewed the failure and AMENDED criterion 1 in
+`.oracle/agent_goal.md`: canonical launch-seed settlement must happen exactly
+once under the manifest promotion/CAS lock before identity snapshots and
+fingerprint reservation. Discord notification was attempted but failed with
+HTTP 403 on both DM creation and guild fallback; status is explicitly
+UNDELIVERED, not silently marked sent.
