@@ -52,3 +52,6 @@ once under the manifest promotion/CAS lock before identity snapshots and
 fingerprint reservation. Discord notification was attempted but failed with
 HTTP 403 on both DM creation and guild fallback; status is explicitly
 UNDELIVERED, not silently marked sent.
+| 21 | 2026-08-30 21:53→22:02Z | Codex Luna/Sol fixer tree stayed at 0% CPU for 8h+ while C1 remained blocked; all four read-only investigator reports said commands never reached repository bytes | fixer transport was alive by PID but produced no progress; investigator sandbox/command path failed before evidence collection, while the stale fixer was retained as an owner; no movement proof | fixer liveness/transport | stale tree terminated by exact verified PIDs; fresh Luna dispatch required; plan task: liveness must include progress/artifact evidence and investigator transport failure must be typed/retried, not treated as active ownership | OPEN |
+
+Entry 21 notification: admin Discord alert must be attempted; delivery status is recorded separately because prior DM and guild fallback both returned HTTP 403.
