@@ -1,0 +1,2 @@
+python -m py_compile arnold_pipelines/megaplan/cloud/worker_dispatch.py tests/cloud/test_dispatch_with_admission.py
+exit 0
