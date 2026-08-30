@@ -7363,10 +7363,7 @@ def _production_worker_dispatch(
             "wbc_dispatch_required",
             "production native dispatch requires the canonical WBC adapter",
         )
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-        configured_seed_path,
-        require_production_worker_dispatch_runtime,
-    )
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import configured_seed_path
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
@@ -7429,9 +7426,7 @@ def _production_worker_dispatch(
             worker_options=worker_options, record_routing=True,
         )
 
-    outcome = dispatch_with_admission(
-        request, launch, gate=require_production_worker_dispatch_runtime, return_worker=True,
-    )
+    outcome = dispatch_with_admission(request, launch, return_worker=True)
     if isinstance(outcome, AdmissionRefusal):
         raise CliError(outcome.code, outcome.reason, extra=outcome.to_dict())
     if isinstance(outcome, SchedulingCondition):

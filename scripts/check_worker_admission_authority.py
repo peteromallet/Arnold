@@ -55,6 +55,30 @@ def check_files(paths: Iterable[Path] = DOORS) -> dict[str, Any]:
                     "code": "raw_runtime_preflight" if name != "worker_launch_preflight" else "chain_local_preflight",
                     "symbol": name,
                 })
+        dispatch_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and ((isinstance(node.func, ast.Name) and node.func.id == "dispatch_with_admission")
+                 or (isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch_with_admission"))
+        ]
+        # The shared dispatcher owns admission.  A door may invoke it once,
+        # but may not supply a replacement gate capable of minting a receipt or
+        # bypassing source/runtime/liveness checks.  Resolver/readers belong on
+        # the typed request instead.
+        for node in dispatch_calls:
+            if any(keyword.arg == "gate" for keyword in node.keywords):
+                diagnostics.append({
+                    "path": str(path),
+                    "line": node.lineno,
+                    "code": "caller_trusted_admission_gate",
+                    "detail": "dispatch_with_admission must use the canonical authority",
+                })
+        if path.name in {"_impl.py", "omp.py", "launch.py"} and len(dispatch_calls) > 1:
+            diagnostics.append({
+                "path": str(path),
+                "code": "duplicate_admission_door",
+                "detail": f"found {len(dispatch_calls)} dispatch_with_admission calls; each physical door must have one",
+            })
         if path.name == "_impl.py":
             if "dispatch_with_admission" not in source:
                 diagnostics.append({"path": str(path), "code": "missing_canonical_dispatch"})

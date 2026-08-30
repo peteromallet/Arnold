@@ -440,9 +440,19 @@ def _worker_identity(value: Any) -> Mapping[str, Any]:
 
 def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str, finished: str) -> DispatchOutcome:
     if isinstance(value, DispatchOutcome):
+        # A closure is invoked only after the adapter has persisted ``entered``.
+        # It therefore cannot truthfully return ``no_launch``: that state must
+        # be produced by the pre-launch scheduler or by explicit reconciliation
+        # of a persisted not_started marker.  Treating it as a successful
+        # closure would serialize an accepted marker and a no-launch result for
+        # the same reservation.
         if value.kind in {"no_launch", "unresolved_launch"}:
-            return value
-        return replace(value, plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, launch_state="accepted", started_at=value.started_at or started, finished_at=value.finished_at or finished, worker_identity=_worker_identity(value.worker_identity))
+            raise ValueError("final launch closure returned a scheduling outcome after entry")
+        normalized = replace(value, plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, launch_state="accepted", started_at=value.started_at or started, finished_at=value.finished_at or finished, worker_identity=_worker_identity(value.worker_identity))
+        # Re-run the strict constructor after transport normalization.  This
+        # keeps success/provider/disposition payloads lossless while rejecting
+        # a closure that smuggles incompatible fields under a different kind.
+        return DispatchOutcome.from_dict(normalized.to_dict())
     if isinstance(value, LaunchResult):
         if not value.accepted:
             raise RuntimeError("launch operation did not positively establish no-acceptance")
@@ -451,6 +461,14 @@ def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str
         data = dict(value)
         data.update({"schema_version": 1, "plan_id": receipt.plan_id, "phase": receipt.phase, "dispatch_family_id": receipt.dispatch_family_id, "logical_dispatch_id": receipt.logical_dispatch_id, "admission_receipt_id": receipt.admission_receipt_id, "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint, "selected_spec": receipt.normalized_spec, "launch_state": "accepted", "started_at": data.get("started_at") or started, "finished_at": data.get("finished_at") or finished, "worker_identity": _worker_identity(data.get("worker_identity"))})
         return DispatchOutcome.from_dict(data)
+    # The native doors historically return the compatibility tuple
+    # ``(WorkerResult, agent, mode, refreshed)``.  Preserve the worker payload
+    # as an explicit success payload rather than collapsing it to ``str`` or
+    # dropping it while building the canonical terminal event.
+    if isinstance(value, tuple) and len(value) == 4:
+        worker, agent, mode, refreshed = value
+        payload = getattr(worker, "payload", worker)
+        return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(worker, "worker_identity", None)), started_at=started, finished_at=finished, success_payload={"worker_payload": payload, "agent": agent, "mode": mode, "refreshed": refreshed})
     return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(value, "worker_identity", None)), started_at=started, finished_at=finished, success_payload=getattr(value, "payload", value))
 
 
@@ -466,6 +484,12 @@ def build_authorized_linked_child_request(
 ) -> WorkerAdmissionRequest:
     if isinstance(parent, Mapping) and parent.get("kind") in {"no_launch", "unresolved_launch"}:
         raise ValueError("linked child cannot be created from no-launch or unresolved parent")
+    if isinstance(parent, Mapping):
+        parent_kind = parent.get("kind")
+        if parent_kind is not None and parent_kind not in {
+            "success", "ordinary_terminal_failure", "provider_exhausted", "worker_disposition",
+        }:
+            raise ValueError("linked child requires a canonical terminal parent")
     parent_terminal_from_outcome = parent.get("terminal_outcome_event_id") if isinstance(parent, Mapping) else None
     if not isinstance(parent, WorkerAdmissionRequest):
         parent_payload = dict(parent)
@@ -508,6 +532,35 @@ def reconcile_no_launch(
     ids = tuple(str(item) for item in evidence_event_ids if str(item))
     if not ids:
         raise ValueError("no-launch reconciliation requires positive evidence IDs")
+    if len(ids) != len(set(ids)):
+        raise ValueError("no-launch reconciliation evidence IDs must be unique")
+    # Inspect the complete reservation history, not merely the IDs supplied by
+    # the caller.  A caller must not hide an entered/accepted marker by citing
+    # only the earlier not_started event; doing so would release a reservation
+    # that may already have created a worker.
+    history = ledger.read_nbf_events()
+    reservation_events = [
+        record.get("payload", {}) for record in history
+        if record.get("payload", {}).get("reservation_event_id") == receipt.reservation_event_id
+        or record.get("payload", {}).get("event_id") == receipt.reservation_event_id
+    ]
+    states = {
+        item.get("launch_state_identity")
+        for item in reservation_events
+        if item.get("event_type") == "controlled_adapter_state"
+    }
+    if states & {"entered", "accepted", "closed", "ambiguous"}:
+        raise ValueError("no-launch reconciliation conflicts with persisted launch evidence")
+    cited = {
+        item.get("event_id")
+        for item in reservation_events
+        if item.get("event_type") == "controlled_adapter_state"
+        and item.get("admission_receipt_id") == receipt.admission_receipt_id
+        and item.get("physical_door_id") == receipt.physical_door_id
+        and item.get("launch_state_identity") == "not_started"
+    }
+    if not set(ids).issubset(cited):
+        raise ValueError("no-launch reconciliation requires bound not_started adapter evidence")
     when = observed_at or _now()
     reconciliation_id = _digest((receipt.reservation_event_id, "released_no_launch", ids))
     reconciliation = ReservationReconciled(
@@ -542,7 +595,7 @@ def reconcile_no_launch(
     )
 
 
-def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any], launch: Callable[[WorkerExecutionContextRef], Any], *, gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any] = require_production_worker_dispatch_runtime, ledger: IncidentLedger | None = None, clock: Callable[[], float] = time.monotonic, sleeper: Callable[[float], None] = time.sleep, deadline_s: float | None = None, return_worker: bool = False) -> Any:
+def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any], launch: Callable[[WorkerExecutionContextRef], Any], *, gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any] | None = None, ledger: IncidentLedger | None = None, clock: Callable[[], float] = time.monotonic, sleeper: Callable[[float], None] = time.sleep, deadline_s: float | None = None, return_worker: bool = False) -> Any:
     """Run one logical dispatch through admission and one controlled closure."""
     if not isinstance(request, WorkerAdmissionRequest):
         request = WorkerAdmissionRequest.from_dict(request)
@@ -554,7 +607,12 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
     attempt = request.admission_attempt
     while True:
         current = replace(request, admission_attempt=attempt)
-        decision = gate(current)
+        # Admission is a trust boundary.  Keep the legacy ``gate`` keyword
+        # source-compatible for callers/tests, but never let a caller replace
+        # the production authority with a predicate that can mint a receipt or
+        # skip source/runtime/liveness checks.  Test seams belong on the typed
+        # request (resolver/readers), which the canonical authority consumes.
+        decision = require_production_worker_dispatch_runtime(current)
         if isinstance(decision, SchedulingCondition):
             # Test and embedded runtimes may inject a sleeper that records a
             # wait without advancing the supplied clock.  Count the requested
@@ -583,7 +641,9 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
             finished = _now()
             outcome = _normalize_outcome(value, decision, controlled.accepted_started_at or started, controlled.accepted_finished_at or finished)
             if outcome.kind in {"no_launch", "unresolved_launch"}:
-                return outcome
+                # _normalize_outcome rejects this after entry.  Retain the
+                # defensive branch for future outcome kinds and fail closed.
+                return DispatchOutcome(kind="unresolved_launch", launch_state="ambiguous", plan_id=decision.plan_id, phase=decision.phase, dispatch_family_id=decision.dispatch_family_id, logical_dispatch_id=decision.logical_dispatch_id, admission_receipt_id=None, semantic_dispatch_fingerprint=None, selected_spec=decision.normalized_spec, reconciliation_event_id=None)
             active_ledger = ledger or current.ledger or IncidentLedger(current.ledger_root)
             execution_context_identity = _digest({"plan_id": decision.plan_id, "phase": decision.phase, "logical_dispatch_id": decision.logical_dispatch_id, "physical_door_id": decision.physical_door_id, "semantic_dispatch_fingerprint": decision.semantic_dispatch_fingerprint})
             terminal = active_ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=decision.reservation_event_id, projection_key=decision.projection_key, physical_door_id=decision.physical_door_id, execution_context_identity=execution_context_identity, primary_spec=decision.normalized_spec, configured_fallback_chain_identity=current.configured_fallback_chain_identity)

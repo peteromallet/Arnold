@@ -1186,10 +1186,7 @@ def _run_omp_with_admission(
     prompt_kwargs: dict[str, Any] | None,
     wbc_dispatch: Any = None,
 ) -> WorkerResult:
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-        configured_seed_path,
-        require_production_worker_dispatch_runtime,
-    )
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import configured_seed_path
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
@@ -1246,10 +1243,7 @@ def _run_omp_with_admission(
                 return wbc_dispatch.run(final_launch).worker_result
             return final_launch()
 
-        result = dispatch_with_admission(
-            request, launch, gate=require_production_worker_dispatch_runtime,
-            return_worker=True,
-        )
+        result = dispatch_with_admission(request, launch, return_worker=True)
     finally:
         _OMP_ADMISSION_ACTIVE.reset(token)
     if isinstance(result, AdmissionRefusal):

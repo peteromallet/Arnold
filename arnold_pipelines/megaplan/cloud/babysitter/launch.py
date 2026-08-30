@@ -544,7 +544,6 @@ def _managed_spec(
 
 def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     """Run the managed command only after one canonical admission decision."""
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import require_production_worker_dispatch_runtime
     from arnold_pipelines.megaplan.cloud.runtime_attestation import configured_seed_path
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
@@ -594,8 +593,7 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         ledger_root=Path(ctx["run_root"]),
     )
     result = dispatch_with_admission(
-        request, lambda _context: run_managed_command(spec),
-        gate=require_production_worker_dispatch_runtime, return_worker=True,
+        request, lambda _context: run_managed_command(spec), return_worker=True,
     )
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")

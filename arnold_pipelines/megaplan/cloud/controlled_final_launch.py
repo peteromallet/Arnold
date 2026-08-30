@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import socket
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -101,7 +102,15 @@ class ControlledFinalLaunch:
             raise TypeError("final launch must be callable")
         self._called = True
         self._persist("entered")
-        value = launch(self.context)
+        # The receipt is part of the process boundary, not merely an argument
+        # visible to an in-process test closure.  Put the exact immutable
+        # context in the inherited environment while the final closure runs so
+        # subprocess/managed-command launches and their running receipts carry
+        # the same admission identity.  Restore the parent environment even
+        # when the closure raises; a later logical dispatch must never inherit
+        # a prior worker's receipt.
+        with _execution_context_environment(self.context):
+            value = launch(self.context)
         started_at = getattr(value, "started_at", None) or datetime.now(timezone.utc).isoformat()
         finished_at = getattr(value, "finished_at", None) or datetime.now(timezone.utc).isoformat()
         worker_identity = getattr(value, "worker_identity", None)
@@ -124,3 +133,17 @@ class ControlledFinalLaunch:
 
 
 __all__ = ["ControlledFinalLaunch", "LaunchStateRecord"]
+
+
+@contextmanager
+def _execution_context_environment(context: WorkerExecutionContextRef):
+    variable = "ARNOLD_WORKER_EXECUTION_CONTEXT"
+    previous = os.environ.get(variable)
+    os.environ.update(context.to_environment(variable=variable))
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
