@@ -1,21 +1,46 @@
-# NBF execution contract — Batch 2 Oracle gate blocked — 2026-08-30
+# NBF execution contract — Batch 2 Oracle gate blocked — direct Grok subscription — 2026-08-30
 
-- State: `BLOCKED_PROVIDER_CREDITS` at the Batch-2 Oracle gate.
-- Candidate HEAD: `5da26ec5be4d13559948fe4256a114ad7626482b` (committed
-  implementation identity; **not** validly Batch-2 passed).
-- Oracle policy remains Grok 4.6. The authorized v2 wrapper failed before
-  review commissioning with HTTP 402: `This request requires more credits, or
-  fewer max_tokens. You requested up to 16384 tokens, but can only afford 388.`
-- Failure receipt: `.oracle/receipts/oracle-nbf02-nbf03-grok-v2-launch-failure.md`
-  — SHA-256 `477eb4aec0374dadbc307ada8ee7ef4058830d0eeb1651b21e0fe3d41ad115ea`.
-- Grok v2 brief: `.oracle/briefs/oracle-nbf02-nbf03-grok-v2.md` — SHA-256
-  `e770f5bb556c81a6238e4dffce517662c1624d3c312e5147532f073aaf89762a`.
+- State: `BLOCKED_GROK_BUILD_BALANCE` at the Batch-2 Oracle gate.
+- Current HEAD: `5f172e3588e740bacd6692ca9e4cc50ae01f6a6b`; candidate implementation
+  parent remains `5da26ec5be4d13559948fe4256a114ad7626482b` (**not** validly
+  Batch-2 passed).
+- Oracle policy remains Grok 4.6. The authorized direct native command was
+  `/Users/peteromalley/.grok/bin/grok` version `grok 1.0.5 (5115b46bc909)`,
+  requesting `grok-4.6` with `--reasoning-effort high`.
+- Direct v3 brief: `.oracle/briefs/oracle-nbf02-nbf03-grok-v3.md` — SHA-256
+  `0f5dd6b85165c2be927f1e0843207db791db2721c80af560fc618ff8015163f3`.
+- Direct subscription failure receipt: `.oracle/receipts/oracle-nbf02-nbf03-grok-v3-subscription-launch-failure.md`
+  — SHA-256 `6719fe4fa1392201e593f05f9789f0da40f16888cc9f77ac65d2bd87772dc3c7`.
+- Confirmed native provider response: `API error (status 402 Payment Required):
+  Grok Build usage balance exhausted`; no reviewer or gate artifact was
+  produced, and no fallback was used.
+- The earlier OMP/OpenRouter HTTP 402 is historical routing failure evidence,
+  not a Grok subscription result. Invalid Sol artifacts remain quarantined and
+  do not count as Oracle review. Batch 3 is stopped with its preserved dirty
+  material untouched.
+- Next action: retry the same direct v3 command after the Grok Build balance
+  resets, or await explicit user authorization to change Oracle. Do not
+  fabricate a verdict or switch providers implicitly.
+
+# Historical prior Batch-2 provider-credit block — preserved record — 2026-08-30
+
+- Historical state: `BLOCKED_PROVIDER_CREDITS` at the Batch-2 Oracle gate.
+- The authorized v2 wrapper failure and its original evidence remain below for
+  provenance; the current state above supersedes this stale checkpoint.
+- Historical candidate HEAD: `5da26ec5be4d13559948fe4256a114ad7626482b`
+  (committed implementation identity; **not** validly Batch-2 passed).
+- Historical Oracle policy remained Grok 4.6. The authorized v2 wrapper failed
+  before review commissioning with HTTP 402: `This request requires more
+  credits, or fewer max_tokens. You requested up to 16384 tokens, but can only
+  afford 388.`
+- Historical failure receipt:
+  `.oracle/receipts/oracle-nbf02-nbf03-grok-v2-launch-failure.md` — SHA-256
+  `477eb4aec0374dadbc307ada8ee7ef4058830d0eeb1651b21e0fe3d41ad115ea`.
+- Historical Grok v2 brief: `.oracle/briefs/oracle-nbf02-nbf03-grok-v2.md` —
+  SHA-256 `e770f5bb556c81a6238e4dffce517662c1624d3c312e5147532f073aaf89762a`.
 - Invalid Sol artifacts remain quarantined and do not count as Oracle review.
-- Batch 3 is stopped; its preserved dirty/untracked materials were not
-  mutated by this blocked launch.
-- Next action: retry the same Grok v2 brief after credits/token capacity are
-  restored, or await explicit user approval to change Oracle. Do not fabricate
-  a verdict or switch providers implicitly.
+- Batch 3 was stopped; its preserved dirty/untracked materials were not
+  mutated by that blocked launch.
 
 # NBF execution contract — Batch 1 PASS checkpoint — 2026-08-30
 
