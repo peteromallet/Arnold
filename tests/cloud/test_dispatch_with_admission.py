@@ -143,7 +143,10 @@ def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path:
 
     child = subprocess.Popen(["/bin/sleep", "2"])
     try:
-        identity = capture_process_identity(child, ("/bin/sleep", "2"))
+        # Deliberately lie about argv: capture must use OS-observed identity.
+        identity = capture_process_identity(child, ("/bin/echo", "forged"))
+        assert identity["process_executable"].endswith("/sleep")
+        assert identity["process_argv"][0].endswith("/sleep")
     finally:
         child.terminate()
         child.wait(timeout=5)
@@ -162,8 +165,13 @@ def test_completed_process_snapshot_is_bound_to_live_child_before_exit(tmp_path:
     assert _validate_worker_identity_for_receipt(identity, receipt)["pid"] == identity["pid"]
     forged = dict(identity, process_executable_sha256="0" * 64)
     import pytest
-    with pytest.raises(ValueError, match="executable digest"):
+    with pytest.raises(ValueError, match="machine observation"):
         _validate_worker_identity_for_receipt(forged, receipt)
+    import os
+    with pytest.raises(ValueError, match="machine observation"):
+        _validate_worker_identity_for_receipt(dict(identity, pid=99999999), receipt)
+    with pytest.raises(ValueError, match="machine observation"):
+        _validate_worker_identity_for_receipt(dict(identity, pid=os.getpid()), receipt)
 
 
 def test_completed_managed_child_uses_receipt_bound_manifest_attestation(tmp_path: Path) -> None:

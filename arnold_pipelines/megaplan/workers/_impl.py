@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import shlex
 import shutil
 import signal
 import stat
@@ -1805,8 +1807,17 @@ class CommandResult:
     worker_identity: dict[str, Any] | None = None
 
 
+_PROCESS_ATTESTATIONS: dict[str, dict[str, Any]] = {}
+
+
 def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, Any]:
-    """Capture a real child identity before the launcher reaps it."""
+    """Capture a real child identity before the launcher reaps it.
+
+    ``command`` is retained for API compatibility only.  Authority comes from
+    the operating system's view of the child, never from caller-supplied argv.
+    The opaque in-process token prevents a copied/edited snapshot from being
+    accepted later by terminal normalization.
+    """
     pid = getattr(process, "pid", None)
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         raise CliError("worker_identity_unavailable", "worker process did not expose a valid PID")
@@ -1847,18 +1858,45 @@ def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, 
         start_identity = started.stdout.strip() if started.returncode == 0 else ""
     if not start_identity:
         raise CliError("worker_identity_unavailable", "worker process start was not inspectable")
-    executable = Path(str(command[0]))
-    if not executable.is_absolute():
-        resolved = shutil.which(str(executable))
-        if not resolved:
-            raise CliError("worker_identity_unavailable", "worker executable could not be resolved")
-        executable = Path(resolved)
-    executable = executable.resolve(strict=True)
+    observed_argv: list[str] = []
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.is_file():
+        try:
+            observed_argv = [part.decode("utf-8", errors="replace") for part in proc_cmdline.read_bytes().split(b"\0") if part]
+        except OSError:
+            observed_argv = []
+    if not observed_argv:
+        observed = subprocess.run(
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if observed.returncode == 0 and observed.stdout.strip():
+            try:
+                observed_argv = shlex.split(observed.stdout.strip())
+            except ValueError:
+                observed_argv = []
+    if not observed_argv or not observed_argv[0]:
+        raise CliError("worker_identity_unavailable", "worker argv was not machine-inspectable")
+    executable_link = Path(f"/proc/{pid}/exe")
+    try:
+        executable = executable_link.resolve(strict=True)
+    except (OSError, RuntimeError):
+        executable = Path(observed_argv[0])
+        if not executable.is_absolute():
+            resolved = shutil.which(str(executable))
+            if not resolved:
+                raise CliError("worker_identity_unavailable", "worker executable was not machine-inspectable")
+            executable = Path(resolved)
+        executable = executable.resolve(strict=True)
     executable_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
     command_sha256 = hashlib.sha256(
-        json.dumps([str(arg) for arg in command], separators=(",", ":")).encode("utf-8")
+        json.dumps(observed_argv, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return {
+    token = secrets.token_urlsafe(32)
+    identity = {
         "host": host,
         "pid": pid,
         "boot_id": boot_id,
@@ -1869,7 +1907,11 @@ def capture_process_identity(process: Any, command: Sequence[str]) -> dict[str, 
         "process_executable": str(executable),
         "process_executable_sha256": executable_sha256,
         "process_command_sha256": command_sha256,
+        "process_argv": observed_argv,
+        "process_attestation_token": token,
     }
+    _PROCESS_ATTESTATIONS[token] = dict(identity)
+    return identity
 
 ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
@@ -6352,6 +6394,7 @@ def _run_codex_step_uncapped(
             trace_output=raw if json_trace else None,
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
+            worker_identity=result.worker_identity,
         )
     if selection_error is not None:
         raise _local_response_contract_error(

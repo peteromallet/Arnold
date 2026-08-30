@@ -110,6 +110,22 @@ def test_omp_path_forgery_outside_machine_install_is_rejected(tmp_path: Path, mo
         resolve_omp_live_membership("deepseek", "deepseek-v4-pro", runner=lambda *args, **kwargs: None)
 
 
+def test_omp_home_forgery_cannot_define_trusted_install(tmp_path: Path, monkeypatch) -> None:
+    forged = tmp_path / ".bun" / "install" / "global" / "node_modules" / "@oh-my-pi" / "pi-coding-agent" / "dist" / "cli.js"
+    forged.parent.mkdir(parents=True)
+    forged.write_text("forged", encoding="utf-8")
+    forged.chmod(0o755)
+    link = tmp_path / "bin" / "omp"
+    link.parent.mkdir()
+    link.symlink_to(forged)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda _binary: str(link))
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import resolve_omp_live_membership
+    import pytest
+    with pytest.raises(CliError, match="machine-owned"):
+        resolve_omp_live_membership("deepseek", "deepseek-v4-pro", runner=lambda *args, **kwargs: None)
+
+
 def test_same_fingerprint_cannot_be_evaded_by_new_logical_id(tmp_path: Path) -> None:
     ledger = IncidentLedger(tmp_path)
     first = require_production_worker_dispatch_runtime(request(tmp_path, ledger=ledger))

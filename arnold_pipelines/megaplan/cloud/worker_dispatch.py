@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -338,8 +339,12 @@ def _resolve_omp_runtime_binding(
     # Bun global install, never in a caller-provided path, filename shape, or
     # environment variable.  Resolving before comparison also rejects a
     # symlink from a temporary ``pi-coding-agent/dist/cli.js`` tree.
+    try:
+        machine_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, ImportError, OSError):
+        raise CliError("omp_runtime_untrusted", "machine-owned user home is not inspectable")
     canonical_paths = (
-        Path.home() / ".bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
+        machine_home / ".bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
         Path("/opt/homebrew/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"),
         Path("/usr/local/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"),
     )
@@ -863,6 +868,19 @@ def _validate_completed_process_identity(
     for name in ("process_start_identity", "process_executable", "process_executable_sha256", "process_command_sha256"):
         if not isinstance(value.get(name), str) or not value[name]:
             raise ValueError(f"completed worker identity lacks {name}")
+    token = value.get("process_attestation_token")
+    if not isinstance(token, str) or not token:
+        raise ValueError("completed worker identity lacks process attestation")
+    from arnold_pipelines.megaplan.workers._impl import _PROCESS_ATTESTATIONS
+    observed = _PROCESS_ATTESTATIONS.get(token)
+    if not isinstance(observed, Mapping):
+        raise ValueError("completed worker identity attestation is unknown or expired")
+    for name in (
+        "host", "pid", "boot_id", "process_start_identity", "process_executable",
+        "process_executable_sha256", "process_command_sha256", "process_argv",
+    ):
+        if value.get(name) != observed.get(name):
+            raise ValueError(f"completed worker identity {name} does not match machine observation")
     binding = receipt.route_liveness_evidence or {}
     expected = binding.get("executable") if isinstance(binding, Mapping) else None
     if not isinstance(expected, Mapping):
