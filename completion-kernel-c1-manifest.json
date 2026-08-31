@@ -47,5 +47,5 @@
   "imports": ["arnold.workflow.completion", "arnold_pipelines.megaplan.completion"],
   "dependency_status": "self-contained — no transitive imports to product modules verified by import boundary test",
   "authoritative_status": "non-authoritative — shadow-only; cannot satisfy completion; see S2R GO-0",
-  "content_hash": "sha256:9cd9670e8d2e7c3e860681b56c88d8f50e1579ac151f5d1a91bad6c73b4c73a7"
+  "content_hash": "sha256:1698541fd29fab890119a23a2da1498bedaf26d9f1ffec37221e44789700f320"
 }
