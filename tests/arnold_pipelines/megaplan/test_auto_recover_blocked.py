@@ -724,6 +724,30 @@ def test_predispatch_validation_signature_ignores_volatile_evidence() -> None:
     assert first["worker_dispatched"] is False
 
 
+def test_validation_failure_preserves_post_merge_stage() -> None:
+    payload = json.dumps(
+        {
+            "success": False,
+            "error": "validation_job_failed",
+            "message": "validation job VJ3 exited 1; expected one of [0]",
+            "details": {
+                "job_id": "VJ3",
+                "validation_job_kind": "narrow_recheck",
+                "validation_stage": "post_merge",
+                "worker_dispatched": True,
+                "exit_code": 1,
+                "expected_exit_codes": [0],
+            },
+        }
+    )
+
+    failure = auto._predispatch_validation_failure("", payload)
+
+    assert failure is not None
+    assert failure["validation_stage"] == "post_merge"
+    assert failure["worker_dispatched"] is True
+
+
 def test_drive_bounds_predispatch_validation_infrastructure_without_model_escalation(
     monkeypatch,
     tmp_path: Path,

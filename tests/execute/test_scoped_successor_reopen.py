@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from arnold_pipelines.megaplan.execute.batch import (
+    _merge_rework_task_ids,
     _scoped_successors_for_failed_validation,
 )
 
@@ -39,7 +40,7 @@ def test_failed_bulk_job_returns_covered_accepted_tasks() -> None:
     jobs = [_job(["T5A", "T6"])]
     results = [_fail_result()]
     assert _scoped_successors_for_failed_validation(
-        jobs, results, accepted_task_ids={"T5A", "T6"}
+        jobs, results, known_task_ids={"T5A", "T6"}
     ) == ["T5A", "T6"]
 
 
@@ -47,20 +48,19 @@ def test_passing_job_returns_no_successors() -> None:
     jobs = [_job(["T5A", "T6"])]
     results = [_pass_result()]
     assert (
-        _scoped_successors_for_failed_validation(
-            jobs, results, accepted_task_ids={"T5A", "T6"}
+            _scoped_successors_for_failed_validation(
+            jobs, results, known_task_ids={"T5A", "T6"}
         )
         == []
     )
 
 
-def test_failed_job_ignores_non_accepted_tasks() -> None:
-    # The scoped successor may only reopen tasks that are in the accepted
-    # (completed) set — never launder a task that was not already done.
+def test_failed_job_ignores_unknown_tasks() -> None:
+    # The scoped successor may only reopen tasks in the finalized task graph.
     jobs = [_job(["T5A", "T6", "T99"])]
     results = [_fail_result()]
     assert _scoped_successors_for_failed_validation(
-        jobs, results, accepted_task_ids={"T5A"}
+        jobs, results, known_task_ids={"T5A"}
     ) == ["T5A"]
 
 
@@ -68,15 +68,23 @@ def test_multiple_jobs_deduplicates_successors() -> None:
     jobs = [_job(["T5A", "T6"], job_id="bulk-1"), _job(["T6", "T7"], job_id="bulk-2")]
     results = [_fail_result(), _fail_result()]
     assert _scoped_successors_for_failed_validation(
-        jobs, results, accepted_task_ids={"T5A", "T6", "T7"}
+        jobs, results, known_task_ids={"T5A", "T6", "T7"}
     ) == ["T5A", "T6", "T7"]
+
+
+def test_failed_validation_successors_are_added_to_direct_rework_in_order() -> None:
+    """Mixed direct and bulk rework must not drop failed-job successors."""
+    assert _merge_rework_task_ids(
+        ["T1", "T5", "T3"],
+        ["T2", "T3", "T6b", "T6a"],
+    ) == ["T1", "T5", "T3", "T2", "T6b", "T6a"]
 
 
 def test_mixed_pass_fail_jobs_only_reopen_failed_coverage() -> None:
     jobs = [_job(["T5A", "T6"], job_id="bulk-pass"), _job(["T8"], job_id="bulk-fail")]
     results = [_pass_result(), _fail_result()]
     assert _scoped_successors_for_failed_validation(
-        jobs, results, accepted_task_ids={"T5A", "T6", "T8"}
+        jobs, results, known_task_ids={"T5A", "T6", "T8"}
     ) == ["T8"]
 
 
@@ -96,5 +104,5 @@ def test_error_timeout_nonzero_all_reopen(bad_result: dict) -> None:
     jobs = [_job(["T5A"])]
     results = [bad_result]
     assert _scoped_successors_for_failed_validation(
-        jobs, results, accepted_task_ids={"T5A"}
+        jobs, results, known_task_ids={"T5A"}
     ) == ["T5A"]

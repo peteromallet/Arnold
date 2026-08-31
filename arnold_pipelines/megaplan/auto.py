@@ -467,7 +467,9 @@ def _predispatch_validation_failure(
     identical failing admission gate a new semantic failure.  The returned
     signature/occurrence id therefore uses only the stable validation
     contract and outcome fields.  Callers may use the occurrence id for
-    retry accounting and notification deduplication.
+    retry accounting and notification deduplication.  The historical helper
+    name is retained for compatibility; the persisted stage determines
+    whether the failure actually occurred before or after worker dispatch.
     """
 
     payload = _extract_cli_error_payload(stdout, stderr)
@@ -487,6 +489,15 @@ def _predispatch_validation_failure(
     exit_code = details.get("exit_code")
     if isinstance(exit_code, bool) or not isinstance(exit_code, int):
         exit_code = None
+    validation_stage = str(details.get("validation_stage") or "").strip()
+    if not validation_stage:
+        # Older validation payloads have no stage.  Preserve their conservative
+        # no-worker interpretation while making the uncertainty explicit.
+        validation_stage = "stage_unknown"
+    worker_dispatched = details.get("worker_dispatched") is True or validation_stage in {
+        "post_merge",
+        "deferred_recheck",
+    }
     stable = {
         "error_code": error_code,
         "job_id": str(details.get("job_id") or ""),
@@ -494,6 +505,8 @@ def _predispatch_validation_failure(
         "exit_code": exit_code,
         "expected_exit_codes": expected_exit_codes,
         "invalid_fields": sorted(str(item) for item in invalid_fields),
+        "validation_stage": validation_stage,
+        "worker_dispatched": worker_dispatched,
     }
     stable_raw = json.dumps(
         stable,
@@ -521,7 +534,7 @@ def _predispatch_validation_failure(
         "signature": signature,
         "occurrence_id": f"validation-{signature.removeprefix('sha256:')[:20]}",
         "retryable_infrastructure": retryable_infrastructure,
-        "worker_dispatched": False,
+        "worker_dispatched": worker_dispatched,
     }
 
 
@@ -6839,6 +6852,16 @@ def drive(
             else None
         )
         if validation_failure is not None:
+            validation_stage = str(
+                validation_failure.get("validation_stage") or "stage_unknown"
+            )
+            worker_dispatched = bool(validation_failure.get("worker_dispatched"))
+            legacy_no_worker = validation_stage == "stage_unknown" and not worker_dispatched
+            stage_label = (
+                "pre-dispatch"
+                if validation_stage == "pre_dispatch"
+                else validation_stage.replace("_", " ")
+            )
             signature = str(validation_failure["signature"])
             if signature == predispatch_validation_signature:
                 predispatch_validation_count += 1
@@ -6855,12 +6878,12 @@ def drive(
             )
             if predispatch_validation_count < max_attempts:
                 log(
-                    "execute pre-dispatch validation infrastructure failed — "
+                    f"execute {stage_label} validation infrastructure failed — "
                     f"retrying without model escalation "
                     f"({predispatch_validation_count}/{max_attempts})",
                     validation_occurrence_id=validation_failure["occurrence_id"],
                     validation_signature=signature,
-                    worker_dispatched=False,
+                    worker_dispatched=worker_dispatched,
                 )
                 _emit_work_boundary(
                     "retry_wait",
@@ -6873,7 +6896,7 @@ def drive(
                         "validation_occurrence_id": validation_failure[
                             "occurrence_id"
                         ],
-                        "worker_dispatched": False,
+                        "worker_dispatched": worker_dispatched,
                     },
                 )
                 continue
@@ -6885,19 +6908,28 @@ def drive(
             )
             message = str(validation_failure.get("message") or "").strip()
             reason = (
-                f"execute pre-dispatch {failure_label} failed "
-                f"{predispatch_validation_count} time(s) without launching a worker"
+                f"execute {stage_label} {failure_label} failed "
+                f"{predispatch_validation_count} time(s)"
+                + (
+                    " without launching a worker"
+                    if not worker_dispatched
+                    else " after worker dispatch"
+                )
                 + (f": {message}" if message else "")
             )
             log(
                 f"{reason} — halting without model escalation",
                 validation_occurrence_id=validation_failure["occurrence_id"],
                 validation_signature=signature,
-                worker_dispatched=False,
+                worker_dispatched=worker_dispatched,
             )
             _record_failure(
                 plan_dir=plan_dir,
-                kind="pre_dispatch_validation_failed",
+                kind=(
+                    "pre_dispatch_validation_failed"
+                    if validation_stage == "pre_dispatch" or legacy_no_worker
+                    else "validation_failed"
+                ),
                 message=reason,
                 current_state=STATE_BLOCKED,
                 phase="execute",
@@ -6934,7 +6966,11 @@ def drive(
                 iterations=iteration,
                 reason=reason,
                 last_phase="execute",
-                blocking_reasons=["pre_dispatch_validation_failed"],
+                blocking_reasons=[
+                    "pre_dispatch_validation_failed"
+                    if validation_stage == "pre_dispatch" or legacy_no_worker
+                    else "validation_failed"
+                ],
             )
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.

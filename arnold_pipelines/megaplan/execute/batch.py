@@ -4267,6 +4267,8 @@ def _raise_artifact_not_durable(
             "job_id": job_id,
             "reason": reason,
             "artifact_path": str(artifact_path),
+            "validation_stage": "post_merge",
+            "worker_dispatched": True,
         },
     ) from error
 
@@ -4377,6 +4379,18 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
     from arnold_pipelines.megaplan.observability import work_ledger as _wl
 
     evidence_results: list[dict] = []
+    # The admission call is the only validation stage that runs before a
+    # worker.  Every other call is made after the batch result has been
+    # published (or during its deferred selector recheck), so failures there
+    # must not be projected as pre-dispatch failures by the auto driver.
+    validation_stage = (
+        "pre_dispatch"
+        if admission
+        else "deferred_recheck"
+        if force_strict_gate
+        else "post_merge"
+    )
+    worker_dispatched = validation_stage != "pre_dispatch"
     if not isinstance(finalize_data, dict):
         return evidence_results
     validation_jobs = finalize_data.get("validation_jobs")
@@ -4776,6 +4790,8 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             "failures": list(result.failures or []),
             "status": result.status,
             "timeout_reason": result.timeout_reason,
+            "validation_stage": validation_stage,
+            "worker_dispatched": worker_dispatched,
         }
         if kind == "narrow_recheck":
             evidence["collected"] = int(getattr(result, "collected", 0) or 0)
@@ -5030,6 +5046,8 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                         "expected_exit_codes": expected_exit_codes,
                         "evidence_hash": evidence_hash,
                         "artifact_path": str(artifact_path),
+                        "validation_stage": validation_stage,
+                        "worker_dispatched": worker_dispatched,
                     },
                 )
         if _delta_policy and result.exit_code in expected_exit_codes:
@@ -5159,6 +5177,8 @@ def _raise_deferred_selector_result_block(
         "task_id": task_id,
         "validation_job_kind": "narrow_recheck",
         "reason": reason,
+        "validation_stage": "deferred_recheck",
+        "worker_dispatched": True,
     }
     if isinstance(extra, Mapping):
         details.update(dict(extra))
@@ -7730,16 +7750,17 @@ def _review_rework_context(
 def _scoped_successors_for_failed_validation(
     validation_jobs: list[Mapping[str, Any]],
     validation_results: list[Mapping[str, Any]],
-    accepted_task_ids: set[str] | frozenset[str],
+    known_task_ids: set[str] | frozenset[str],
 ) -> list[str]:
     """Derive scoped successor tasks from FAILED bounded validation jobs.
 
     A bulk/manifest/global review rework item is admitted as a validation-only
-    job: the accepted task_ids it names are suppressed, not reopened.  When
-    the deterministic check FAILS, the engine demands a "scoped successor
-    task" — the named accepted tasks ARE those successors.  This helper
-    returns the accepted task_ids covered by failed jobs (in job order,
-    deduplicated), or [] when no job fails / no job covers accepted tasks.
+    job: its known task_ids are suppressed, not reopened.  When the
+    deterministic check FAILS, the engine demands a "scoped successor task" —
+    the named tasks ARE those successors, including tasks that were already
+    admitted by the review rework projection.  This helper returns the known
+    task_ids covered by failed jobs (in job order, deduplicated), or [] when
+    no job fails / no job covers known tasks.
     """
     successors: list[str] = []
     for job, result in zip(validation_jobs, validation_results):
@@ -7751,9 +7772,23 @@ def _scoped_successors_for_failed_validation(
             continue
         covered = job.get("task_ids") or []
         for task_id in covered:
-            if task_id in accepted_task_ids and task_id not in successors:
+            if task_id in known_task_ids and task_id not in successors:
                 successors.append(task_id)
     return successors
+
+
+def _merge_rework_task_ids(
+    direct_task_ids: Iterable[str],
+    failed_validation_task_ids: Iterable[str],
+) -> list[str]:
+    """Union direct and failed-validation successors in stable order."""
+    merged = list(direct_task_ids)
+    seen = set(merged)
+    for task_id in failed_validation_task_ids:
+        if task_id not in seen:
+            merged.append(task_id)
+            seen.add(task_id)
+    return merged
 
 
 def _block_no_runnable_rework(
@@ -8389,7 +8424,7 @@ def handle_execute_auto_loop(
                         for row in validation_results
                         if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
                     ]
-                    if failed_validation and not review_rework_task_ids:
+                    if failed_validation:
                         # A failing bulk/manifest/global validation job names
                         # the accepted tasks it covered (review rework item's
                         # task_ids).  The admission treats bulk+check as
@@ -8397,25 +8432,29 @@ def handle_execute_auto_loop(
                         # without this reopen the plan dead-ends on "scoped
                         # successor task is required" — the named accepted
                         # tasks ARE the scoped successors the message demands.
-                        # Reopen exactly the accepted tasks covered by FAILED
+                        # Reopen exactly the known tasks covered by FAILED
                         # jobs; the deterministic check failing is the proof of
                         # regression (no laundering: tasks must re-run and pass
-                        # verification again).  Jobs whose task_ids are not in
-                        # the accepted set contribute nothing here.
-                        accepted_set = set(completed_task_ids)
+                        # verification again).  The accepted-task projection
+                        # is intentionally not used as the scope filter: a
+                        # review-rework job can name a task that is currently
+                        # runnable, and that task is still its successor.
                         failed_job_successors = _scoped_successors_for_failed_validation(
                             rework_admission.validation_jobs,
                             validation_results,
-                            accepted_set,
+                            set(all_task_ids),
                         )
                         if failed_job_successors:
-                            review_rework_task_ids = failed_job_successors
+                            review_rework_task_ids = _merge_rework_task_ids(
+                                review_rework_task_ids,
+                                failed_job_successors,
+                            )
                             log.info(
                                 "review bulk verification failed; reopening scoped "
                                 "successors %s (covered by failed validation job)",
                                 sorted(failed_job_successors),
                             )
-                        else:
+                        elif not review_rework_task_ids:
                             return _block_no_runnable_rework(
                                 plan_dir=plan_dir,
                                 state=state,
