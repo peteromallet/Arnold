@@ -242,6 +242,22 @@ TOOLING (verified): there is no `megaplan` binary on PATH — invoke the CLI as
    `python3 skills/subagent-launcher/fan.py` / launch_omp_agent.py from the
    engine root.  "Missing tools" is never a valid verdict without first
    running `command -v` / a probe of these exact forms.
+LIVENESS / TRANSPORT CONTRACT:
+  A live PID, lease, launch receipt, or nonterminal run status is ownership
+  evidence, never progress evidence. Every investigator must emit a terminal
+  transport receipt naming its attempt fingerprint, transport stage, and
+  `repository_bytes_read`. A pre-repository transport failure is typed
+  `investigator_transport_failed` and does not renew fixer liveness.
+  Persist a monotonic progress record bound to occurrence fingerprint, repair
+  attempt, managed run, owner birth, custody epoch, and fence token. Accepted
+  progress is an advancing repository/tool cursor, durable artifact/log/result
+  digest, or fresh provider/LLM heartbeat bound to that run.
+  Missing/corrupt/unchanged progress is bounded evidence, not indefinite
+  `busy`. Require two observations separated by the configured progress budget
+  before takeover. Allow at most one changed-precondition investigator retry;
+  then fence the owner and admit exactly one replacement. Never let a PID-only
+  owner suppress recovery.
+
 
 {chr(10).join(context_lines)}
 
