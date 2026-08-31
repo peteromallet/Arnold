@@ -88,9 +88,19 @@ class WorkerExecutionContextRef:
     semantic_dispatch_fingerprint: str
     selected_spec: str
     physical_door_id: str
+    # Process-local hook installed only while a controlled launch is running.
+    # It is intentionally excluded from transport serialization so callers
+    # cannot inject authority through an execution-context payload.
+    spawn_registration_callback: Callable[[Mapping[str, Any]], Any] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def to_dict(self) -> dict[str, str]:
-        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+        return {
+            name: getattr(self, name)
+            for name in self.__dataclass_fields__
+            if name != "spawn_registration_callback"
+        }
     def to_environment(self, *, variable: str = "ARNOLD_WORKER_EXECUTION_CONTEXT") -> dict[str, str]:
         return {variable: json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))}
 
@@ -109,7 +119,10 @@ class WorkerExecutionContextRef:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "WorkerExecutionContextRef":
-        expected = set(cls.__dataclass_fields__)
+        expected = {
+            name for name in cls.__dataclass_fields__
+            if name != "spawn_registration_callback"
+        }
         unknown = set(payload) - expected
         missing = expected - set(payload)
         if unknown or missing:

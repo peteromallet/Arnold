@@ -23,6 +23,8 @@ from pydantic import BaseModel, ValidationError
 from arnold.execution.step_invocation import StepInvocation
 from arnold.agent.routing import MANAGED_AGENT_BACKENDS, resolve_managed_agent_route
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
+from arnold_pipelines.megaplan.managed_agent import signal_managed_process
+from arnold_pipelines.megaplan.incident.disposition import signal_process_group
 
 from .config import ResidentConfig
 from .provenance import environment_with_provenance
@@ -545,15 +547,19 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
     """Kill the Codex wrapper and descendants created for one invocation."""
 
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        # CodexCliAgentRunner owns this transient process group directly; it
+        # is not a managed WBC worker and has no worker execution context.
+        # Keep it behind the canonical generic process-group primitive rather
+        # than silently treating missing worker custody as an admitted signal.
+        signal_process_group(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         if proc.returncode is None:
-            proc.kill()
+            signal_process_group(proc.pid, signal.SIGKILL)
     try:
         await asyncio.wait_for(proc.wait(), timeout=5.0)
     except asyncio.TimeoutError:
         if proc.returncode is None:
-            proc.kill()
+            signal_process_group(proc.pid, signal.SIGKILL)
             await proc.wait()
 class ManagedProviderCliAgentRunner(DispatchProtocol):
     """Provider-neutral, durable CLI runner for resident root turns.
@@ -1265,19 +1271,38 @@ def _append_raw_log(log_path: Path, raw_path: Path, backend: str) -> None:
 
 async def _terminate_process_group(proc: asyncio.subprocess.Process) -> None:
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        term_sent = signal_managed_process(
+            Path.cwd(), {"run_id": f"resident:{proc.pid}"}, proc.pid,
+            signal.SIGTERM, cause_kind="terminate", ladder_step="term",
+            process_group=True,
+        )
     except ProcessLookupError:
-        pass
+        term_sent = False
+    # A known worker without WBC context is deliberately left untouched.  Do
+    # not wait forever on a handle we were not authorized to signal; callers
+    # retain the process object for explicit custody reconciliation.
+    if not term_sent:
+        return
     try:
         await asyncio.wait_for(proc.wait(), timeout=5.0)
         return
     except asyncio.TimeoutError:
         pass
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        kill_sent = signal_managed_process(
+            Path.cwd(), {"run_id": f"resident:{proc.pid}"}, proc.pid,
+            signal.SIGKILL, cause_kind="escalation", ladder_step="kill",
+            process_group=True,
+        )
     except ProcessLookupError:
-        pass
-    await proc.wait()
+        kill_sent = False
+    if kill_sent:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            # Keep custody/process handle available for reconciliation; never
+            # issue a raw fallback signal after canonical refusal.
+            return
 
 
 async def _await_maybe(value: Any) -> Any:

@@ -3326,6 +3326,52 @@ if path.exists():
     if isinstance(loaded, dict):
         current.update(loaded)
 current.update(payload)
+import hashlib, socket
+
+def _start_identity(pid):
+    try:
+        fields = pathlib.Path(f"/proc/{{int(pid)}}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+        return str(fields[19])
+    except Exception:
+        return None
+
+workspace = pathlib.Path(current.get("workspace", "")).expanduser()
+manifest_path = pathlib.Path(current.get("bootstrap_manifest_path", ""))
+if manifest_path.is_file():
+    current["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    try:
+        from arnold_pipelines.megaplan.cloud.runtime_manifest import bootstrap_manifest
+        manifest = bootstrap_manifest(manifest_path)
+        current.setdefault("runtime_id", manifest.runtime_id)
+        current.setdefault("generation", manifest.generation)
+        current.setdefault("expected_head", manifest.epic["expected_head"])
+    except Exception:
+        pass
+progress_path = pathlib.Path(current.get("progress_artifact", ""))
+if progress_path.is_file():
+    current["progress_content_digest"] = hashlib.sha256(progress_path.read_bytes()).hexdigest()
+if not current.get("supervisor_pid"):
+    current["supervisor_pid"] = int(os.environ.get("MEGAPLAN_SUPERVISOR_PID", os.getppid()))
+if not current.get("supervisor_process_start_identity"):
+    current["supervisor_process_start_identity"] = _start_identity(current["supervisor_pid"])
+    if not current["supervisor_process_start_identity"]:
+        try:
+            from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+            current["supervisor_process_start_identity"] = read_process_start_identity(current["supervisor_pid"])
+        except Exception:
+            pass
+if not current.get("boot_identity"):
+    try:
+        from arnold_pipelines.megaplan.watchdog.worker_identity import current_boot_identity
+        current["boot_identity"] = current_boot_identity() or "unknown-boot"
+    except Exception:
+        current["boot_identity"] = "unknown-boot"
+if not current.get("container_identity"):
+    current["container_identity"] = os.environ.get("ARNOLD_CONTAINER_IDENTITY") or socket.gethostname()
+unsigned = dict(current)
+unsigned.pop("content_digest", None)
+unsigned.pop("marker_sha256", None)
+current["content_digest"] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 path.parent.mkdir(parents=True, exist_ok=True)
 fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
 with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -4560,14 +4606,12 @@ def _tmux_chain_stop_for_fresh_command(
     """
     return (
         f"if tmux has-session -t {shlex.quote(session_name)} 2>/dev/null; then "
-        f"if [ -f {shlex.quote(marker_path)} ] && "
-        f"grep -F {shlex.quote(identity_digest)} {shlex.quote(marker_path)} >/dev/null 2>&1; then "
-        f"tmux kill-session -t {shlex.quote(session_name)} 2>/dev/null; "
+        f"python3 -P -m arnold_pipelines.megaplan.cloud.operator_control tmux-stop "
+        f"--spec /dev/null --workspace $(dirname {shlex.quote(marker_path)}) "
+        f"--session {shlex.quote(session_name)} --marker {shlex.quote(marker_path)} "
+        f"--identity-digest {shlex.quote(identity_digest)} || "
+        "{ echo 'ERROR: exact tmux authority proof failed; refusing fresh reset'; exit 17; }; "
         f"echo {shlex.quote(f'stopped {session_name} session for fresh launch')}; "
-        "else "
-        f"echo {shlex.quote(f'ERROR: {session_name} session marker does not match requested chain; refusing fresh reset')}; "
-        "exit 17; "
-        "fi; "
         "fi"
     )
 
@@ -4608,12 +4652,11 @@ def _tmux_chain_restart_command(
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
         f"if tmux has-session -t {shlex.quote(name)} 2>/dev/null; then "
-        f"if [ -f {shlex.quote(marker)} ] && grep -F {shlex.quote(remote_spec_path)} {shlex.quote(marker)} >/dev/null 2>&1; then "
-        f"tmux kill-session -t {shlex.quote(name)} 2>/dev/null; "
-        "else "
-        f"echo {shlex.quote(f'ERROR: {name} session marker does not match {remote_spec_path}; refusing restart')}; "
-        "exit 17; "
-        "fi; "
+        f"python3 -P -m arnold_pipelines.megaplan.cloud.operator_control tmux-stop "
+        f"--spec /dev/null --workspace $(dirname {shlex.quote(marker)}) "
+        f"--session {shlex.quote(name)} --marker {shlex.quote(marker)} "
+        f"--remote-spec {shlex.quote(remote_spec_path)} || "
+        "{ echo 'ERROR: exact tmux authority proof failed; refusing restart'; exit 17; }; "
         "fi; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
         f"echo {shlex.quote(f'restarted {name} session')}"
@@ -5591,6 +5634,9 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             code="launch_in_progress",
             detail="cloud chain launch is preparing the remote session",
         ),
+        "bootstrap_manifest_path": _chain_runtime_manifest_path(launch_ctx.slug),
+        "progress_artifact": launch_ctx.log_path,
+        "progress_identity": f"chain:{launch_ctx.identity}",
     }
     if bool(getattr(args, "fresh", False)):
         # A fresh launch explicitly supersedes any prior pause for this exact
@@ -5649,6 +5695,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         runtime_binding,
         policy_path=runtime_binding.get("policy_path"),
     )
+    marker_payload["bootstrap_manifest_path"] = str(runtime_binding["manifest_path"])
     sys.stderr.write(
         "cloud chain runtime binding: "
         f"slug={launch_ctx.slug} "
@@ -6211,6 +6258,9 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
             code="launch_in_progress",
             detail="cloud epic-chain launch is preparing the remote session",
         ),
+        "bootstrap_manifest_path": _chain_runtime_manifest_path(launch_ctx.slug),
+        "progress_artifact": launch_ctx.log_path,
+        "progress_identity": f"epic-chain:{launch_ctx.identity}",
     }
     if bool(getattr(args, "fresh", False)):
         marker_payload["should_run"] = True
@@ -6438,6 +6488,12 @@ def _bootstrap_marker_payload(
     plan_name: str,
     relaunch_command: str,
 ) -> dict[str, Any]:
+    # These are producer bindings, not ambient selector inputs.  The remote
+    # atomic writer fills the runtime-local supervisor/boot/container values
+    # and content digests immediately before publishing the marker.
+    workspace_path = Path(workspace).expanduser()
+    manifest_path = workspace_path / ".megaplan" / "runtime-manifest.json"
+    progress_path = workspace_path / _bootstrap_log_relative(plan_name)
     return {
         "session": session_name,
         "workspace": workspace,
@@ -6447,6 +6503,9 @@ def _bootstrap_marker_payload(
         "plan_name": plan_name,
         "relaunch_command": relaunch_command,
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "bootstrap_manifest_path": str(manifest_path),
+        "progress_artifact": str(progress_path),
+        "progress_identity": f"plan:{plan_name}",
     }
 
 

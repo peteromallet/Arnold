@@ -191,6 +191,9 @@ if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
     --marker-dir "$MARKER_DIR" --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
 fi
 arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
+# Audit rows are report-only until a caller supplies the exact target marker;
+# the auditor never treats a global/ambient NBF context as authority.
+export MEGAPLAN_NBF_CONTEXT_BOUND=0
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
@@ -6516,8 +6519,19 @@ PY
     child_pid=$!
     if ! record_audit_dispatch_started "$receipt_root" "$dispatch_id"; then
       log "six-hour audit dispatch indeterminate: subprocess started but receipt transition failed plan=$plan pid=$child_pid"
-      kill "$child_pid" 2>/dev/null || true
-      wait "$child_pid" 2>/dev/null || true
+      # Receipt persistence failure is a hard no-signal condition. Leave the
+      # child for the canonical custody/reconciliation path rather than
+      # bypassing the disposition door with a raw kill.
+      if declare -F arnold_supervisor_signal_bound_pid >/dev/null 2>&1 \
+        && arnold_supervisor_bind_signal_context_for_pid "$child_pid" "$MARKER_DIR" non_worker; then
+        arnold_supervisor_signal_bound_pid arnold-progress-auditor "$child_pid" SIGTERM term audit-receipt-transition-failed >/dev/null 2>/dev/null || true
+      fi
+      # Never turn an unbound registration failure into an unbounded wait.
+      if kill -0 "$child_pid" >/dev/null 2>&1; then
+        log "six-hour audit child handed to reconciliation without signal plan=$plan pid=$child_pid"
+      else
+        wait "$child_pid" 2>/dev/null || true
+      fi
       return 0
     fi
     if wait "$child_pid"; then rc=0; else rc=$?; fi

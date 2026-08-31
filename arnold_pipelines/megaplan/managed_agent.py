@@ -21,10 +21,21 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import time
 from typing import Any
+
+from arnold_pipelines.megaplan.incident.disposition import (
+    SignalDispositionError,
+    WorkerSignalContext,
+    resolve_worker_execution_context,
+    signal_non_worker,
+    signal_worker_ladder,
+)
+from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.incident.schema import NonWorkerSignalDisposition
 
 
 MANAGED_AGENT_SCHEMA = "arnold-managed-agent-run-v2"
@@ -282,7 +293,23 @@ def _pid_start_ticks(pid: object) -> str:
         # /proc/<pid>/stat field 22 is stable across exec and changes on PID reuse.
         return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
     except (OSError, IndexError):
-        return ""
+        # macOS has no /proc.  ``ps lstart`` is the strongest portable
+        # incarnation token available to this supervisor; hash the complete
+        # start timestamp so it cannot be confused with a bare PID.
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, TypeError, AttributeError, ValueError, subprocess.TimeoutExpired):
+            return ""
+        started = result.stdout.strip()
+        if result.returncode != 0 or not started:
+            return ""
+        return "ps-lstart:" + hashlib.sha256(started.encode("utf-8")).hexdigest()
 
 
 def _pid_matches(pid: object, expected_sha256: str, expected_start_ticks: str = "") -> bool:
@@ -296,6 +323,235 @@ def _pid_matches(pid: object, expected_sha256: str, expected_start_ticks: str = 
         return False
     observed = hashlib.sha256(raw).hexdigest()
     return not expected_sha256 or observed == expected_sha256
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown-boot"
+
+
+def _managed_worker_identity(
+    pid: int, process_start_identity: str | None = None
+) -> dict[str, Any]:
+    """Return the child identity used by the managed signal door.
+
+    The process-start token belongs to the child, not the supervisor.  Keep it
+    in the same identity envelope as PID/boot so accepted outcomes cannot
+    silently fall back to a supervisor incarnation surrogate.
+    """
+    return {
+        "host": socket.gethostname(),
+        "pid": pid,
+        "boot_id": _boot_id(),
+        "process_start_identity": process_start_identity or "",
+    }
+
+
+def certify_managed_worker_launch(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    pid: int,
+    worker_identity: Mapping[str, Any],
+    process_start_identity: str,
+    started_at: str,
+) -> bool:
+    """Persist the accepted launch marker for an admission-backed child.
+
+    The marker is the bridge between a managed process and the WBC reservation;
+    without it the signal door must reject the process as an uncertified worker.
+    """
+    raw_context = manifest.get("worker_execution_context")
+    if raw_context is None:
+        raw_context = os.environ.get("ARNOLD_WORKER_EXECUTION_CONTEXT")
+    if raw_context is None or not process_start_identity or not isinstance(worker_identity, Mapping):
+        return False
+    try:
+        ref = (
+            resolve_worker_execution_context({"ARNOLD_WORKER_EXECUTION_CONTEXT": json.dumps(raw_context)})
+            if isinstance(raw_context, Mapping)
+            else resolve_worker_execution_context({"ARNOLD_WORKER_EXECUTION_CONTEXT": raw_context})
+        )
+        ledger = IncidentLedger(Path(ref.ledger_root))
+        projection = ledger.projection()
+        reservation = next(
+            (item for item in projection.get("reservations", {}).values()
+             if item.get("admission_receipt_id") == ref.admission_receipt_id),
+            None,
+        )
+        if reservation is None:
+            return False
+        marker = reservation.get("accepted_launch_marker")
+        if marker is not None:
+            return (
+                marker.get("worker_identity") == dict(worker_identity)
+                and marker.get("victim_process_start_identity") == process_start_identity
+            )
+        ledger.append_controlled_adapter_state(
+            reservation_event_id=str(reservation["event_id"]),
+            admission_receipt_id=ref.admission_receipt_id,
+            physical_door_id=ref.physical_door_id,
+            launch_state_identity="accepted",
+            phase=ref.phase,
+            selected_spec=ref.selected_spec,
+            primary_spec=ref.selected_spec,
+            logical_dispatch_id=ref.logical_dispatch_id,
+            worker_identity=dict(worker_identity),
+            victim_process_start_identity=process_start_identity,
+            started_at=started_at,
+            operation_evidence={
+                "managed_manifest": str(manifest_path),
+                "victim_pid": pid,
+                "victim_process_start_identity": process_start_identity,
+            },
+            actor="managed-agent-launch",
+        )
+        return True
+    except (OSError, TypeError, ValueError, SignalDispositionError, KeyError, json.JSONDecodeError):
+        return False
+
+
+def signal_managed_process(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    pid: int,
+    signal_name: int,
+    *,
+    cause_kind: str,
+    ladder_step: str,
+    process_group: bool = False,
+    worker: bool = True,
+    wait_fn: Any = None,
+    return_result: bool = False,
+) -> bool | Mapping[str, Any]:
+    """Signal a managed child only through a typed disposition door.
+
+    A WBC context embedded in the manifest/environment is authoritative.  If
+    it is present but malformed, the operation is fail-closed.  Known workers
+    without admission context are never signaled; only an explicit parent or
+    supervisor lifecycle caller may opt into the non-worker door.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    raw_context = manifest.get("worker_execution_context")
+    if raw_context is None:
+        raw_context = os.environ.get("ARNOLD_WORKER_EXECUTION_CONTEXT")
+    # Missing context is rejected before any platform probe.  Besides being
+    # fail-closed, this keeps an uncertified fake/terminated child from causing
+    # a subprocess-based identity probe with no signal authority.
+    if raw_context is None and worker:
+        return False
+    observed_start = _pid_start_ticks(pid)
+    start = observed_start or str(manifest.get("worker_start_ticks") or "")
+    if raw_context is not None:
+        try:
+            ref = (
+                resolve_worker_execution_context({"ARNOLD_WORKER_EXECUTION_CONTEXT": json.dumps(raw_context)})
+                if isinstance(raw_context, Mapping)
+                else resolve_worker_execution_context({"ARNOLD_WORKER_EXECUTION_CONTEXT": raw_context})
+            )
+            worker_identity = manifest.get("worker_identity")
+            if not isinstance(worker_identity, dict):
+                worker_identity = json.loads(os.environ.get("ARNOLD_WORKER_IDENTITY", "{}"))
+            if not isinstance(worker_identity, dict) or not worker_identity:
+                return False
+            context = WorkerSignalContext.from_ref(
+                ref,
+                worker_identity=worker_identity,
+                victim_pid=pid,
+                victim_process_start_identity=start,
+                started_at=str(manifest.get("worker_started_at") or "") or None,
+            )
+            if not start:
+                return False
+            ledger = IncidentLedger(Path(ref.ledger_root))
+            def send(number: int) -> None:
+                if process_group:
+                    os.killpg(os.getpgid(pid), number)
+                else:
+                    os.kill(pid, number)
+
+            term_invoke = lambda: send(signal.SIGTERM)
+            kill_invoke = lambda: send(signal.SIGKILL)
+            def bounded_wait() -> None:
+                if not callable(wait_fn):
+                    return
+                try:
+                    wait_fn()
+                except (subprocess.TimeoutExpired, ProcessLookupError, ChildProcessError):
+                    pass
+            term_confirmation = manifest.get("term_confirmation_event_id")
+            kill_confirmation = manifest.get("kill_confirmation_event_id")
+            result = signal_worker_ladder(
+                ledger,
+                context,
+                term_signal=signal.SIGTERM,
+                kill_signal=signal.SIGKILL,
+                killer_kind="launcher_timeout" if cause_kind == "timeout" else "resident_supervisor",
+                killer_identity=f"managed-supervisor:{os.getpid()}",
+                cause_kind=cause_kind,
+                term_confirmation_event_id=str(term_confirmation) if term_confirmation else None,
+                kill_confirmation_event_id=str(kill_confirmation) if kill_confirmation else None,
+                term_signal_fn=term_invoke,
+                kill_signal_fn=kill_invoke,
+                liveness_fn=_pid_live,
+                process_start_identity_fn=_pid_start_ticks,
+                wait_fn=bounded_wait if callable(wait_fn) else None,
+            )
+            if return_result:
+                return result.to_dict()
+            return result.state in {"killed", "already_dead"}
+        except (OSError, TypeError, ValueError, SignalDispositionError, json.JSONDecodeError):
+            # Context, ledger, confirmation, or append failure is fail-closed.
+            return False
+
+    # A known worker without admission context is never reclassified as
+    # lifecycle cleanup.  Parent/supervisor callers explicitly pass worker=False
+    # and are recorded through the non-worker door below.
+    if worker:
+        return False
+    # Record parent/supervisor lifecycle cleanup before signaling.
+    try:
+        # A non-worker lifecycle action still requires a positive incarnation
+        # token; unknown PID identity is fail-closed.
+        if not start:
+            return False
+        ledger = IncidentLedger(manifest_path.parent)
+        disposition = NonWorkerSignalDisposition(
+            disposition_id=hashlib.sha256(
+                f"managed-lifecycle\0{manifest.get('run_id', manifest_path.parent.name)}\0{signal_name}\0{ladder_step}".encode()
+            ).hexdigest(),
+            subject="non_worker_lifecycle",
+            lifecycle_identity=f"managed:{manifest.get('run_id', manifest_path.parent.name)}",
+            killer_identity=f"managed-supervisor:{os.getpid()}",
+            cause_kind="lifecycle_shutdown",
+            signal=signal.Signals(signal_name).name,
+            victim_pid_or_group=str(os.getpgid(pid) if process_group else pid),
+            victim_process_start_identity=start,
+            observed_at=utc_now(),
+            evidence={"managed_manifest": str(manifest_path), "cause_kind": cause_kind, "ladder_step": ladder_step},
+        )
+        invoke = (
+            (lambda: os.killpg(os.getpgid(pid), signal_name))
+            if process_group
+            else (lambda: os.kill(pid, signal_name))
+        )
+        def preflight(_records: list[dict[str, Any]]) -> None:
+            # Keep the parent/supervisor adapter on the same locked physical
+            # door as the authority-aware CLI.  The supplied manifest remains
+            # the explicit lifecycle contract; the process incarnation is
+            # re-read while the ledger lock is held immediately before claim.
+            current_start = _pid_start_ticks(pid)
+            if current_start != start:
+                raise SignalDispositionError(
+                    "non-worker process identity changed before signal"
+                )
+        signal_non_worker(ledger, disposition, signal_fn=invoke, preflight=preflight)
+        return True
+    except (OSError, ValueError, SignalDispositionError):
+        return False
 
 
 def is_managed_manifest(payload: Mapping[str, Any]) -> bool:
@@ -403,6 +659,10 @@ class ManagedCommandSpec:
     tee_output: bool = True
     child_difficulty_ceiling: int | None = None
     filesystem_capability: dict[str, Any] | None = None
+    # Set by an admission-backed caller.  It is persisted and propagated to
+    # the child so timeout/interrupt handling can use the same receipt rather
+    # than reconstructing identity from a PID or model name.
+    worker_execution_context: Mapping[str, Any] | None = None
 
 
 def _root_for(spec: ManagedCommandSpec) -> Path:
@@ -443,6 +703,8 @@ def _launch_contract(
         "retry_of_run_id": spec.retry_of_run_id,
         "lineage_key": spec.lineage_key,
         "require_output": spec.require_output,
+        "worker_execution_context": dict(spec.worker_execution_context)
+        if isinstance(spec.worker_execution_context, Mapping) else None,
         "authority": {
             "root_difficulty": spec.difficulty,
             "child_difficulty_ceiling": child_ceiling,
@@ -549,6 +811,8 @@ def _new_manifest(
             {"status": "reserved", "at": created_at, "evidence": "manifest_committed_before_process_launch"}
         ],
     }
+    if isinstance(spec.worker_execution_context, Mapping):
+        payload["worker_execution_context"] = dict(spec.worker_execution_context)
     return {key: value for key, value in payload.items() if value is not None}
 
 
@@ -888,7 +1152,16 @@ def _run_managed_command_locked(
         nonlocal interrupted
         interrupted = signum
         if child is not None and child.poll() is None:
-            child.terminate()
+            signal_managed_process(
+                manifest_path,
+                manifest,
+                child.pid,
+                signal.SIGTERM,
+                cause_kind="terminate",
+                ladder_step="term",
+                worker=True,
+                wait_fn=lambda: child.wait(timeout=5),
+            )
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
@@ -899,6 +1172,14 @@ def _run_managed_command_locked(
             manifest["incident_claim_event_id"], manifest["incident_attempt_event_id"] = emitted
             atomic_write_manifest(manifest_path, manifest)
         env = os.environ.copy()
+        inherited_worker_context = env.get("ARNOLD_WORKER_EXECUTION_CONTEXT")
+        if inherited_worker_context and "worker_execution_context" not in manifest:
+            try:
+                context_ref = resolve_worker_execution_context(env)
+            except (TypeError, ValueError, SignalDispositionError) as exc:
+                raise RuntimeError("managed launch inherited malformed worker execution context") from exc
+            manifest["worker_execution_context"] = context_ref.to_dict()
+            atomic_write_manifest(manifest_path, manifest)
         # Automatic agents have machine custody.  A chain marker may carry a
         # Discord envelope for a later explicit reply, but it is not launch
         # authority for this internal child and must not leak into its process.
@@ -929,6 +1210,13 @@ def _run_managed_command_locked(
             _mapping_int(manifest.get("authority"), "child_difficulty_ceiling")
             or spec.difficulty
         )
+        context_payload = manifest.get("worker_execution_context")
+        if isinstance(context_payload, Mapping):
+            # The exact serialized WBC reference is part of the managed launch
+            # envelope; do not synthesize a replacement from the child PID.
+            env["ARNOLD_WORKER_EXECUTION_CONTEXT"] = json.dumps(
+                dict(context_payload), sort_keys=True, separators=(",", ":")
+            )
         if spec.run_kind == "automatic_repair" and env.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID"):
             env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
         stdin_contract = manifest.get("stdin")
@@ -1014,6 +1302,17 @@ def _run_managed_command_locked(
 
         manifest["worker_start_ticks"] = _pid_start_ticks(child.pid)
         manifest["worker_started_at"] = utc_now()
+        manifest["worker_identity"] = _managed_worker_identity(
+            child.pid, manifest["worker_start_ticks"]
+        )
+        manifest["worker_launch_certified"] = certify_managed_worker_launch(
+            manifest_path,
+            manifest,
+            pid=child.pid,
+            worker_identity=manifest["worker_identity"],
+            process_start_identity=str(manifest["worker_start_ticks"] or ""),
+            started_at=str(manifest["worker_started_at"]),
+        )
         manifest["worker_cmdline_sha256"] = hashlib.sha256(raw_cmdline).hexdigest()
         _append_status(manifest, "running", evidence="worker_process_started")
         atomic_write_manifest(manifest_path, manifest)
@@ -1098,12 +1397,16 @@ def _run_managed_command_locked(
         return effective_returncode
     except BaseException as exc:
         if child is not None and child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
+            signal_managed_process(
+                manifest_path,
+                manifest,
+                child.pid,
+                signal.SIGTERM,
+                cause_kind="terminate",
+                ladder_step="term",
+                worker=True,
+                wait_fn=lambda: child.wait(timeout=5),
+            )
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         control_terminal = str(manifest.get("status") or "")
         terminal = (
@@ -1144,7 +1447,15 @@ def transition_terminal(manifest_path: Path, status: str, *, reason: str) -> dic
                 str(payload.get(f"{prefix}_start_ticks") or ""),
             ):
                 try:
-                    os.kill(int(pid), signal.SIGTERM)
+                    signal_managed_process(
+                        manifest_path,
+                        payload,
+                        int(pid),
+                        signal.SIGTERM,
+                        cause_kind="terminate",
+                        ladder_step="term",
+                        worker=(field == "worker_pid"),
+                    )
                 except OSError:
                     pass
         _append_status(payload, status, evidence="explicit_control_plane_transition", reason=reason)

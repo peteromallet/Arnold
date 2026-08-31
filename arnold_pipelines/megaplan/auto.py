@@ -61,6 +61,8 @@ from arnold_pipelines.megaplan._core.phase_runtime import (
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from arnold_pipelines.megaplan.runtime.process import kill_group
+from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.incident.schema import ObservedProcessDeath
 from arnold_pipelines.megaplan.observability.events import (
     EventKind,
     emit as emit_event,
@@ -4214,6 +4216,13 @@ def _clear_orphaned_active_step(
             extra={"path": str(state_path), "expected_step": expected_step},
         ) from exc
     if cleared and quarantine:
+        _append_orphan_death_disposition(
+            plan_dir,
+            expected_step,
+            expected_snapshot,
+            active_step_cas=expected_token,
+            quarantined=list(quarantined),
+        )
         _emit_worker_killed_event(
             plan_dir,
             expected_step,
@@ -4222,6 +4231,84 @@ def _clear_orphaned_active_step(
             quarantined=list(quarantined),
         )
     return cleared
+
+
+def _append_orphan_death_disposition(
+    plan_dir: Path,
+    phase: str,
+    active_step: Mapping[str, Any],
+    *,
+    active_step_cas: str,
+    quarantined: list[str],
+) -> None:
+    """Persist an orphan death without inventing a killer or worker signal.
+
+    Orphan recovery runs after a supervisor disappeared, so the only truthful
+    choices are an observed unknown death or a kernel OOM observation backed by
+    a positive cgroup delta.  The disposition is idempotent and deliberately
+    carries no worker signal or fabricated identity fields.
+    """
+    death = _build_worker_death_record(
+        plan_dir=plan_dir,
+        phase=phase,
+        active_step=active_step,
+        active_step_cas=active_step_cas,
+        quarantined=quarantined,
+    )
+    oom_delta = int(death.get("oom_kill_delta") or 0)
+    cause = "cgroup_oom" if oom_delta > 0 else "observed_dead_unknown"
+    killer = "kernel_cgroup_oom" if cause == "cgroup_oom" else "external_unknown"
+    observation_id = hashlib.sha256(
+        json.dumps(
+            ("orphan-death", str(active_step.get("run_id") or ""),
+             str(active_step.get("invocation_id") or ""), active_step_cas,
+             cause, oom_delta), separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    known = {
+        "plan_id": str(active_step.get("plan_id") or "") or None,
+        "phase": phase,
+        "run_id": str(active_step.get("run_id") or "") or None,
+        "invocation_id": str(active_step.get("invocation_id") or "") or None,
+        "active_step_cas": active_step_cas,
+    }
+    known = {key: value for key, value in known.items() if value is not None}
+    evidence = {
+        "orphan_recovery": True,
+        "worker_pid": death.get("worker_pid"),
+        "worker_process_start_identity": death.get("worker_process_start_identity"),
+        "quarantined": list(quarantined),
+        "oom_kill_delta": oom_delta,
+    }
+    try:
+        IncidentLedger(plan_dir).append_disposition(
+            ObservedProcessDeath(
+                observation_id=observation_id,
+                subject="worker",
+                observation_source="auto.orphan_recovery",
+                known_context_fields=known,
+                unknown_context_fields=("killer_identity", "signal"),
+                victim_identity_evidence={
+                    "worker_pid": death.get("worker_pid"),
+                    "active_step_cas": active_step_cas,
+                },
+                cause_kind=cause,
+                killer_kind=killer,
+                signal=None,
+                positive_cgroup_delta=(
+                    {"positive": True, "delta_bytes": oom_delta} if oom_delta > 0 else None
+                ),
+                observed_at=str(death.get("detected_at") or datetime.now(timezone.utc).isoformat()),
+                evidence=evidence,
+            )
+        )
+    except (OSError, TypeError, ValueError):
+        # State CAS has already succeeded; inability to append the observation
+        # must remain visible through the existing plan event, never become a
+        # fabricated signal or ordinary worker failure.
+        logging.getLogger("megaplan").exception(
+            "orphan death disposition append failed for %s/%s", plan_dir, phase
+        )
 
 
 def _build_worker_death_record(

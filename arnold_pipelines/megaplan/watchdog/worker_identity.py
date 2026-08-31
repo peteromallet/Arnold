@@ -110,6 +110,36 @@ def _read_boot_id() -> Optional[str]:
     return None
 
 
+def read_process_start_identity(pid: int) -> str | None:
+    """Return the kernel birth marker for *pid*, or ``None`` if unknown.
+
+    This is an observation-only helper for signal/liveness sites.  Linux uses
+    procfs field 22; portable systems may use the controlled ``ps`` fallback.
+    A missing marker is never replaced with a PID-only claim.
+    """
+    try:
+        raw = open(f"/proc/{int(pid)}/stat", encoding="utf-8").read()
+        fields = raw.rsplit(")", 1)[1].split()
+        return str(fields[19])
+    except Exception:
+        pass
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(int(pid))],
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        value = result.stdout.strip()
+        return value or None
+    except Exception:
+        return None
+
+
+def current_boot_identity() -> str | None:
+    """Return the current boot identity, with no PID-only fallback."""
+    return _read_boot_id()
+
+
 # ── Worker identity ───────────────────────────────────────────────────────
 
 
@@ -606,4 +636,6 @@ __all__ = [
     "ProcessCorrelationSnapshot",
     # ── Helpers ──
     "_read_boot_id",
+    "read_process_start_identity",
+    "current_boot_identity",
 ]

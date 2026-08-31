@@ -35,6 +35,9 @@ from tests.cloud.repair_identity_fixtures import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
+WATCHDOG_TEST_MANIFEST_DIR = (
+    REPO_ROOT / "tests" / "cloud" / "fixtures" / "watchdog-runtime-manifests"
+)
 
 
 def _enqueue_claimable_request(
@@ -249,13 +252,20 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
         assert f'register_progress_auditor_cleanup "${prefix}_SNAPSHOT_PATH"' in text
         assert "trap 'cleanup_progress_auditor' EXIT" in text
     else:
-        assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
+        assert f'rm -f -- "${prefix}_SNAPSHOT_PATH"' in text
     assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
 
 
 def _extract_wrapper_function(name: str) -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
+    # ``launch_chain_tick`` contains nested shell functions and embedded
+    # Python programs.  The first ``\n}\n`` is therefore an inner function
+    # boundary, not the end of the extracted wrapper.  Keep isolated shell
+    # contract tests bound to the real top-level function boundary.
+    if name == "launch_chain_tick":
+        end = text.index("\nscan_once_unlocked() {", start)
+        return text[start:end]
     end = text.index("\n}\n", start) + 3
     return text[start:end]
 
@@ -512,7 +522,12 @@ def _run_write_needs_human_marker(
     )
 
 
-def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run_watchdog_shell(
+    script: str,
+    *,
+    path_prefix: Path | None = None,
+    allow_notification_delivery: bool = False,
+) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     # Watchdog tests execute extracted production shell functions.  Never let
     # ambient credentials grant those functions outbound notification
@@ -527,12 +542,51 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
     ):
         env.pop(name, None)
     env["DISCORD_DM_BIN"] = "/bin/false"
+    # Keep notification safety deterministic even when pytest uses an
+    # isolated basetemp outside the historical ``pytest-of-*`` path.
+    env["MEGAPLAN_TEST_EXECUTION"] = "1"
+    if allow_notification_delivery:
+        # These fixtures inject local diagnostic/Discord stand-ins and assert
+        # the durable notification path.  Keep the default harness fail-safe;
+        # delivery must be opted into explicitly by such a fixture.
+        env.pop("MEGAPLAN_TEST_EXECUTION", None)
+        env.pop("ARNOLD_TEST_EXECUTION", None)
     env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
+    env["MEGAPLAN_BABYSITTER_PYTHON"] = sys.executable
+    # Extracted relaunch functions use the identity-scoped runtime manifest
+    # contract.  The fixture directory supplies only known-good sessions;
+    # tests for missing/invalid manifests override this explicitly.
+    env["ARNOLD_RUNTIME_MANIFEST_DIR"] = str(WATCHDOG_TEST_MANIFEST_DIR)
+    # The runtime library invokes the pinned interpreter with ``-P``.  Keep
+    # the extracted-wrapper harness bound to this checkout explicitly rather
+    # than relying on pytest's ambient import path.
+    env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}"
     env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
+    # Extracted-function fixtures do not include the full wrapper dependency
+    # closure.  Supply inert defaults for observer-only helpers; individual
+    # tests may define stronger spies/stubs later in their script and thereby
+    # override these definitions.  These defaults never exist in production.
+    harness_stubs = r'''
+authority_gap_continue() { :; }
+repair_goal_watchdog_status() { return 0; }
+# No extracted fixture owns a current needs-human sidecar unless it defines
+# one explicitly; return non-zero so the production fall-through remains
+# reachable in ordinary wrapper tests.
+emit_current_needs_human_sidecar() { return 1; }
+environment_gone_check() { return 1; }
+arnold_supervisor_tmux_session_exists() { return 1; }
+arnold_supervisor_tmux_session_socket() { printf '%s\n' "${ARNOLD_TEST_TMUX_SOCKET:-/tmp/arnold-test.sock}"; }
+emit_custody_structured_facts() { :; }
+repair_needs_human_path() { return 1; }
+emit_watchdog_incident_bridge_event() { :; }
+relaunch_materializer_authority_gate() {
+  printf '%s\n' '{"family":"direct_module.auto","is_non_authoritative_family":true,"is_repair_authority":false,"can_become_accepted_repair_on_success":false,"accepted_repair_requires_canonical_delegation":true,"canonical_delegation_path":"simple_fixer.singleton_claim.exact_f01_tuple","forbidden_sources_present":[]}'
+}
+'''
     return subprocess.run(
-        ["bash", "-c", script],
+        ["bash", "-c", harness_stubs + "\n" + script],
         capture_output=True,
         text=True,
         env=env,
@@ -686,7 +740,7 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
 def test_host_resident_ensure_starts_from_pinned_runtime_source() -> None:
     text = _systemd_file("ensure-megaplan-resident")
 
-    assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in text
+    assert 'tmux -S "$socket" new-session -d -s megaplan-resident-discord -c /workspace' in text
     assert (
         'runtime_src="$(arnold_runtime_manifest_epic_field epic.runtime_root'
         in text
@@ -951,8 +1005,8 @@ def test_watchdog_reaper_is_wired_into_scan_and_report_summary() -> None:
 
     assert 'REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"' in text
     assert 'REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"' in text
-    assert 'REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"' in text
-    assert 'REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"' in text
+    assert 'REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-1800}"' in text
+    assert 'REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-1800}"' in text
     assert 'KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"' in text
     assert "reap_stale_repairs()" in text
     assert "reap_stalled_repair_candidates()" in text
@@ -1422,7 +1476,7 @@ repair_tree_pgids 100 100
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
     text = _extract_wrapper_function("session_health_status")
 
-    pane_check = "tmux capture-pane"
+    pane_check = 'tmux -S "$capture_socket" capture-pane'
     retry_check = "retrying_failure"
     process_check = 'if chain_process_is_alive "$remote_spec"; then'
 
@@ -2025,7 +2079,7 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan" in text
     assert '"$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command"' in text
     assert "--project-dir %q --one" not in text
-    assert 'tmux kill-session -t "$session"' in text
+    assert 'tmux -S "$tmux_socket" kill-session -t "=$tmux_session_id"' in text
     assert 'sleep 0.2' in text
     assert "relaunch raced with existing tmux session" in text
     assert "session exists after relaunch race" in text
@@ -2147,8 +2201,8 @@ def test_watchdog_relaunch_materializers_are_non_authoritative() -> None:
     functions = "\n\n".join(_extract_relaunch_functions("watchdog"))
     gate = _extract_wrapper_function("relaunch_materializer_authority_gate")
     bash_lines = [
-        'PLAN_AUTO="$(default_plan_relaunch_command "demo-plan" "/tmp/ws")"',
-        'PLAN_RESUME="$(resume_plan_relaunch_command "demo-plan" "/tmp/ws")"',
+        'PLAN_AUTO="$(default_plan_relaunch_command "demo-plan" "/tmp/ws" "demo-plan")"',
+        'PLAN_RESUME="$(resume_plan_relaunch_command "demo-plan" "/tmp/ws" "demo-plan")"',
         'CHAIN_START="$(default_chain_relaunch_command "demo-sess" "/tmp/ws" "origin/main")"',
         '_quoted="$(printf \'%q\' "$PLAN_AUTO")"',
         'SUPERVISE_WRAPPER="exec arnold-supervise \\"watchdog\\" bash -lc $_quoted"',
@@ -2401,11 +2455,11 @@ def test_watchdog_relaunch_commands_bind_only_accepted_root_on_pythonpath(
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editable-install",
             (
-                f'default_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                    f'default_plan_relaunch_command "demo-plan" {str(ws)!r} "demo-plan" '
                 f"> {shlex.quote(str(outputs['default_plan_relaunch']))} || exit $?"
             ),
             (
-                f'resume_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                    f'resume_plan_relaunch_command "demo-plan" {str(ws)!r} "demo-plan" '
                 f"> {shlex.quote(str(outputs['resume_plan_relaunch']))} || exit $?"
             ),
             (
@@ -2465,7 +2519,7 @@ def test_watchdog_relaunch_launch_ignores_poisoned_shared_root_pythonpath(
             "PYTHONPATH=" + repr(str(REPO_ROOT)),
             "SYNC_BRANCH=editable-install",
             (
-                f'default_plan_relaunch_command "demo-plan" {str(ws)!r} '
+                    f'default_plan_relaunch_command "demo-plan" {str(ws)!r} "demo-plan" '
                 f"> {shlex.quote(str(plan_out))} || exit $?"
             ),
         ]
@@ -3736,7 +3790,7 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 notify_needs_human() {
   report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
-  log "needs-human webhook unset"
+  log "needs-human notification fixture"
 }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
@@ -3753,7 +3807,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
-    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_human(
@@ -4193,10 +4247,10 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() {
-  if [[ "$1" == "has-session" ]]; then
+  if [[ "$1" == "has-session" || "$3" == "has-session" ]]; then
     return 1
   fi
-  if [[ "$1" == "new-session" ]]; then
+  if [[ "$1" == "new-session" || "$3" == "new-session" ]]; then
     echo TMUX_NEW >&2
     return 0
   fi
@@ -4285,10 +4339,10 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() {
-  if [[ "$1" == "has-session" ]]; then
+  if [[ "$1" == "has-session" || "$3" == "has-session" ]]; then
     return 1
   fi
-  if [[ "$1" == "new-session" ]]; then
+  if [[ "$1" == "new-session" || "$3" == "new-session" ]]; then
     printf 'launch:%s\n' "$*" >> "$CALL_LOG"
     echo TMUX_NEW >&2
     return 0
@@ -4412,9 +4466,9 @@ def test_watchdog_launch_tick_missing_manifest_pin_fails_closed_before_install_a
     """G5 round-2 finding 1 / round-6 finding 1b: the watchdog's engine-root
     preflight is the FIRST mutation-gating step in the tick — it runs BEFORE
     the current-target subprocesses and before any marker/install-repair/tmux
-    side effect.  With no manifest pin the tick fails closed (typed drift,
-    exit 24) and the spies record ZERO python3 subprocesses, ZERO install-
-    repair calls, ZERO tmux calls, and no marker/relaunch/dispatch writes."""
+    side effect.  With no session manifest pin the tick fails closed (typed
+    drift, exit 24) and the spies record ZERO install-repair calls, ZERO tmux
+    calls, and no marker/relaunch/dispatch writes."""
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
@@ -4443,17 +4497,14 @@ def test_watchdog_launch_tick_missing_manifest_pin_fails_closed_before_install_a
             _extract_wrapper_function("launch_chain_tick"),
             "LIVE_IMPORT_ROOT=" + repr(str(REPO_ROOT)),
             "unset MANIFEST_RUNTIME_ROOT",
+            "unset ARNOLD_RUNTIME_MANIFEST_DIR",
             f"MARKER_DIR={str(marker_dir)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             f"CALL_LOG={str(call_log)!r}",
             """
-python3() {
-  printf 'python3:%s\\n' "$*" >> "$CALL_LOG"
-  return 0
-}
-report_item() {
+    report_item() {
   printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
 }
 log() { printf '%s\\n' "$*" >> "$LOG"; }
@@ -4493,10 +4544,10 @@ tmux() {
     result = _run_watchdog_shell(script)
     assert result.returncode == 24, result.stderr
     assert "chain_runtime_binding_drift" in result.stderr
-    assert "missing manifest epic.runtime_root pin" in result.stderr
+    assert "session runtime manifest missing" in result.stderr
     call_text = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    # ZERO current-target (or any) python3 subprocesses started.
-    assert "python3:" not in call_text, call_text.splitlines()
+    # The manifest preflight itself is the only expected interpreter call;
+    # mutation-gating work must still remain entirely absent.
     assert "tmux:kill-session" not in call_text, call_text.splitlines()
     assert "tmux:new-session" not in call_text, call_text.splitlines()
     assert "event:fallback_considered" not in call_text, call_text.splitlines()
@@ -5304,12 +5355,26 @@ def test_watchdog_manual_review_superfixer_resolves_renderer_from_live_engine(
     )
     renderer_dir.mkdir(parents=True)
     marker_file = tmp_path / "renderer-marker.txt"
+    manifest_dir = tmp_path / "runtime-manifests"
+    manifest_dir.mkdir()
+    (manifest_dir / f"{paths['session']}.json").write_text(
+        json.dumps({"epic": {"runtime_root": str(live_root)}}),
+        encoding="utf-8",
+    )
+    # The live-engine fixture owns the renderer, while the extracted launcher
+    # still imports the checkout's ledger/chain helpers.  Keep that import
+    # dependency explicit in the fixture; production binds PYTHONPATH to the
+    # session engine and must not fall back to the watchdog's ambient root.
+    (live_root / "sitecustomize.py").write_text(
+        f"import sys\nsys.path.insert(0, {str(REPO_ROOT)!r})\n",
+        encoding="utf-8",
+    )
     (renderer_dir / "render_babysitter_goal.py").write_text(
         "#!/usr/bin/env python3\n"
         "from pathlib import Path\n"
         "import os\n"
         "def render_babysitter_goal(target, *, workspace='', plan='', run_kind='', "
-        "latest_failure=None, planner_repair=None, occurrence_digest=''):\n"
+        "latest_failure=None, planner_repair=None, occurrence_digest='', recovery_dir=''):\n"
         "    Path(os.environ['LIVE_RENDERER_MARKER']).write_text(target + '\\n')\n"
         "    return '/goal live-engine babysitter swarm Sol recovery_handoff\\n'\n",
         encoding="utf-8",
@@ -5323,6 +5388,7 @@ def test_watchdog_manual_review_superfixer_resolves_renderer_from_live_engine(
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"MANIFEST_RUNTIME_ROOT={str(live_root)!r}",
+            f"export ARNOLD_RUNTIME_MANIFEST_DIR={str(manifest_dir)!r}",
             "export CLOUD_WATCHDOG_BABYSITTER_BIN=" + shlex.quote(str(paths['stub_bin'])) + "",
             "export ARNOLD_BABYSITTER_LAUNCH_GRACE_SECS=0.2",
             f"export LIVE_RENDERER_MARKER={str(marker_file)!r}",
@@ -5450,10 +5516,10 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() {
-  if [[ "$1" == "has-session" ]]; then
+  if [[ "$1" == "has-session" || "$3" == "has-session" ]]; then
     return 1
   fi
-  if [[ "$1" == "new-session" ]]; then
+  if [[ "$1" == "new-session" || "$3" == "new-session" ]]; then
     echo TMUX_NEW >&2
     return 0
   fi
@@ -5534,10 +5600,10 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() {
-  if [[ "$1" == "has-session" ]]; then
+  if [[ "$1" == "has-session" || "$3" == "has-session" ]]; then
     return 1
   fi
-  if [[ "$1" == "new-session" ]]; then
+  if [[ "$1" == "new-session" || "$3" == "new-session" ]]; then
     echo TMUX_NEW >&2
     return 0
   fi
@@ -5650,13 +5716,14 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tneeds_human\tmanual_review halt;" in report
-    assert "abc123def456" in report
-    assert "gpt-5.4" in report
+    assert "\trepair\tbabysitter_" in report
+    assert "parked pre-execute stall (plan born, no driver)" in report
+    assert "demo-chain" in report
+    assert ".megaplan/initiatives/demo-chain/chain.yaml" in report
     assert "BABYSITTER" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
-    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_human(
@@ -5754,7 +5821,7 @@ tmux() { echo TMUX >&2; return 1; }
 
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: manual_review classified for repair dispatch" in report
+    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: parked pre-execute stall (plan born, no driver)" in report
     assert "\tobserve\tneeds_human\t" not in report
     assert "BABYSITTER" in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
@@ -5855,7 +5922,7 @@ tmux() { echo TMUX >&2; return 1; }
 
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: manual_review classified for repair dispatch" in report
+    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: parked pre-execute stall (plan born, no driver)" in report
     assert "\tobserve\tneeds_human\t" not in report
     assert "BABYSITTER" in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
@@ -5963,7 +6030,7 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: state mismatch" in report
+    assert "\trepair\tbabysitter_scheduled\tsingle-flash babysitter dispatched: parked pre-execute stall (plan born, no driver)" in report
     assert "\tobserve\tneeds_human\t" not in report
     assert "BABYSITTER" in result.stderr
     assert "REPAIR" not in result.stderr
@@ -6229,6 +6296,11 @@ mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 kimi_dispatch_marker_set() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 0; }
+babysitter_policy_dispatch() {
+  echo BABYSITTER >&2
+  report_item "$6" "$1" "repair" "babysitter_scheduled" \
+    "single-flash babysitter dispatched: $7" "$2" "$3"
+}
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 0; }
 """.strip(),
@@ -6239,8 +6311,9 @@ tmux() { echo TMUX >&2; return 0; }
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tcomplete\tchain complete\t" not in report
-    assert "RELAUNCH" in result.stderr
-    assert "BABYSITTER" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "BABYSITTER" in result.stderr
+    assert "parked pre-execute stall (plan born, no driver)" in report
     assert "REPAIR" not in result.stderr
 
 def test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair(
@@ -6888,7 +6961,9 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456'
             notify_line,
         ]
     )
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script, path_prefix=tmp_path, allow_notification_delivery=True
+    )
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "curl-calls.txt").exists()
     assert not (tmp_path / "webhook-payload.json").exists()
@@ -6974,7 +7049,9 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
         ]
     )
 
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script, path_prefix=tmp_path, allow_notification_delivery=True
+    )
     assert result.returncode == 0, result.stderr
     payload = json.loads((tmp_path / "diagnostic-payload.json").read_text(encoding="utf-8"))
     assert payload["title"] == "Megaplan needs human review - demo-session"
@@ -7038,7 +7115,7 @@ PLAN_STATUS_PUSHED_COMMITS=''
         ]
     )
 
-    result = _run_watchdog_shell(script)
+    result = _run_watchdog_shell(script, allow_notification_delivery=True)
 
     assert result.returncode == 0, result.stderr
     payload = json.loads((tmp_path / "stable-gate-payload.json").read_text(encoding="utf-8"))
@@ -7089,7 +7166,9 @@ def test_watchdog_needs_human_launch_failure_only_records_durable_pending_intent
         ]
     )
 
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script, path_prefix=tmp_path, allow_notification_delivery=True
+    )
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "dm-payload.json").exists()
     assert "notification_intent_pending" in report_path.read_text(encoding="utf-8")
@@ -7135,7 +7214,7 @@ def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: 
     assert not (tmp_path / "dm-called").exists()
     assert not (tmp_path / "webhook-called").exists()
     assert "test_notification_suppressed" in report_path.read_text(encoding="utf-8")
-    assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
+    assert "test_environment:MEGAPLAN_TEST_EXECUTION" in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_needs_human_missing_discord_config_records_durable_intent(tmp_path: Path) -> None:
@@ -7175,7 +7254,9 @@ PLAN_STATUS_PLAN_NAME='demo-plan'
         ]
     )
 
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script, path_prefix=tmp_path, allow_notification_delivery=True
+    )
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "curl-calls.txt").exists()
     report = report_path.read_text(encoding="utf-8")
@@ -7707,6 +7788,7 @@ def _invoke_babysitter_running(
     session: str,
     digest: str,
     proc_root: Path | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     exports = [
         _extract_wrapper_function("babysitter_running_for_occurrence"),
@@ -7717,10 +7799,13 @@ def _invoke_babysitter_running(
             "export CLOUD_WATCHDOG_BABYSITTER_PROC_ROOT="
             + shlex.quote(str(proc_root))
         )
+    for key, value in (extra_env or {}).items():
+        exports.append(f"export {key}=" + shlex.quote(value))
     exports.append(
         f"babysitter_running_for_occurrence {shlex.quote(session)} {shlex.quote(digest)}"
     )
-    return _run_watchdog_shell("\n".join(exports))
+    result = _run_watchdog_shell("\n".join(exports))
+    return result
 
 
 def test_babysitter_wedged_ignores_silent_run_log_when_stdout_grew(
@@ -7807,7 +7892,7 @@ def test_babysitter_wedged_treats_established_socket_as_live_work(
 def test_babysitter_wedged_reaps_idle_tree_with_stale_logs(
     tmp_path: Path,
 ) -> None:
-    """I18/I32/I34: live pid, stale logs, no sockets, not runnable → SIGTERM."""
+    """I18/I32/I34: detect a true wedge, but defer physical cleanup to WBC."""
     session = "megaplan-maintenance"
     digest = "a07166d38fbc"
     repair_data = tmp_path / "repair-data"
@@ -7832,6 +7917,13 @@ def test_babysitter_wedged_reaps_idle_tree_with_stale_logs(
         os.utime(run_log, (stale, stale))
         (run_root / "babysitter.stdout.log").write_text("old\n", encoding="utf-8")
         os.utime(run_root / "babysitter.stdout.log", (stale, stale))
+        # The two-scan confirmation has already elapsed. This keeps the
+        # fixture focused on true wedge detection while the extracted Python
+        # observer remains forbidden from issuing an unbound raw signal.
+        (run_root / "wedged-since.json").write_text(
+            json.dumps({"first_seen": time.time() - 1200, "session": session}),
+            encoding="utf-8",
+        )
         proc_root = tmp_path / "proc"
         _fake_proc_pid(proc_root, child.pid, state="S")
         result = _invoke_babysitter_running(
@@ -7840,10 +7932,13 @@ def test_babysitter_wedged_reaps_idle_tree_with_stale_logs(
             digest=digest,
             proc_root=proc_root,
         )
-        assert result.returncode == 1, result.stderr
-        assert "babysitter wedged or dead" in result.stderr
-        child.wait(timeout=5)
-        assert child.returncode in {-15, 15}
+        assert result.returncode == 75, result.stderr
+        assert "cleanup hold required" in result.stderr
+        hold = json.loads((run_root / "cleanup-hold.json").read_text(encoding="utf-8"))
+        assert hold["kind"] == "cleanup_hold"
+        assert hold["status"] == "unresolved"
+        assert hold["reconciliation"] == "canonical_reaper_after_marker_binding"
+        assert child.poll() is None
     finally:
         if child.poll() is None:
             child.kill()
@@ -7968,7 +8063,7 @@ def test_babysitter_first_call_grace_keeps_silent_12min_run(
 def test_babysitter_first_call_grace_expires_after_25min(
     tmp_path: Path,
 ) -> None:
-    """I51b: 25 min in, no [tool] lines, idle tree — still wedged, reap."""
+    """I51b: confirmed wedge records a hold; the observer never raw-signals."""
     session = "megaplan-maintenance"
     digest = "a07166d38fbc"
     repair_data = tmp_path / "repair-data"
@@ -7989,6 +8084,10 @@ def test_babysitter_first_call_grace_expires_after_25min(
     # stdout.log is created at Popen, so its mtime is as old as the launch
     old = time.time() - 25 * 60
     os.utime(run_root / "babysitter.stdout.log", (old, old))
+    (run_root / "wedged-since.json").write_text(
+        json.dumps({"first_seen": time.time() - 1200, "session": session}),
+        encoding="utf-8",
+    )
     child = subprocess.Popen(["sleep", "30"])
     try:
         _write_babysitter_receipt(
@@ -8008,9 +8107,10 @@ def test_babysitter_first_call_grace_expires_after_25min(
             digest=digest,
             proc_root=proc_root,
         )
-        assert result.returncode == 1, result.stderr
-        child.wait(timeout=5)
-        assert child.returncode in {-15, 15}
+        assert result.returncode == 75, result.stderr
+        assert "cleanup hold required" in result.stderr
+        assert (run_root / "cleanup-hold.json").is_file()
+        assert child.poll() is None
     finally:
         if child.poll() is None:
             child.kill()
@@ -8020,7 +8120,7 @@ def test_babysitter_first_call_grace_expires_after_25min(
 def test_hung_codex_child_signaled_parent_kept(
     tmp_path: Path,
 ) -> None:
-    """I51b: hung codex grandchild (S, no socket, old) is SIGTERM'd; parent lives."""
+    """I51b: isolated observer cannot raw-signal an unbound codex child."""
     session = "megaplan-maintenance"
     digest = "a07166d38fbc"
     repair_data = tmp_path / "repair-data"
@@ -8048,7 +8148,7 @@ def test_hung_codex_child_signaled_parent_kept(
         run_log.write_text("[tool] sleep 180\n", encoding="utf-8")
         os.utime(run_log, (stale, stale))
         # fake proc tree: parent is the babysitter, codex is a real child
-        # registered with comm=codex so signal_hung_fixer_children kills it
+        # registered with comm=codex; the isolated observer must not signal it
         proc_root = tmp_path / "proc"
         proc_root.mkdir()
         _fake_proc_pid(proc_root, parent_pid, state="S", start_seconds_ago=40 * 60)
@@ -8084,10 +8184,9 @@ def test_hung_codex_child_signaled_parent_kept(
         )
         # parent not reaped: exit 0 (already running)
         assert result.returncode == 0, result.stderr
-        assert "hung fixer child; signaling" in result.stderr, result.stderr
-        assert f"pids=[{codex_pid}]" in result.stderr, result.stderr
-        codex_child.wait(timeout=5)
-        assert codex_child.returncode in {-15, 15}
+        assert "hung fixer child; signaling" not in result.stderr, result.stderr
+        assert "cleanup hold required" not in result.stderr, result.stderr
+        assert codex_child.poll() is None
     finally:
         if codex_child.poll() is None:
             codex_child.kill()
@@ -8168,7 +8267,7 @@ def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
     assert '"$HOME/.claude/skills"' in text
     assert '"$HOME/.codex/skills"' in text
     assert '"$HOME/.agents/skills"' in text
-    assert '"$HOME/.hermes/skills"' in text
+    assert '"$HOME/.hermes/skills"' not in text
 
 
 def test_watchdog_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
@@ -10581,7 +10680,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1' in text
     assert '"recovery_sweep": recovery_sweep' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"' in text
-    assert "launch_hermes_agent.py" in text
+    assert "launch_omp_agent.py" in text
     assert '--model="$DEEPSEEK_MODEL"' in text
     # Report paths.
     assert 'REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"' in text

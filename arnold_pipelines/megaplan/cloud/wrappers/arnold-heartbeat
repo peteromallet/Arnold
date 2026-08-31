@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 set -uo pipefail
+WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+SUPERVISOR_RUNTIME_LIB="$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+[[ -f "$SUPERVISOR_RUNTIME_LIB" ]] || SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  echo "arnold-heartbeat: supervisor runtime library unavailable; refusing signal supervision" >&2
+  exit 78
+fi
+# The canonical bridge is deliberately initialized before any process scan.
+# A missing/invalid runtime or ledger leaves the worker untouched.
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init heartbeat "$WRAPPER_REPO_ROOT" || exit $?
+# Heartbeat may observe many processes. At the physical door it resolves the
+# victim PID back to exactly one canonical per-session marker; an ambiguous or
+# missing marker is observe-only and cannot authorize a signal.
+HEARTBEAT_MARKER_DIR="${MEGAPLAN_HEARTBEAT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+export MEGAPLAN_NBF_CONTEXT_BOUND=0
 LOG=/workspace/heartbeat.log
 WARN_SECS=${HEARTBEAT_WARN_SECS:-600}
 STALL_SECS=${HEARTBEAT_STALL_SECS:-1200}
@@ -31,8 +47,17 @@ while true; do
       last_event=$(tail -c 4096 "$out" 2>/dev/null | tr -d '\0' | tail -1 | head -c 300)
       echo "[heartbeat $(date -Iseconds)] STALL pid=$pid idle=${idle}s out=$out last=${last_event}" >> "$LOG"
       if [[ "$KILL_ON_STALL" == "1" ]]; then
-        echo "[heartbeat $(date -Iseconds)] sending SIGINT to pid=$pid" >> "$LOG"
-        kill -INT "$pid" 2>/dev/null || true
+        echo "[heartbeat $(date -Iseconds)] requesting canonical SIGINT for pid=$pid" >> "$LOG"
+        # No direct kill is permitted here.  The bridge persists a durable
+        # first scan, consumes the identical second scan, revalidates PID/start,
+        # and records before invoking the physical signal.
+        if arnold_supervisor_bind_signal_context_for_pid "$pid" "$HEARTBEAT_MARKER_DIR" non_worker; then
+          arnold_supervisor_signal_bound_pid \
+            "arnold-heartbeat" "$pid" SIGINT term "codex heartbeat stall" \
+            >/dev/null 2>>"$LOG" || true
+        else
+          echo "[heartbeat $(date -Iseconds)] signal blocked: no unique canonical marker pid=$pid" >> "$LOG"
+        fi
       fi
       LAST_TS[$pid]="$now"  # reset so we don't hammer
     elif [[ $idle -ge $WARN_SECS && "${WARNED[$pid]:-0}" != "1" ]]; then

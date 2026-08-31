@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -20,10 +21,10 @@ import time
 import uuid
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
@@ -102,13 +103,17 @@ from arnold_pipelines.megaplan.model_seam import (
     render_step_message,
     schema_audits_step_payload,
 )
-from arnold_pipelines.megaplan.runtime.process import TmuxSession, kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import TmuxSession, spawn
 from arnold_pipelines.megaplan.runtime.engine_isolation import engine_write_barrier
 from arnold_pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     ExecutionEnvironment,
     classify_path_overlap,
     isolation_cli_error,
+)
+from arnold_pipelines.megaplan.watchdog.worker_identity import (
+    current_boot_identity,
+    read_process_start_identity,
 )
 
 if TYPE_CHECKING:
@@ -133,6 +138,9 @@ _ZERO_RECOVERY_SCHEMA_PATHS = tuple(
 )
 _WORKER_DISPATCH_BINDING: ContextVar[dict[str, Any] | None] = ContextVar(
     "megaplan_worker_dispatch_binding", default=None
+)
+_LOCAL_SPAWN_CONTROL: ContextVar[Any | None] = ContextVar(
+    "megaplan_local_spawn_control", default=None
 )
 _ZERO_RECOVERY_ENGINE_RUNTIME_PATHS = (
     ".megaplan/.state-locks/critique-ledger-cl2-planning-canary.lock",
@@ -1803,6 +1811,90 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_ms: int
+    worker_identity: dict[str, Any] | None = None
+
+
+@dataclass
+class SpawnCleanupHold:
+    """Process-local handoff for a child whose admission could not certify it.
+
+    Registration happens after ``Popen`` because the child PID and start
+    identity are needed for the certificate.  If that certification fails,
+    the child cannot be signaled by this layer: it has no admitted authority.
+    Keep the handle and immutable identity in a typed, bounded reconciliation
+    object instead of abandoning it or attempting a raw kill.
+    """
+
+    process: Any = field(repr=False)
+    pid: int
+    process_start_identity: str | None
+    admission_error: str
+    execution_context: dict[str, Any] | None
+    worker_identity: dict[str, Any] | None = None
+    spawn_event_id: str | None = None
+    dispatch_outcome: dict[str, Any] | None = None
+    reconciliation_route: str = "worker-dispatch.spawn-registration-reconcile.v1"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state": "cleanup_hold",
+            "pid": self.pid,
+            "process_start_identity": self.process_start_identity,
+            "admission_error": self.admission_error,
+            "execution_context": self.execution_context,
+            "worker_identity": self.worker_identity,
+            "spawn_event_id": self.spawn_event_id,
+            "dispatch_outcome": self.dispatch_outcome,
+            "reconciliation_route": self.reconciliation_route,
+        }
+
+    def reconcile(self, *, timeout_s: float = 0.0) -> dict[str, Any]:
+        """Poll/reap with a small bounded wait; never signal the child."""
+        try:
+            bounded = min(max(float(timeout_s), 0.0), 5.0)
+        except (TypeError, ValueError):
+            bounded = 0.0
+        returncode = self.process.poll()
+        if returncode is None and bounded:
+            try:
+                returncode = self.process.wait(timeout=bounded)
+            except (subprocess.TimeoutExpired, TimeoutError):
+                returncode = self.process.poll()
+        state = "reaped" if returncode is not None else "live"
+        return {
+            "state": state,
+            "pid": self.pid,
+            "returncode": returncode,
+            "process_start_identity": self.process_start_identity,
+            "reconciliation_route": self.reconciliation_route,
+        }
+
+
+class SpawnRegistrationError(CliError):
+    """Typed unresolved custody error for failed post-spawn admission."""
+
+    def __init__(
+        self,
+        cause: BaseException,
+        *,
+        cleanup_hold: SpawnCleanupHold,
+        cleanup_result: Mapping[str, Any],
+    ) -> None:
+        self.cause = cause
+        self.cleanup_hold = cleanup_hold
+        self.cleanup_result = dict(cleanup_result)
+        self.dispatch_outcome = cleanup_hold.dispatch_outcome
+        super().__init__(
+            "worker_spawn_unresolved",
+            "spawned worker admission failed; child handed off for bounded reconciliation",
+            extra={
+                "spawn_cleanup_hold": cleanup_hold.to_dict(),
+                "dispatch_outcome": cleanup_hold.dispatch_outcome,
+                "cleanup_result": dict(cleanup_result),
+                "admission_error_type": type(cause).__name__,
+                "admission_error": str(cause),
+            },
+        )
 
 ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
@@ -2666,6 +2758,158 @@ def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
 
 
 
+def _spawn_registration_for_process(process: Any) -> dict[str, Any]:
+    """Build the exact child registration envelope at spawn time."""
+    pid = int(process.pid)
+    import platform
+    host = platform.node()
+    boot_id = current_boot_identity() or ""
+    process_start = read_process_start_identity(pid) or ""
+    if not host or pid <= 0 or not boot_id or not process_start:
+        raise RuntimeError("spawned child identity is incomplete")
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "worker_identity": {
+            "host": host, "pid": pid, "boot_id": boot_id,
+            "process_start_identity": process_start,
+        },
+        "started_at": now,
+        "supervisor_identity": {
+            "host": host, "pid": os.getpid(), "boot_id": boot_id,
+            "process_start_identity": read_process_start_identity(os.getpid()) or "",
+        },
+        "container_identity": (
+            os.environ.get("CONTAINER_ID") or os.environ.get("ARNOLD_CONTAINER_ID")
+            or os.environ.get("HOSTNAME") or ""
+        ),
+        "incarnation_identity": (
+            os.environ.get("ARNOLD_RUNTIME_INCARNATION")
+            or os.environ.get("ARNOLD_SUPERVISOR_INCARNATION") or ""
+        ),
+    }
+
+
+def _spawn_execution_context_snapshot(callback: Any) -> dict[str, Any] | None:
+    """Extract only already-bound context for an admission-failure handoff."""
+    current = callback
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        context = getattr(current, "context", None)
+        if context is not None:
+            try:
+                value = context.to_dict() if hasattr(context, "to_dict") else dict(context)
+            except (TypeError, ValueError):
+                value = None
+            if isinstance(value, Mapping):
+                return dict(value)
+        current = getattr(current, "delegate", None)
+    binding = _WORKER_DISPATCH_BINDING.get() or {}
+    value = binding.get("execution_context") or binding.get("context")
+    if value is not None:
+        try:
+            value = value.to_dict() if hasattr(value, "to_dict") else dict(value)
+        except (TypeError, ValueError):
+            value = None
+        if isinstance(value, Mapping):
+            return dict(value)
+    return None
+
+
+def _spawn_unresolved_outcome_snapshot(
+    context: dict[str, Any] | None,
+    *,
+    worker_identity: dict[str, Any] | None,
+    started_at: str | None,
+    finished_at: str | None,
+    reconciliation_event_id: str | None,
+) -> dict[str, Any] | None:
+    """Build the lossless unresolved-launch transport when context is bound."""
+    context = context if isinstance(context, Mapping) else {}
+    # Unbound legacy callbacks have no receipt to copy.  Keep the unresolved
+    # transport typed and explicit rather than dropping it or inventing an
+    # accepted outcome; the process identity and reconciliation event remain
+    # authoritative for the eventual handoff.
+    admission_receipt_id = context.get("admission_receipt_id") or None
+    semantic_fingerprint = context.get("semantic_dispatch_fingerprint") or None
+    if admission_receipt_id and not semantic_fingerprint:
+        admission_receipt_id = None
+    from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
+    observed_at = datetime.now(timezone.utc).isoformat()
+
+    return DispatchOutcome(
+        kind="unresolved_launch",
+        launch_state="ambiguous",
+        plan_id=str(context.get("plan_id") or "unknown"),
+        phase=str(context.get("phase") or "unknown"),
+        dispatch_family_id=str(context.get("dispatch_family_id") or "unknown"),
+        logical_dispatch_id=str(context.get("logical_dispatch_id") or "unresolved-launch"),
+        admission_receipt_id=(str(admission_receipt_id) if admission_receipt_id else None),
+        semantic_dispatch_fingerprint=(str(semantic_fingerprint) if semantic_fingerprint else None),
+        selected_spec=str(context.get("selected_spec") or "unknown"),
+        worker_identity=worker_identity,
+        started_at=started_at or observed_at,
+        finished_at=finished_at or observed_at,
+        reconciliation_event_id=reconciliation_event_id,
+    ).to_dict()
+
+
+def _canonical_spawn_cleanup_handoff_id(value: Any) -> str | None:
+    """Extract only an explicitly typed, persisted cleanup-handoff identity."""
+    if isinstance(value, Mapping):
+        event_type = value.get("event_type")
+        if event_type == "spawn_cleanup_handoff":
+            reference = value.get("handoff_id") or value.get("event_id")
+            if isinstance(reference, str) and reference:
+                return reference
+        if value.get("state") == "cleanup_hold":
+            reference = value.get("handoff_id")
+            if isinstance(reference, str) and reference:
+                return reference
+        for key in ("handoff", "payload", "event"):
+            reference = _canonical_spawn_cleanup_handoff_id(value.get(key))
+            if reference is not None:
+                return reference
+    return None
+
+
+def _handoff_spawn_cleanup(callback: Any, hold: SpawnCleanupHold) -> Any:
+    """Offer custody using the bound authority's hold/process API."""
+    current = callback
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        handoff = getattr(current, "handoff_spawn_cleanup", None)
+        if callable(handoff):
+            # Production WBCs receive the parent-owned Popen handle and, when
+            # supported, the complete hold metadata.  Older test/development
+            # callbacks accepted the hold as their sole positional argument;
+            # retain that compatibility without confusing their return value
+            # for a durable ledger identity.
+            try:
+                # Generic WBC wrappers expose a ``process`` parameter while
+                # forwarding to a legacy delegate whose parameter is named
+                # ``hold``.  Inspect the actual target when available so the
+                # wrapper receives the same shape it will forward.
+                target = getattr(current, "handoff_impl", None)
+                if not callable(target):
+                    delegate = getattr(current, "delegate", None)
+                    target = getattr(delegate, "handoff_spawn_cleanup", None)
+                target = target if callable(target) else handoff
+                parameters = inspect.signature(target).parameters
+            except (TypeError, ValueError):
+                parameters = {}
+            if "process" in parameters:
+                if "hold" in parameters:
+                    return handoff(hold.process, hold=hold)
+                return handoff(hold.process)
+            if "hold" in parameters:
+                return handoff(hold)
+            return handoff(hold)
+        current = getattr(current, "delegate", None)
+    return None
+
+
 def run_command(
     command: list[str],
     *,
@@ -2683,8 +2927,13 @@ def run_command(
     | None = None,
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
+    spawn_registration_callback: Callable[[Mapping[str, Any]], Any] | None = None,
+    # Friendly alias for callers that describe the hook as an on-spawn
+    # callback.  Both names are process-local and have identical semantics.
+    on_spawn: Callable[[Mapping[str, Any]], Any] | None = None,
 ) -> CommandResult:
     stdin_text = _normalize_stdin_text(stdin_text)
+    spawned_registration: dict[str, Any] | None = None
     # Codex CLI (v0.137+) interprets a trailing "-" as "read the prompt from
     # stdin".  Older versions wedged on piped stdin, so the code previously wrote
     # the prompt to a temp file and passed "@/path/to/file".  Modern Codex treats
@@ -2705,7 +2954,12 @@ def run_command(
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
-        if activity_callback is None and activity_guard is None:
+        if (
+            activity_callback is None
+            and activity_guard is None
+            and spawn_registration_callback is None
+            and on_spawn is None
+        ):
             stdin_file: Any | None = None
             try:
                 if stdin_path is not None:
@@ -2769,6 +3023,112 @@ def run_command(
                 stderr=subprocess.PIPE,
                 env=env,
             )
+            callback = spawn_registration_callback or on_spawn
+            local_control_token = _LOCAL_SPAWN_CONTROL.set(callback)
+            if callback is not None:
+                try:
+                    spawned_registration = _spawn_registration_for_process(process)
+                    registrar = getattr(callback, "register", None)
+                    if callable(registrar):
+                        registrar(spawned_registration)
+                    elif callable(callback):
+                        # Legacy callbacks remain accepted for development and
+                        # replay compatibility.  They do not provide a
+                        # production signal authority; native timeout paths
+                        # consequently fail closed when no ``signal_ladder``
+                        # method is present.
+                        callback(spawned_registration)
+                    else:
+                        raise RuntimeError("spawn control is not callable")
+                except BaseException as admission_error:
+                    # Registration happens after Popen, so an admission or
+                    # certification failure must not drop a live child with a
+                    # bare re-raise.  Build the handoff first.  Registration
+                    # did not complete, so there is no valid admitted
+                    # authority at this boundary and no native ladder may be
+                    # attempted here.
+                    authority_result: dict[str, Any] = {
+                        "attempted": False,
+                        "handled": False,
+                        "reason": "registration_failed_before_admission_completion",
+                    }
+                    registration = spawned_registration or {}
+                    worker_identity = registration.get("worker_identity")
+                    if not isinstance(worker_identity, Mapping):
+                        worker_identity = None
+                    else:
+                        worker_identity = dict(worker_identity)
+                    context_snapshot = _spawn_execution_context_snapshot(callback)
+                    canonical_registration = json.dumps(
+                        registration, sort_keys=True, separators=(",", ":"), default=str
+                    )
+                    spawn_event_id = hashlib.sha256(
+                        ("spawn-registration:" + canonical_registration).encode("utf-8")
+                    ).hexdigest()
+                    hold = SpawnCleanupHold(
+                        process=process,
+                        pid=int(process.pid),
+                        process_start_identity=(
+                            str(worker_identity.get("process_start_identity"))
+                            if worker_identity and worker_identity.get("process_start_identity")
+                            else None
+                        ),
+                        admission_error=str(admission_error),
+                        execution_context=context_snapshot,
+                        worker_identity=worker_identity,
+                        spawn_event_id=spawn_event_id,
+                    )
+                    hold.dispatch_outcome = _spawn_unresolved_outcome_snapshot(
+                        context_snapshot,
+                        worker_identity=worker_identity,
+                        started_at=(
+                            str(registration.get("started_at"))
+                            if registration.get("started_at")
+                            else None
+                        ),
+                        finished_at=None,
+                        reconciliation_event_id=spawn_event_id,
+                    )
+                    handoff_result = None
+                    try:
+                        # A production WBC may implement this optional method
+                        # to persist a cleanup-hold event and own the handle.
+                        # No signal primitive is used by this handoff.
+                        handoff_result = _handoff_spawn_cleanup(callback, hold)
+                    except BaseException as handoff_error:
+                        handoff_result = {
+                            "state": "unresolved",
+                            "error": str(handoff_error),
+                        }
+                    authority_result["handoff"] = handoff_result
+                    canonical_handoff_id = _canonical_spawn_cleanup_handoff_id(handoff_result)
+                    # The synthetic registration hash is useful for local
+                    # diagnostics only.  It must never masquerade as a
+                    # durable reconciliation reference.  A production WBC
+                    # return is authoritative only when it carries an
+                    # explicitly typed cleanup-handoff event identity.
+                    hold.dispatch_outcome = _spawn_unresolved_outcome_snapshot(
+                        context_snapshot,
+                        worker_identity=worker_identity,
+                        started_at=(
+                            str(registration.get("started_at"))
+                            if registration.get("started_at")
+                            else None
+                        ),
+                        finished_at=None,
+                        reconciliation_event_id=canonical_handoff_id,
+                    )
+                    authority_result["handoff_event_id"] = canonical_handoff_id
+                    authority_result["handoff_required"] = bool(
+                        getattr(callback, "production", False)
+                    )
+                    authority_result["handoff_supported"] = handoff_result is not None
+                    authority_result["reconciliation"] = hold.reconcile(timeout_s=0.0)
+                    raise SpawnRegistrationError(
+                        admission_error,
+                        cleanup_hold=hold,
+                        cleanup_result=authority_result,
+                    ) from admission_error
             if progress_liveness_probe is None and progress_liveness_factory is not None:
                 try:
                     progress_liveness_probe = progress_liveness_factory(process)
@@ -2926,7 +3286,7 @@ def run_command(
                 try:
                     while True:
                         if guard_triggered.is_set():
-                            kill_group(process)
+                            _native_signal_ladder(process, cause_kind="stall")
                             heartbeat_stop.set()
                             for thread in threads:
                                 thread.join(timeout=1)
@@ -2950,7 +3310,7 @@ def run_command(
                                 hard_cap_deadline is not None
                                 and time.monotonic() > hard_cap_deadline
                             ):
-                                kill_group(process)
+                                _native_signal_ladder(process, cause_kind="timeout")
                                 returncode = process.poll() if process.poll() is not None else -1
                                 heartbeat_stop.set()
                                 for thread in threads:
@@ -2978,7 +3338,7 @@ def run_command(
                                 and not first_byte_seen[0]
                                 and time.monotonic() > first_byte_deadline
                             ):
-                                kill_group(process)
+                                _native_signal_ladder(process, cause_kind="stall")
                                 returncode = process.poll() if process.poll() is not None else -1
                                 heartbeat_stop.set()
                                 for thread in threads:
@@ -3108,7 +3468,7 @@ def run_command(
                                                 pass
                                         last_output[0] = time.monotonic()
                                         continue
-                                kill_group(process)
+                                _native_signal_ladder(process, cause_kind="stall")
                                 returncode = process.poll() if process.poll() is not None else -1
                                 heartbeat_stop.set()
                                 for thread in threads:
@@ -3126,7 +3486,7 @@ def run_command(
                                 )
                             continue
                 except subprocess.TimeoutExpired as exc:
-                    kill_group(process)
+                    _native_signal_ladder(process, cause_kind="timeout")
                     returncode = process.poll() if process.poll() is not None else -1
                     heartbeat_stop.set()
                     for thread in threads:
@@ -3140,7 +3500,7 @@ def run_command(
                 try:
                     returncode = process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired as exc:
-                    kill_group(process)
+                    _native_signal_ladder(process, cause_kind="timeout")
                     returncode = process.poll() if process.poll() is not None else -1
                     heartbeat_stop.set()
                     for thread in threads:
@@ -3151,7 +3511,7 @@ def run_command(
                         extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
                     ) from exc
             if guard_triggered.is_set():
-                kill_group(process)
+                _native_signal_ladder(process, cause_kind="stall")
                 heartbeat_stop.set()
                 for thread in threads:
                     thread.join(timeout=1)
@@ -3171,6 +3531,11 @@ def run_command(
             stdout=b"".join(stdout_parts).decode("utf-8", errors="replace"),
             stderr=b"".join(stderr_parts).decode("utf-8", errors="replace"),
             duration_ms=int((time.monotonic() - started) * 1000),
+            worker_identity=(
+                dict(spawned_registration["worker_identity"])
+                if spawned_registration is not None
+                else None
+            ),
         )
     finally:
         # Guard against UnboundLocalError when an early exception prevents
@@ -3189,6 +3554,9 @@ def run_command(
                 pass
         if tmux_session:
             tmux_session.teardown()
+        token = locals().get("local_control_token")
+        if token is not None:
+            _LOCAL_SPAWN_CONTROL.reset(token)
 
 
 def _activity_callback_for_state(state: PlanState, plan_dir: Path) -> Callable[[str, str], None] | None:
@@ -3209,6 +3577,56 @@ def _activity_callback_for_state(state: PlanState, plan_dir: Path) -> Callable[[
         touch_active_step(plan_dir, run_id=run_id, kind=kind, detail=detail.strip())
 
     return _callback
+
+
+def _spawn_registration_callback_from_binding() -> Callable[[Mapping[str, Any]], Any] | None:
+    callback = (_WORKER_DISPATCH_BINDING.get() or {}).get("spawn_registration_callback")
+    return callback if callable(callback) else None
+
+
+def _native_signal_ladder(process: Any, *, cause_kind: str) -> bool:
+    """Request the durable worker ladder; absent proof means no signal.
+
+    Native workers must not call ``kill``/``kill_group`` directly.  The
+    process-local callback is installed only by an admitted WBC dispatch and
+    may itself decline when accepted identity/confirmation proof is absent.
+    """
+    # Native timeout/guard branches may only emit canonical CauseKind values;
+    # keep this last door fail-closed for any legacy or future caller that
+    # supplies an untyped label.
+    if cause_kind not in {"timeout", "stall", "idle", "wedge", "cgroup_oom"}:
+        return False
+    callback = _spawn_registration_callback_from_binding() or _LOCAL_SPAWN_CONTROL.get()
+    # Native supervision already owns an explicit timeout/guard decision.  A
+    # two-scan progress proof cannot be manufactured inside this low-level
+    # callback, so use the same controlled launch's explicitly-authorized
+    # timeout teardown.  It records TERM/KILL before each physical callback
+    # and appends the terminal only after observing the child dead.
+    immediate = getattr(callback, "immediate_timeout", None) if callback is not None else None
+    if not callable(immediate) and callback is not None:
+        # Production WBC callbacks bind ControlledFinalLaunch through the
+        # SpawnedChildControl.signal_impl callable.  Resolve that same
+        # authority without introducing a second callback/persistence door.
+        owner = getattr(getattr(callback, "signal_impl", None), "__self__", None)
+        immediate = getattr(owner, "immediate_timeout", None)
+    if callable(immediate) and cause_kind in {"timeout", "stall"}:
+        result = immediate(process, timeout_source=f"native-{cause_kind}")
+        return bool(
+            isinstance(result, Mapping)
+            and result.get("state") in {"killed", "already_dead"}
+        )
+    ladder = getattr(callback, "signal_ladder", None) if callback is not None else None
+    if not callable(ladder):
+        return False
+    result = ladder(process, cause_kind=cause_kind)
+    # Do not treat a structured ``confirmation_pending``/``unresolved``
+    # result as truthy merely because it is a non-empty object.  Native
+    # callers use this boolean as the physical-teardown acknowledgement.
+    # Only terminal states count as handled; every pending/refused result is a
+    # hard failure at this boundary and cannot silently fall through.
+    if isinstance(result, Mapping):
+        return result.get("state") in {"killed", "already_dead"}
+    return getattr(result, "state", None) in {"killed", "already_dead"}
 
 
 _CODEX_ERROR_PATTERNS: list[tuple[str, str, str]] = [
@@ -5988,6 +6406,7 @@ def _run_codex_step_uncapped(
                         if strict_structured_liveness
                         else (codex_idle_s if codex_idle_s > 0 else None)
                     ),
+                    spawn_registration_callback=_spawn_registration_callback_from_binding(),
                 )
             finally:
                 _verify_zero_recovery_worker_boundaries(
@@ -6317,6 +6736,7 @@ def _run_codex_step_uncapped(
             trace_output=raw if json_trace else None,
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
+            worker_identity=result.worker_identity,
         )
     if selection_error is not None:
         raise _local_response_contract_error(
@@ -6585,6 +7005,7 @@ def _run_codex_step_uncapped(
         total_tokens=prompt_tokens + completion_tokens,
         cost_pricing=cost_pricing,
         worker_channel=_CODEX_WORKER_CHANNEL,
+        worker_identity=result.worker_identity,
         response_enforcement_attestation=response_attestation,
     )
 
@@ -6729,6 +7150,7 @@ def run_codex_prep_step(
         env=_codex_child_env(turn_id=f'prep_worker_{state["name"]}'),
         timeout=_codex_timeout_for_step("prep"),
         activity_callback=_activity_callback_for_state(state, plan_dir),
+        spawn_registration_callback=_spawn_registration_callback_from_binding(),
     )
     raw = result.stdout + result.stderr
     if (
@@ -7538,14 +7960,43 @@ def _production_worker_dispatch(
     def launch(_context: Any) -> Any:
         nonlocal transport_result
         if wbc_dispatch is not None:
-            result = wbc_dispatch.run(
-                lambda _start: _run_step_with_worker_legacy(
-                    step, state, plan_dir, args, root=root, resolved=am,
-                    prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
-                    read_only=read_only, output_path=output_path,
-                    worker_options=worker_options, record_routing=True,
+            def _bound_dispatch(_start: Any) -> Any:
+                token = _WORKER_DISPATCH_BINDING.set(
+                    {
+                        # The production WBC supplies a start result.  A
+                        # compatibility adapter may invoke the admitted
+                        # closure with no start payload; that remains the
+                        # same already-owned attempt and simply has no
+                        # child-certification callback.
+                        "spawn_registration_callback": getattr(
+                            _start, "spawn_registration_callback", None
+                        )
+                    }
                 )
-            ).worker_result
+                try:
+                    return _run_step_with_worker_legacy(
+                        step, state, plan_dir, args, root=root, resolved=am,
+                        prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
+                        read_only=read_only, output_path=output_path,
+                        worker_options=worker_options, record_routing=True,
+                    )
+                finally:
+                    _WORKER_DISPATCH_BINDING.reset(token)
+            # Older, test-owned WBC adapters expose the pre-context
+            # ``run(dispatch)`` contract.  Select the call shape from the
+            # adapter signature so a compatibility path cannot retry a
+            # partially executed admission.
+            run = wbc_dispatch.run
+            try:
+                accepts_context = "context" in inspect.signature(run).parameters
+            except (TypeError, ValueError):
+                accepts_context = True
+            dispatch_result = (
+                run(_bound_dispatch, context=_context)
+                if accepts_context
+                else run(_bound_dispatch)
+            )
+            result = dispatch_result.worker_result
             transport_result = result
             worker = result[0] if isinstance(result, tuple) and len(result) == 4 else result
             return LaunchResult(True, result, worker_identity=worker.worker_identity)
@@ -7751,6 +8202,7 @@ def run_step_with_worker(
                 "worker_wbc_attempt_id": wbc_dispatch.attempt_id,
                 "phase_wbc_attempt_id": artifacts_metadata.get("phase_attempt_id"),
                 "phase_step": artifacts_metadata.get("phase_step") or step,
+                "spawn_registration_callback": _start.spawn_registration_callback,
             }
         )
         try:

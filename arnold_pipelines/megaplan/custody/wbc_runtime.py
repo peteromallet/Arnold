@@ -62,6 +62,9 @@ class RuntimeOperation(StrEnum):
     EFFECT_INTENT = "effect_intent"
     EFFECT_OUTCOME = "effect_outcome"
     AUTHORITATIVE_REREAD = "authoritative_reread"
+    # Evidence-only append after STARTED; this is not another lifecycle state
+    # and never reserves/admit a second attempt.
+    SPAWN_CERTIFICATION = "spawn_certification"
 
 
 class RuntimeFacadeError(RuntimeError):
@@ -223,6 +226,11 @@ class RuntimeProducerResult:
     external_effect_executed: bool = False
     rollback_validation: RollbackValidation | None = None
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    # Process-local callback supplied by CommonWorkerDispatchSpec after START;
+    # excluded from serialization and never an authority input.
+    spawn_registration_callback: Callable[[Mapping[str, Any]], Any] | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 class WbcRuntimeProducerFacade:
@@ -641,6 +649,41 @@ class WbcRuntimeProducerFacade:
             ),
         )
 
+    def certify_spawned_child(
+        self,
+        *,
+        attempt_id: str,
+        event: LedgerEvent,
+        writer_id: str,
+        surface_name: str,
+        source_lookup_key: str,
+        expected_source_version: str,
+        action_context: ActionBoundaryContext | None = None,
+        artifacts: ImmutableAttemptArtifacts | None = None,
+        cursor_key: str = "default",
+    ) -> RuntimeProducerResult:
+        """Append observed child identity evidence to this WBC attempt.
+
+        Spawn certification is deliberately an additive evidence operation:
+        it does not reserve, start, or create another attempt stream.
+        """
+        if event.event_type.value != "external_effect_intent":
+            raise ValueError(
+                "spawn certification event must use evidence event type external_effect_intent"
+            )
+        return self._append_operation(
+            operation=RuntimeOperation.SPAWN_CERTIFICATION,
+            attempt_id=attempt_id,
+            event=event,
+            writer_id=writer_id,
+            surface_name=surface_name,
+            source_lookup_key=source_lookup_key,
+            expected_source_version=expected_source_version,
+            action_context=action_context,
+            artifacts=artifacts,
+            cursor_key=cursor_key,
+        )
+
     def _append_operation(
         self,
         *,
@@ -854,11 +897,17 @@ class WbcRuntimeProducerFacade:
         promotion_mode: PromotionMode | None = None,
     ) -> LedgerEvent:
         effective_mode = promotion_mode or self._promotion_mode
+        source_payload = source_record.to_dict()
+        # Spawn certification replay must be byte-identical across process
+        # restarts.  ``observed_at`` is a lookup observation timestamp, not
+        # identity evidence, and must not perturb the idempotent event body.
+        if operation == RuntimeOperation.SPAWN_CERTIFICATION:
+            source_payload.pop("observed_at", None)
         runtime_metadata = {
             "operation": operation.value,
             "writer_id": writer_id,
             "surface_name": surface_name,
-            "source_record": source_record.to_dict(),
+            "source_record": source_payload,
             "promotion_mode": effective_mode.value,
         }
         if artifacts is not None:
@@ -868,6 +917,19 @@ class WbcRuntimeProducerFacade:
                     f"{event.identity.attempt_id!r}"
                 )
             runtime_metadata["artifacts"] = artifacts.to_dict()
+        # Legacy event factories use sequence=2 for the terminal event.  If
+        # certification already occupied that position, advance this event to
+        # the next append position while preserving the old no-cert path.
+        try:
+            prior_events = self._ledger_store.read_events(event.identity.attempt_id)
+        except Exception:
+            prior_events = []
+        if prior_events and event.sequence <= prior_events[-1].sequence:
+            event = replace(
+                event,
+                sequence=prior_events[-1].sequence + 1,
+                causal_predecessor_sequence=prior_events[-1].sequence,
+            )
         payload = event.payload
         if payload is None:
             payload = {"__wbc_runtime__": runtime_metadata}

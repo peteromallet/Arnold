@@ -21,6 +21,7 @@ from .common_worker_dispatch import (
     CommonWorkerDispatchResult,
     CommonWorkerDispatchSpec,
     PostLaunchIndeterminateError,
+    SpawnedChildControl,
 )
 from .wbc_runtime import (
     ActionBoundaryDeniedError,
@@ -64,6 +65,7 @@ __all__ = [
     "AuthoritativeRereadResult",
     "CommonWorkerDispatchResult",
     "CommonWorkerDispatchSpec",
+    "SpawnedChildControl",
     "ExactSourceLookup",
     "ExactSourceLookupError",
     "ExactSourceRecord",

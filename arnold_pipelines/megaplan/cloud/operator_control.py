@@ -9,8 +9,10 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +22,46 @@ from arnold_pipelines.megaplan.chain.operator_pause import (
     resume_chain,
 )
 from arnold_pipelines.megaplan.cloud.relaunch_resolution import marker_relaunch_command
+from arnold_pipelines.megaplan.cloud.liveness_lease import tmux_authority_bindings
+from arnold_pipelines.megaplan.incident.disposition import SignalDispositionError, signal_non_worker
+from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.incident.schema import NonWorkerSignalDisposition
 
 
 RESUME_HOLD_KEY = "operator_resume_hold"
 RESUME_HOLD_SCHEMA = "arnold.megaplan.operator-resume-hold.v1"
 _POST_LAUNCH_GRACE_SECONDS = 0.25
+_TMUX_BINDING_KEYS = (
+    "tmux_socket", "tmux_socket_fingerprint", "tmux_server_pid",
+    "tmux_server_process_start_identity", "tmux_session_id",
+    "tmux_owned_pane_id", "tmux_owned_pane_pid",
+    "tmux_owned_pane_process_start_identity", "tmux_owned_pane_command",
+    "tmux_all_panes_digest",
+)
+
+
+def _pid_start_identity(pid: int) -> str | None:
+    """Return a positive process-incarnation token on Linux or macOS."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()
+        if len(fields) > 21 and fields[21]:
+            return fields[21]
+    except (OSError, IndexError):
+        pass
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        return None
+    started = result.stdout.strip()
+    if result.returncode != 0 or not started:
+        return None
+    return "ps-lstart:" + hashlib.sha256(started.encode("utf-8")).hexdigest()
 
 
 def _resume_hold(
@@ -52,7 +89,28 @@ def _runner_survives_launch(session: str) -> bool:
     return subprocess.run(probe, check=False).returncode == 0
 
 
-def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
+
+
+def _owned_pidfile_snapshot(
+    path: Path,
+    *,
+    session: str,
+    expected_pid: int | None = None,
+    expected_group: int | None = None,
+    expected_start: str | None = None,
+) -> tuple[int, int, str, str]:
+    """Read and fence one operator-owned pidfile incarnation.
+
+    This is deliberately a complete snapshot: callers must re-run it as the
+    final ledger-locked preflight, immediately before invoking the signal
+    primitive.  A pidfile by itself is never an authority for a signal.
+    """
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
         cmdline = (
@@ -61,15 +119,179 @@ def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
             .replace(b"\0", b" ")
             .decode(errors="replace")
         )
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        raise SignalDispositionError("owned pidfile or process command line is unavailable") from exc
+    if expected_pid is not None and pid != expected_pid:
+        raise SignalDispositionError("owned pidfile PID changed before teardown")
     if session not in cmdline or not any(
         token in cmdline for token in ("arnold-babysitter",)
     ):
+        raise SignalDispositionError("pidfile target is not the owned operator runner")
+    try:
+        group = os.getpgid(pid)
+    except (OSError, ProcessLookupError) as exc:
+        raise SignalDispositionError("owned runner process group is unavailable") from exc
+    if expected_group is not None and group != expected_group:
+        raise SignalDispositionError("owned runner process group changed before teardown")
+    start_identity = _pid_start_identity(pid)
+    if not start_identity:
+        raise SignalDispositionError("owned runner process identity is unavailable")
+    if expected_start is not None and start_identity != expected_start:
+        raise SignalDispositionError("owned runner process incarnation changed before teardown")
+    return pid, group, start_identity, cmdline
+
+
+def _stop_owned_pidfile(
+    path: Path,
+    *,
+    session: str,
+    workspace: Path,
+    marker_path: Path,
+) -> bool:
+    """Stop a marker-bound operator runner through the non-worker ledger door."""
+    workspace = workspace.expanduser().resolve(strict=False)
+    path = path.expanduser().resolve(strict=False)
+    marker_path = marker_path.expanduser().resolve(strict=False)
+    if not _path_is_within(path, workspace) or not marker_path.is_absolute():
         return False
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+        marker, marker_sha256 = _load_marker(marker_path)
+    except RuntimeError:
+        return False
+    marker_workspace = marker.get("workspace")
+    if marker.get("session") != session or not isinstance(marker_workspace, str):
+        return False
+    try:
+        if Path(marker_workspace).expanduser().resolve(strict=False) != workspace:
+            return False
+    except (OSError, RuntimeError):
+        return False
+    marker_ledger_root = marker.get("ledger_root") or marker.get("incident_ledger_root")
+    if marker_ledger_root is not None:
+        try:
+            expected_ledger_root = workspace / ".megaplan" / "incident-ledger"
+            if Path(str(marker_ledger_root)).expanduser().resolve(strict=False) != expected_ledger_root.resolve(strict=False):
+                return False
+        except (OSError, RuntimeError):
+            return False
+    try:
+        pid, group, start_identity, cmdline = _owned_pidfile_snapshot(path, session=session)
+        ledger = IncidentLedger(workspace)
+        disposition = NonWorkerSignalDisposition(
+            disposition_id=hashlib.sha256(
+                f"operator-lifecycle\0{session}\0{group}\0term".encode()
+            ).hexdigest(),
+            subject="non_worker_lifecycle",
+            lifecycle_identity=f"operator-session:{session}",
+            killer_identity=f"operator:{os.getpid()}",
+            cause_kind="lifecycle_shutdown",
+            signal="SIGTERM",
+            victim_pid_or_group=str(group),
+            victim_process_start_identity=start_identity,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+            evidence={"pidfile": str(path), "session": session, "cmdline": cmdline},
+        )
+
+        def preflight(_records: list[dict[str, Any]]) -> None:
+            try:
+                current_marker, current_sha256 = _load_marker(marker_path)
+            except RuntimeError as exc:
+                raise SignalDispositionError("operator marker disappeared before teardown") from exc
+            if current_sha256 != marker_sha256 or current_marker != marker:
+                raise SignalDispositionError("operator marker changed before teardown")
+            _owned_pidfile_snapshot(
+                path,
+                session=session,
+                expected_pid=pid,
+                expected_group=group,
+                expected_start=start_identity,
+            )
+
+        signal_non_worker(
+            ledger,
+            disposition,
+            signal_fn=lambda: os.killpg(group, signal.SIGTERM),
+            preflight=preflight,
+        )
+    except (ProcessLookupError, PermissionError, OSError, ValueError, SignalDispositionError):
+        return False
+    return True
+
+
+def _validated_tmux_binding(marker: dict[str, Any], *, session: str) -> dict[str, Any] | None:
+    """Return the marker's tmux binding only after a fresh exact re-query."""
+    if marker.get("session") != session:
+        return None
+    if any(key not in marker for key in _TMUX_BINDING_KEYS):
+        return None
+    expected = {key: marker[key] for key in _TMUX_BINDING_KEYS}
+    try:
+        fresh = tmux_authority_bindings({**marker, "session": session})
+    except Exception:
+        return None
+    return expected if fresh == expected else None
+
+
+def _stop_tmux_session(
+    marker: dict[str, Any], *, session: str, marker_path: Path, workspace: Path,
+    expected_identity_digest: str | None = None,
+    expected_remote_spec: str | None = None,
+) -> bool:
+    """Durably acknowledge an exact, marker-owned tmux session teardown."""
+    if expected_identity_digest is not None and marker.get("identity_digest") != expected_identity_digest:
+        return False
+    if expected_remote_spec is not None and marker.get("remote_spec") != expected_remote_spec:
+        return False
+    binding = _validated_tmux_binding(marker, session=session)
+    if binding is None:
+        return False
+    ledger = IncidentLedger(workspace)
+    disposition_id = hashlib.sha256(
+        json.dumps(
+            ["operator-tmux", session, binding, "SIGTERM"],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    disposition = NonWorkerSignalDisposition(
+        disposition_id=disposition_id,
+        subject="non_worker_lifecycle",
+        lifecycle_identity=f"operator-tmux:{session}:{binding['tmux_session_id']}",
+        killer_identity=f"operator:{os.getpid()}",
+        cause_kind="lifecycle_shutdown",
+        signal="SIGTERM",
+        victim_pid_or_group=str(binding["tmux_session_id"]),
+        victim_process_start_identity=str(binding["tmux_server_process_start_identity"]),
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        evidence={"marker_path": str(marker_path), "tmux": binding},
+    )
+
+    def preflight(_records: list[dict[str, Any]]) -> None:
+        try:
+            current_marker, _current_sha = _load_marker(marker_path)
+        except RuntimeError as exc:
+            raise SignalDispositionError("tmux marker disappeared before teardown") from exc
+        if current_marker != marker or _validated_tmux_binding(current_marker, session=session) != binding:
+            raise SignalDispositionError("tmux session or owned pane changed before teardown")
+
+    def invoke() -> None:
+        result = subprocess.run(
+            [
+                "tmux", "-S", str(binding["tmux_socket"]), "kill-session",
+                "-t", f"={binding['tmux_session_id']}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise SignalDispositionError(
+                f"tmux teardown failed with status {result.returncode}"
+            )
+
+    try:
+        signal_non_worker(ledger, disposition, signal_fn=invoke, preflight=preflight)
+    except (OSError, ValueError, SignalDispositionError):
         return False
     return True
 
@@ -85,18 +307,17 @@ def pause_session(
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
     result = pause_chain(spec, workspace, reason=reason, actor=actor)
-    stopped = (
-        subprocess.run(
-            ["tmux", "kill-session", "-t", session],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).returncode
-        == 0
+    stopped = _stop_tmux_session(
+        marker, session=session, marker_path=marker_path, workspace=workspace
     )
     marker_dir = marker_path.parent
     repair_stopped = any(
-        _stop_owned_pidfile(path, session=session)
+        _stop_owned_pidfile(
+            path,
+            session=session,
+            workspace=workspace,
+            marker_path=marker_path,
+        )
         for path in (
             marker_dir / f"{session}.repair-loop.pid",
             marker_dir / f"{session}.meta-repair.pid",
@@ -309,6 +530,12 @@ def _write_marker(
                 "session marker changed concurrently: "
                 f"expected {expected_sha256}, observed {observed_sha256}"
             )
+        if "content_digest" in value or "marker_sha256" in value:
+            unsigned = dict(value)
+            unsigned.pop("content_digest", None)
+            unsigned.pop("marker_sha256", None)
+            value = dict(value)
+            value["content_digest"] = _sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
         encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
         fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
         try:
@@ -328,11 +555,13 @@ def _write_marker(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("pause", "resume"))
+    parser.add_argument("action", choices=("pause", "resume", "tmux-stop"))
     parser.add_argument("--spec", required=True)
-    parser.add_argument("--workspace", required=True)
+    parser.add_argument("--workspace")
     parser.add_argument("--session", required=True)
     parser.add_argument("--marker", required=True)
+    parser.add_argument("--identity-digest")
+    parser.add_argument("--remote-spec")
     parser.add_argument("--reason", default="operator requested pause")
     parser.add_argument("--actor", default="operator")
     parser.add_argument(
@@ -349,6 +578,28 @@ def main(argv: list[str] | None = None) -> int:
         help="clear durable pause authority without starting the chain runner",
     )
     args = parser.parse_args(argv)
+    if args.action == "tmux-stop":
+        marker_path = Path(args.marker)
+        marker, _marker_sha256 = _load_marker(marker_path)
+        marker_workspace = marker.get("workspace") or args.workspace
+        if not isinstance(marker_workspace, str) or not marker_workspace:
+            print("tmux authority rejected: marker workspace is missing", file=sys.stderr)
+            return 78
+        stopped = _stop_tmux_session(
+            marker,
+            session=args.session,
+            marker_path=marker_path,
+            workspace=Path(marker_workspace),
+            expected_identity_digest=args.identity_digest,
+            expected_remote_spec=args.remote_spec,
+        )
+        if stopped:
+            print(json.dumps({"success": True, "runner_stopped": True}, sort_keys=True))
+            return 0
+        print("tmux authority rejected or teardown failed", file=sys.stderr)
+        return 78
+    if not args.workspace:
+        parser.error("--workspace is required for pause/resume")
     common = {
         "spec": Path(args.spec),
         "workspace": Path(args.workspace),

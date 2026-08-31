@@ -49,6 +49,18 @@ FROZEN_LEDGER: dict[str, str] = {
     "arnold_pipelines/megaplan/resident/subagent.py": (
         "canonical resident managed-supervisor and provider-worker launch seams"
     ),
+    "arnold_pipelines/megaplan/incident/disposition.py": (
+        "canonical signal authority's sole OS process-group boundary; worker "
+        "context, ledger disposition, and signal claim are validated before killpg"
+    ),
+    "arnold_pipelines/megaplan/skills/subagent-launcher/fan.py": (
+        "owned fan worker launcher boundary; each detached task carries the "
+        "admitted execution context and start_new_session group custody"
+    ),
+    "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py": (
+        "owned omp worker launcher boundary; child session creation is paired "
+        "with propagated execution context and canonical timeout ladder"
+    ),
 }
 
 

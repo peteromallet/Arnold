@@ -1,15 +1,28 @@
-# NBF execution contract — Batch 2 PASS checkpoint — 2026-08-31
+# NBF execution contract — Batch 3 accepted / NBF08 suffix authorized — 2026-08-31
 
-- State: `BATCH_2_PASS_CHECKPOINT_COMMITTED`; the checkpoint transition is
-  `pending -> committed` in this commit.
-- Batch 2 accepted tasks: `NBF-02` and `NBF-03`.
-- Strict progress: `3/7 = 42.9%`; batches: `2/5 = 40%`; next: **Batch 3**.
+- State: `BATCH_3_ACCEPTED_NBF04_NBF05`; NBF04 and NBF05 are accepted at the
+  Batch 3 attempt-5 metadata checkpoint.
+- Accepted tasks: `NBF-01`, `NBF-02`, `NBF-03`, `NBF-04`, and `NBF-05`.
+- Strict progress: `5/8 = 62.5%`; batches: `3/6 = 50%`; Batch 3 is complete;
+  next is **Batch 4 / NBF-06**.
+- Final Batch 3 packet: `.oracle/rework/batch-3-attempt-5-combined-nbf04-nbf05.md`
+  SHA-256 `8481da7b8575d98ba4019e1620cfc72b1a9b6b2f26e93e942ce0cdf473e4e792`;
+  framed aggregate `7f134a29fee76c1f68436798482dca46a301a380456c0793ce3b2b0ecf80c958`.
+- Final inventory: `docs/nbf-signal-inventory.json` SHA-256
+  `e92b6c90c6adf7c6d5f05a8d10c888f4900b1a2395cf35ce55689323987568da`, 120
+  entries, source digest `60d5d933e722d8f49905b534866e1a2bdb6d0c7766103f3176adacd7cd33a958`.
+- The denominator changed from 7 tasks/5 batches to 8 tasks/6 batches through
+  the authorized NBF08 future-suffix rebind. This is a transparent planning
+  denominator change, not retroactive completion credit.
+- Authorized suffix order: Batch 4 `NBF-06`, Batch 5 `NBF-08`, then Batch 6
+  `NBF-07`.
 - Five independent Luna reviews converged: ambiguous `PASS`; contract `PASS`;
   focused regression `PASS` (broader results unclassified); expanded review 4
   `PASS` (439 passes, documented baselines only); review 5 `PASS_BATCH_2`.
-- The one controlling Sol ruling remains binding: no second Sol and no managed
-  second WBC authority. Batch 3/provider-policy/scheduler/journal/network and
-  taxonomy redesigns remain out of scope.
+- Three final Luna review rounds PASSed after the single Sol REWORK ruling was
+  remediated; no second Sol was commissioned. The one controlling Sol ruling
+  remains binding: no managed second WBC authority. Batch 3/provider-policy/
+  scheduler/journal/network and taxonomy redesigns remain out of scope.
 - Gate4 is the custody-reconciled cumulative branch from `2297fb3…`; source
   bytes are preserved and this checkpoint contains the reviewed cumulative
   Batch 1 + Batch 2 state because the original Batch 1 checkpoint ancestry was

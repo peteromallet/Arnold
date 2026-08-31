@@ -152,7 +152,8 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         return Completed()
 
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
-    monkeypatch.setattr(operator_control, "_stop_owned_pidfile", lambda path, session: True)
+    monkeypatch.setattr(operator_control, "_stop_tmux_session", lambda *args, **kwargs: True)
+    monkeypatch.setattr(operator_control, "_stop_owned_pidfile", lambda *args, **kwargs: True)
     result = operator_control.pause_session(
         spec=spec,
         workspace=tmp_path,
@@ -161,7 +162,7 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
         reason="operator",
         actor="test",
     )
-    assert calls == [["tmux", "kill-session", "-t", "demo"]]
+    assert calls == []
     assert result["runner_stopped"] is True
     assert result["repair_stopped"] is True
     assert json.loads(marker.read_text())["should_run"] is False
@@ -211,6 +212,53 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
     assert json.loads(marker.read_text())["should_run"] is True
 
 
+def test_tmux_teardown_requires_exact_marker_binding_and_records_ack(tmp_path: Path, monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    binding = {
+        "tmux_socket": str(tmp_path / "tmux.sock"),
+        "tmux_socket_fingerprint": "1:2",
+        "tmux_server_pid": 41,
+        "tmux_server_process_start_identity": "server-start",
+        "tmux_session_id": "$1",
+        "tmux_owned_pane_id": "%1",
+        "tmux_owned_pane_pid": 42,
+        "tmux_owned_pane_process_start_identity": "pane-start",
+        "tmux_owned_pane_command": "arnold-supervisor",
+        "tmux_all_panes_digest": "a" * 64,
+    }
+    marker = {"session": "demo", "workspace": str(tmp_path), **binding}
+    marker_path = tmp_path / "demo.json"
+    marker_path.write_text(json.dumps(marker))
+    commands = []
+    monkeypatch.setattr(operator_control, "tmux_authority_bindings", lambda _payload: binding)
+    monkeypatch.setattr(
+        operator_control.subprocess,
+        "run",
+        lambda argv, **_kwargs: commands.append(argv) or type("R", (), {"returncode": 0})(),
+    )
+
+    assert operator_control._stop_tmux_session(
+        marker, session="demo", marker_path=marker_path, workspace=tmp_path
+    )
+    assert commands == [["tmux", "-S", str(tmp_path / "tmux.sock"), "kill-session", "-t", "=$1"]]
+    events = (tmp_path / ".megaplan" / "incident-ledger" / "events.jsonl").read_text()
+    assert '"event_type":"non_worker_signal_disposition"' in events
+    assert '"event_type":"signal_claimed"' in events
+
+
+def test_tmux_teardown_rejects_missing_or_replaced_binding(tmp_path: Path, monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    calls = []
+    monkeypatch.setattr(operator_control.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+    assert not operator_control._stop_tmux_session(
+        {"session": "demo", "workspace": str(tmp_path)},
+        session="demo", marker_path=tmp_path / "demo.json", workspace=tmp_path,
+    )
+    assert calls == []
+
+
 def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -224,23 +272,23 @@ def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
     class Completed:
         returncode = 0
 
-    def race_after_pause(argv, **kwargs):
-        if argv[:3] == ["tmux", "kill-session", "-t"]:
-            raced = json.loads((plan / "state.json").read_text())
-            raced["current_state"] = "blocked"
-            raced.get("meta", {}).pop("operator_pause", None)
-            raced["active_step"] = {
-                "phase": "execute",
-                "worker_pid": 999999,
-                "runner_lease": {"session": "demo"},
-            }
-            (plan / "state.json").write_text(json.dumps(raced))
-        return Completed()
+    def race_after_tmux_proof(*args, **kwargs):
+        raced = json.loads((plan / "state.json").read_text())
+        raced["current_state"] = "blocked"
+        raced.get("meta", {}).pop("operator_pause", None)
+        raced["active_step"] = {
+            "phase": "execute",
+            "worker_pid": 999999,
+            "runner_lease": {"session": "demo"},
+        }
+        (plan / "state.json").write_text(json.dumps(raced))
+        return True
 
-    monkeypatch.setattr(operator_control.subprocess, "run", race_after_pause)
+    monkeypatch.setattr(operator_control.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(operator_control, "_stop_tmux_session", race_after_tmux_proof)
     monkeypatch.setattr(operator_control.time, "sleep", lambda _: None)
     monkeypatch.setattr(
-        operator_control, "_stop_owned_pidfile", lambda path, session: False
+        operator_control, "_stop_owned_pidfile", lambda *args, **kwargs: False
     )
 
     result = operator_control.pause_session(
@@ -260,6 +308,81 @@ def test_cloud_pause_reconciles_dead_writer_flush_after_tmux_stop(
 
     resumed = resume_chain(spec, tmp_path)
     assert resumed["restored_plan_state"] == "blocked"
+
+
+def test_owned_pidfile_uses_workspace_ledger_and_locked_final_fence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = workspace / "markers" / "demo.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"session": "demo", "workspace": str(workspace)}))
+    pidfile = workspace / "demo.repair-loop.pid"
+    pidfile.write_text("41\n")
+    snapshots = iter([
+        (41, 401, "start-a", "python arnold-babysitter demo"),
+        (41, 402, "start-a", "python arnold-babysitter demo"),
+    ])
+    def changing_snapshot(path, **kwargs):
+        current = next(snapshots)
+        if kwargs.get("expected_group") is not None and current[1] != kwargs["expected_group"]:
+            raise operator_control.SignalDispositionError("process group changed")
+        return current
+
+    monkeypatch.setattr(operator_control, "_owned_pidfile_snapshot", changing_snapshot)
+    roots = []
+    monkeypatch.setattr(operator_control, "IncidentLedger", lambda root: roots.append(root) or object())
+    signals = []
+
+    def fake_signal(ledger, disposition, *, signal_fn, preflight):
+        preflight([])
+        signals.append(disposition)
+        signal_fn()
+
+    monkeypatch.setattr(operator_control, "signal_non_worker", fake_signal)
+    monkeypatch.setattr(operator_control.os, "killpg", lambda group, sig: signals.append((group, sig)))
+
+    assert operator_control._stop_owned_pidfile(
+        pidfile, session="demo", workspace=workspace, marker_path=marker
+    ) is False
+    assert roots == [workspace]
+    assert signals == []
+
+
+def test_owned_pidfile_happy_path_signals_only_workspace_bound_runner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud import operator_control
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = workspace / "markers" / "demo.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"session": "demo", "workspace": str(workspace)}))
+    pidfile = workspace / "demo.meta-repair.pid"
+    pidfile.write_text("41\n")
+    snapshot = (41, 401, "start-a", "python arnold-babysitter demo")
+    monkeypatch.setattr(operator_control, "_owned_pidfile_snapshot", lambda *a, **k: snapshot)
+    roots = []
+    monkeypatch.setattr(operator_control, "IncidentLedger", lambda root: roots.append(root) or object())
+    calls = []
+
+    def fake_signal(ledger, disposition, *, signal_fn, preflight):
+        preflight([])
+        signal_fn()
+        calls.append(disposition)
+
+    monkeypatch.setattr(operator_control, "signal_non_worker", fake_signal)
+    monkeypatch.setattr(operator_control.os, "killpg", lambda group, sig: calls.append((group, sig)))
+
+    assert operator_control._stop_owned_pidfile(
+        pidfile, session="demo", workspace=workspace, marker_path=marker
+    ) is True
+    assert roots == [workspace]
+    assert calls
 
 
 def test_quiesced_pause_reconciliation_rejects_live_or_foreign_runner(

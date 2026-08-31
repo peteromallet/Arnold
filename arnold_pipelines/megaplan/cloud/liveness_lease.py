@@ -194,6 +194,126 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+def _refresh_authority_marker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add the runtime-local bindings required by the signal authority."""
+    workspace = Path(str(payload.get("workspace") or "")).expanduser()
+    provenance = payload.get("runtime_manifest")
+    provenance_path = provenance.get("path") if isinstance(provenance, Mapping) else None
+    manifest = Path(str(provenance_path)).expanduser() if provenance_path else workspace / ".megaplan" / "runtime-manifest.json"
+    progress = workspace / ".megaplan" / "cloud-logs" / f"{payload.get('session', 'session')}.log"
+    payload.setdefault("bootstrap_manifest_path", str(manifest))
+    payload.setdefault("progress_artifact", str(progress))
+    payload.setdefault("progress_identity", f"run:{payload.get('run_id', '')}")
+    payload.setdefault("supervisor_pid", os.getpid())
+    payload.setdefault("supervisor_process_start_identity", _proc_start_identity(int(payload["supervisor_pid"])))
+    try:
+        payload.setdefault("boot_identity", Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip())
+    except OSError:
+        payload.setdefault("boot_identity", "unknown-boot")
+    payload.setdefault("container_identity", os.environ.get("ARNOLD_CONTAINER_IDENTITY") or socket.gethostname())
+    if manifest.is_file():
+        payload["manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    if progress.is_file():
+        payload["progress_content_digest"] = hashlib.sha256(progress.read_bytes()).hexdigest()
+    tmux_keys = {
+        "tmux_socket", "tmux_socket_fingerprint", "tmux_server_pid",
+        "tmux_server_process_start_identity", "tmux_session_id",
+        "tmux_owned_pane_id", "tmux_owned_pane_pid",
+        "tmux_owned_pane_process_start_identity", "tmux_owned_pane_command",
+        "tmux_all_panes_digest",
+    }
+    # Re-derive every tmux field on every refresh.  A failed query must erase
+    # the previous binding; retaining it would turn a replaced/ambiguous
+    # server or pane into stale authority.
+    prior_tmux = {key: payload[key] for key in tmux_keys if key in payload}
+    refreshed_tmux = tmux_authority_bindings({**payload, **prior_tmux})
+    for key in tmux_keys:
+        payload.pop(key, None)
+    payload.update(refreshed_tmux)
+    unsigned = dict(payload)
+    unsigned.pop("content_digest", None)
+    unsigned.pop("marker_sha256", None)
+    payload["content_digest"] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    return payload
+
+
+def tmux_authority_bindings(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return bindings only when one exact session and owned pane revalidate."""
+    session = str(payload.get("session") or "").strip()
+    if not session:
+        return {}
+    owner_pid = payload.get("pid") or payload.get("victim_pid") or os.getpid()
+    try:
+        owner_pid = int(owner_pid)
+    except (TypeError, ValueError):
+        return {}
+    bound_socket = str(payload.get("tmux_socket") or "").strip()
+    env_socket = bound_socket or os.environ.get("TMUX", "").split(",", 1)[0].strip()
+
+    def query(args: list[str]) -> str | None:
+        try:
+            result = subprocess.run(["tmux", *args], check=False, capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    # ``=name`` is useful for pane/window targets but macOS tmux leaves
+    # session_id/session_name empty for that form.  Query the exact session
+    # name and bind the returned name below; all subsequent pane queries still
+    # use the explicit socket and exact session target.
+    first_args = ["-S", env_socket, "display-message", "-p", "-t", session, "#{socket_path}\t#{pid}\t#{session_id}\t#{session_name}"] if env_socket else ["display-message", "-p", "-t", session, "#{socket_path}\t#{pid}\t#{session_id}\t#{session_name}"]
+    first = query(first_args)
+    if not first:
+        return {}
+    parts = first.split("\t")
+    if len(parts) != 4 or parts[3] != session or not parts[0] or not parts[1].isdigit() or not parts[2]:
+        return {}
+    socket_path, server_pid, session_id, session_name = parts
+    try:
+        socket_fingerprint = f"{os.stat(socket_path).st_dev}:{os.stat(socket_path).st_ino}"
+        server_start = _proc_start_identity(int(server_pid))
+    except (OSError, ValueError):
+        return {}
+    if not server_start:
+        return {}
+    rows = query(["-S", socket_path, "list-panes", "-t", f"={session}", "-F", "#{pane_id}\t#{pane_pid}\t#{pane_current_command}"])
+    if not rows:
+        return {}
+    panes: list[tuple[str, int, str, str]] = []
+    for line in rows.splitlines():
+        fields = line.split("\t", 2)
+        if len(fields) != 3 or not fields[0].startswith("%") or not fields[1].isdigit():
+            return {}
+        pane_id, pane_pid, command = fields
+        start = _proc_start_identity(int(pane_pid))
+        if not start:
+            return {}
+        panes.append((pane_id, int(pane_pid), start, command))
+    owned = [pane for pane in panes if pane[1] == owner_pid]
+    if len(owned) != 1:
+        return {}
+    encoded = "\n".join(f"{pane_id}|{pid}|{start}|{hashlib.sha256(command.encode()).hexdigest()}" for pane_id, pid, start, command in panes).encode()
+    pane_id, pane_pid, pane_start, command = owned[0]
+    return {
+        "tmux_socket": socket_path,
+        "tmux_socket_fingerprint": socket_fingerprint,
+        "tmux_server_pid": int(server_pid),
+        "tmux_server_process_start_identity": server_start,
+        "tmux_session_id": session_id,
+        "tmux_owned_pane_id": pane_id,
+        "tmux_owned_pane_pid": pane_pid,
+        "tmux_owned_pane_process_start_identity": pane_start,
+        "tmux_owned_pane_command": command,
+        "tmux_all_panes_digest": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+# Private compatibility alias for callers that were written while the
+# producer helper was being introduced.  New authority consumers use the
+# public name above.
+_tmux_authority_bindings = tmux_authority_bindings
+
+
 def _allocate_runner_fence(session: str, marker_dir: Path) -> int:
     """Durably advance the single-writer generation for one runner session."""
 
@@ -241,6 +361,7 @@ def prepare_managed_run_marker(
         "run_id": str(run_id or uuid.uuid4()),
         "started_at": _iso(_utcnow()),
     }
+    _refresh_authority_marker(payload)
     _atomic_json(Path(marker_dir) / f"{session}.json", payload)
     return payload
 
@@ -335,6 +456,7 @@ class LivenessLeasePublisher:
                 "liveness_claimed_at": _iso(_utcnow()),
             }
         )
+        _refresh_authority_marker(marker)
         _atomic_json(marker_path, marker)
         self._marker_snapshot = marker
         self._marker_binding = marker_binding(marker)

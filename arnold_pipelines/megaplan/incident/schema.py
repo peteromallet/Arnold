@@ -227,6 +227,8 @@ class CauseKind(str, Enum):
     terminate = "terminate"
     escalation = "escalation"
     wedge = "wedge"
+    stall = "stall"
+    idle = "idle"
     restack = "restack"
     cgroup_oom = "cgroup_oom"
     observed_dead_unknown = "observed_dead_unknown"
@@ -974,12 +976,19 @@ class SupervisionConfirmation:
     first_observed_at: str
     expires_at: float
     evidence_digest: str
+    # These fields were added additively.  ``from_dict`` accepts old durable
+    # observations with them absent, but the worker signal door requires them
+    # whenever the corresponding admitted-launch context is available.
+    semantic_dispatch_fingerprint: str | None = None
+    container_identity: str | None = None
+    ladder_stage: str | None = None
+    signal_identity: str | None = None
     plan_id: str | None = None
     admission_receipt_id: str | None = None
     confirmation_policy_identity: str = "default-v1"
     schema_version: int = NBF_SCHEMA_VERSION
 
-    FIELDS = {"schema_version", "confirmation_id", "site_id", "subject_class", "plan_id", "admission_receipt_id", "victim_pid", "victim_process_start_identity", "relevant_progress_identity", "supervisor_incarnation_identity", "cause_kind", "scan_interval_s", "confirmation_policy_identity", "first_observed_at", "expires_at", "evidence_digest"}
+    FIELDS = {"schema_version", "confirmation_id", "site_id", "subject_class", "plan_id", "admission_receipt_id", "victim_pid", "victim_process_start_identity", "relevant_progress_identity", "supervisor_incarnation_identity", "cause_kind", "scan_interval_s", "confirmation_policy_identity", "first_observed_at", "expires_at", "evidence_digest", "semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity"}
 
     def __post_init__(self) -> None:
         if self.schema_version != NBF_SCHEMA_VERSION:
@@ -994,20 +1003,44 @@ class SupervisionConfirmation:
             raise ValueError("expires_at must be positive")
         _iso_timestamp(self.first_observed_at, "first_observed_at")
         _sha256_identity(self.evidence_digest, "evidence_digest")
+        if self.semantic_dispatch_fingerprint is not None:
+            _sha256_identity(self.semantic_dispatch_fingerprint, "semantic_dispatch_fingerprint")
+        if self.container_identity is not None:
+            _required(self.container_identity, "container_identity")
+        if self.ladder_stage is not None and self.ladder_stage not in {"term", "kill"}:
+            raise ValueError("ladder_stage must be term or kill")
+        if self.ladder_stage is not None and (not self.signal_identity or not isinstance(self.signal_identity, str)):
+            raise ValueError("ladder confirmation requires signal_identity")
         expected_ttl = confirmation_ttl_s(self.scan_interval_s)
         first_ts = datetime.fromisoformat(self.first_observed_at.replace("Z", "+00:00")).timestamp()
         if not math.isclose(self.expires_at, first_ts + expected_ttl, rel_tol=0.0, abs_tol=1e-6):
             raise ValueError("expires_at does not match the confirmation TTL policy")
-        expected = _digest({"confirmation_schema_version": self.schema_version, "site_id": self.site_id, "subject_class": self.subject_class, "victim_pid": self.victim_pid, "victim_process_start_identity": self.victim_process_start_identity, "relevant_progress_identity": self.relevant_progress_identity, "supervisor_incarnation_identity": self.supervisor_incarnation_identity, "cause_kind": self.cause_kind})
+        identity = {"confirmation_schema_version": self.schema_version, "site_id": self.site_id, "subject_class": self.subject_class, "victim_pid": self.victim_pid, "victim_process_start_identity": self.victim_process_start_identity, "relevant_progress_identity": self.relevant_progress_identity, "supervisor_incarnation_identity": self.supervisor_incarnation_identity, "cause_kind": self.cause_kind}
+        if self.semantic_dispatch_fingerprint is not None:
+            identity["semantic_dispatch_fingerprint"] = self.semantic_dispatch_fingerprint
+        if self.container_identity is not None:
+            identity["container_identity"] = self.container_identity
+        if self.ladder_stage is not None:
+            identity["ladder_stage"] = self.ladder_stage
+            identity["signal_identity"] = self.signal_identity
+        expected = _digest(identity)
         if self.confirmation_id != expected:
             raise ValueError("confirmation identity does not match proof fields")
 
     def to_dict(self) -> dict[str, Any]:
-        return {n: getattr(self, n) for n in ("schema_version", "confirmation_id", "site_id", "subject_class", "plan_id", "admission_receipt_id", "victim_pid", "victim_process_start_identity", "relevant_progress_identity", "supervisor_incarnation_identity", "cause_kind", "scan_interval_s", "confirmation_policy_identity", "first_observed_at", "expires_at", "evidence_digest")}
+        return {n: getattr(self, n) for n in ("schema_version", "confirmation_id", "site_id", "subject_class", "plan_id", "admission_receipt_id", "victim_pid", "victim_process_start_identity", "relevant_progress_identity", "supervisor_incarnation_identity", "cause_kind", "scan_interval_s", "confirmation_policy_identity", "first_observed_at", "expires_at", "evidence_digest", "semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity")}
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "SupervisionConfirmation":
-        _strict_record_fields(payload, cls.FIELDS, cls.__name__)
+        # Existing ledgers predate the additive binding fields.  Reading them
+        # remains safe; a production worker signal still fails closed when it
+        # needs a binding that the legacy proof cannot provide.
+        _strict_record_fields_with_optional(
+            payload,
+            cls.FIELDS - {"semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity"},
+            {"semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity"},
+            cls.__name__,
+        )
         return cls(**payload)
 
 
@@ -1052,6 +1085,8 @@ def validate_nbf_event(
         "provider_probe_result": {"schema_version", "event_type", "event_id", "probe_lease_id", "provider_failure_key", "passed", "evidence_digest", "recorded_at", "actor"},
         "provider_recovery_verified": {"schema_version", "event_type", "event_id", "changed_precondition_event_id", "provider_failure_key_before", "provider_failure_key_after", "recorded_at", "actor"},
         "controlled_adapter_state": {"schema_version", "event_type", "event_id", "reservation_event_id", "admission_receipt_id", "physical_door_id", "launch_state_identity", "recorded_at", "actor"},
+        "spawn_cleanup_handoff": {"schema_version", "event_type", "event_id", "handoff_id", "reservation_event_id", "admission_receipt_id", "physical_door_id", "plan_id", "phase", "projection_key", "dispatch_family_id", "logical_dispatch_id", "semantic_dispatch_fingerprint", "selected_spec", "execution_context_identity", "worker_identity", "victim_pid", "victim_process_start_identity", "spawn_registration_id", "spawn_certification_id", "route_identity", "error_kind", "reason", "started_at", "cleanup_state", "recorded_at", "actor"},
+        "signal_claimed": {"schema_version", "event_type", "event_id", "disposition_id", "signal", "recorded_at", "actor"},
     }
     fields = required.get(typ)
     if fields is None:
@@ -1071,6 +1106,7 @@ def validate_nbf_event(
             # remain readable for replay/projection compatibility.
             "provider", "route_liveness_kind", "route_liveness_identity",
             "route_liveness_digest",
+            "preacceptance_observation_id",
         })
         missing = fields - set(payload)
         if unknown:
@@ -1080,18 +1116,34 @@ def validate_nbf_event(
         for n in ("provider", "route_liveness_kind", "route_liveness_identity", "route_liveness_digest"):
             if n in payload and payload[n] is not None and not isinstance(payload[n], str):
                 raise ValueError(f"{typ}.{n} must be a string or null")
+    elif typ in {"supervision_confirmation_observed", "supervision_confirmation_replaced"}:
+        _strict_record_fields_with_optional(
+            payload,
+            fields,
+            {"semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity"},
+            str(typ),
+        )
     elif typ == "controlled_adapter_state":
         _strict_record_fields_with_optional(
             payload,
             fields,
-            {"phase", "selected_spec", "primary_spec", "logical_dispatch_id", "worker_identity", "started_at", "finished_at", "operation_evidence", "physical_operation_evidence"},
+            {"phase", "selected_spec", "primary_spec", "logical_dispatch_id", "worker_identity", "victim_process_start_identity", "started_at", "finished_at", "operation_evidence", "physical_operation_evidence"},
             str(typ),
         )
+    elif typ == "spawn_cleanup_handoff":
+        _strict_record_fields_with_optional(payload, fields, {"hold_metadata"}, str(typ))
     elif typ in {"provider_probe_started", "provider_probe_result"}:
         _strict_record_fields_with_optional(
             payload,
             fields,
             {"parent_reservation_event_id", "phase", "route_identity"},
+            str(typ),
+        )
+    elif typ in {"supervision_confirmation_consumed", "supervision_confirmation_expired"}:
+        _strict_record_fields_with_optional(
+            payload,
+            fields,
+            {"semantic_dispatch_fingerprint", "container_identity", "ladder_stage", "signal_identity"},
             str(typ),
         )
     elif typ == "provider_route_child_reserved":
@@ -1123,6 +1175,18 @@ def validate_nbf_event(
                 _required(payload.get(n), f"{typ}.{n}")
             if not isinstance(payload.get("expected_projection_version"), int) or payload["expected_projection_version"] < 0:
                 raise ValueError("provider_route_child_reserved expected_projection_version must be non-negative")
+    if typ == "spawn_cleanup_handoff":
+        for n in ("handoff_id", "reservation_event_id", "admission_receipt_id", "physical_door_id", "plan_id", "phase", "projection_key", "dispatch_family_id", "logical_dispatch_id", "selected_spec", "victim_process_start_identity", "spawn_registration_id", "spawn_certification_id", "route_identity", "error_kind", "reason", "started_at", "cleanup_state"):
+            _required(payload.get(n), f"{typ}.{n}")
+        if not isinstance(payload.get("execution_context_identity"), str):
+            raise ValueError(f"{typ}.execution_context_identity must be a string")
+        if payload.get("hold_metadata") is not None and not isinstance(payload.get("hold_metadata"), dict):
+            raise ValueError(f"{typ}.hold_metadata must be an object or null")
+        if payload.get("cleanup_state") != "cleanup_hold":
+            raise ValueError("spawn_cleanup_handoff.cleanup_state must be cleanup_hold")
+        _sha256_identity(payload["semantic_dispatch_fingerprint"], f"{typ}.semantic_dispatch_fingerprint")
+        _typed_worker_identity(payload.get("worker_identity"), f"{typ}.worker_identity")
+        _positive_pid(payload.get("victim_pid"), f"{typ}.victim_pid")
     if typ == "worker_terminal_outcome" and payload.get("outcome_kind") not in {"success", "ordinary_terminal_failure", "provider_exhausted", "worker_disposition"}:
         raise ValueError("invalid terminal outcome kind")
     if typ == "worker_terminal_outcome":
@@ -1169,15 +1233,17 @@ def validate_nbf_event(
         if payload.get("provider_failure_key") is not None:
             _sha256_identity(payload["provider_failure_key"], f"{typ}.provider_failure_key")
         _typed_worker_identity(payload.get("worker_identity"), f"{typ}.worker_identity")
+        if payload.get("preacceptance_observation_id") is not None:
+            _required(payload["preacceptance_observation_id"], f"{typ}.preacceptance_observation_id")
         if kind == "worker_disposition":
             _required(payload.get("disposition_id"), f"{typ}.disposition_id")
         elif payload.get("disposition_id") is not None:
             raise ValueError("only worker disposition terminals carry disposition_id")
     if typ == "supervision_confirmation_observed":
-        confirmation_fields = {k: payload[k] for k in SupervisionConfirmation.FIELDS}
+        confirmation_fields = {k: payload[k] for k in SupervisionConfirmation.FIELDS if k in payload}
         SupervisionConfirmation.from_dict(confirmation_fields)
     if typ == "supervision_confirmation_replaced":
-        confirmation_fields = {k: payload[k] for k in SupervisionConfirmation.FIELDS}
+        confirmation_fields = {k: payload[k] for k in SupervisionConfirmation.FIELDS if k in payload}
         SupervisionConfirmation.from_dict(confirmation_fields)
     if typ in {"supervision_confirmation_consumed", "supervision_confirmation_expired"}:
         for n in ("confirmation_id", "prior_confirmation_event_id", "site_id", "second_observed_at", "victim_process_start_identity", "relevant_progress_identity", "supervisor_incarnation_identity", "cause_kind"):
@@ -1185,6 +1251,14 @@ def validate_nbf_event(
         _positive_pid(payload.get("victim_pid"), f"{typ}.victim_pid")
         _iso_timestamp(payload["second_observed_at"], f"{typ}.second_observed_at")
         _sha256_identity(payload["second_evidence_digest"], f"{typ}.second_evidence_digest")
+        if payload.get("semantic_dispatch_fingerprint") is not None:
+            _sha256_identity(payload["semantic_dispatch_fingerprint"], f"{typ}.semantic_dispatch_fingerprint")
+        if payload.get("container_identity") is not None:
+            _required(payload["container_identity"], f"{typ}.container_identity")
+        if payload.get("ladder_stage") is not None and payload.get("ladder_stage") not in {"term", "kill"}:
+            raise ValueError(f"{typ}.ladder_stage is invalid")
+        if payload.get("ladder_stage") is not None and not payload.get("signal_identity"):
+            raise ValueError(f"{typ}.signal_identity is required for ladder proof")
     if typ == "provider_route_child_reserved" and "child_admission_receipt_id" in payload:
         raise ValueError("composite reservation cannot contain child receipt ID")
     if typ in {"provider_probe_started", "provider_probe_result"}:
@@ -1211,6 +1285,8 @@ def validate_nbf_event(
             _required(payload.get("primary_spec"), f"{typ}.primary_spec")
             _required(payload.get("logical_dispatch_id"), f"{typ}.logical_dispatch_id")
             _typed_worker_identity(payload.get("worker_identity"), f"{typ}.worker_identity")
+            if "victim_process_start_identity" in payload:
+                _required(payload.get("victim_process_start_identity"), f"{typ}.victim_process_start_identity")
             _iso_timestamp(payload.get("started_at"), f"{typ}.started_at")
             _iso_timestamp(payload.get("finished_at"), f"{typ}.finished_at")
     return dict(payload)

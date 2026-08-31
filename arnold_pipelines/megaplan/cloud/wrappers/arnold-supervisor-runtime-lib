@@ -177,6 +177,428 @@ PY
     fi
   }
   export -f arnold_supervisor_python
+  # Canonical shell-to-ledger signal door.  Shell supervisors must provide a
+  # durable ledger and all identity dimensions; this helper deliberately
+  # returns non-zero (without signalling) when any authority input is absent.
+  arnold_supervisor_bind_signal_context() {
+    local authority_path="${1:-}" requested_kind="${2:-non_worker}"
+    [[ -n "$authority_path" && "$authority_path" = /* && -f "$authority_path" && ! -L "$authority_path" ]] || return 78
+    local marker_dir session context_fields
+    marker_dir="$(cd "$(dirname "$authority_path")" 2>/dev/null && pwd -P)" || return 78
+    context_fields="$(arnold_supervisor_python - "$authority_path" "$requested_kind" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+target_kind = sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(78)
+if not isinstance(data, dict) or not isinstance(data.get("session"), str) or not data["session"]:
+    raise SystemExit(78)
+if target_kind not in {"worker", "non_worker"}:
+    raise SystemExit(78)
+required = {
+    "workspace": data.get("workspace"),
+    "run_id": data.get("run_id"),
+    "bootstrap_manifest_path": data.get("bootstrap_manifest_path", data.get("manifest_path")),
+    "supervisor_process_start_identity": data.get("supervisor_process_start_identity"),
+    "boot_identity": data.get("boot_identity"),
+    "container_identity": data.get("container_identity"),
+}
+if any(not isinstance(value, str) or not value.strip() for key, value in required.items() if key != "tmux_server_pid"):
+    raise SystemExit(78)
+tmux_keys = ("tmux_socket", "tmux_socket_fingerprint", "tmux_server_pid",
+             "tmux_server_process_start_identity", "tmux_session_id",
+             "tmux_owned_pane_id", "tmux_owned_pane_pid",
+             "tmux_owned_pane_process_start_identity", "tmux_owned_pane_command",
+             "tmux_all_panes_digest")
+tmux_present = [key for key in tmux_keys if data.get(key) not in (None, "")]
+if tmux_present:
+    if len(tmux_present) != len(tmux_keys):
+        raise SystemExit(78)
+    tmux_socket = data["tmux_socket"]
+    server_pid = data["tmux_server_pid"]
+    if isinstance(server_pid, str) and server_pid.isdigit():
+        server_pid = int(server_pid)
+    if not isinstance(tmux_socket, str) or not tmux_socket.startswith("/") or not isinstance(server_pid, int) or server_pid <= 0:
+        raise SystemExit(78)
+else:
+    tmux_socket = ""
+    server_pid = ""
+    data["tmux_server_process_start_identity"] = ""
+print("\t".join((data["session"], str(path.resolve()), str(path.parent.resolve()), target_kind,
+                  *(str(required[key]) for key in ("workspace", "run_id", "bootstrap_manifest_path",
+                                                    "supervisor_process_start_identity", "boot_identity",
+                                                    "container_identity")),
+                  str(tmux_socket), str(server_pid),
+                  str(data.get("tmux_server_process_start_identity", "")))))
+PY
+)" || return 78
+    local session marker_path bound_marker_dir target_kind workspace run_id manifest_path supervisor_start boot_identity container_identity tmux_socket tmux_server_pid tmux_server_start
+    IFS=$'\t' read -r session marker_path bound_marker_dir target_kind workspace run_id manifest_path supervisor_start boot_identity container_identity tmux_socket tmux_server_pid tmux_server_start <<< "$context_fields"
+    [[ "$(basename "$authority_path")" == "$session.json" && "$marker_path" == "$(cd "$(dirname "$authority_path")" && pwd -P)/$(basename "$authority_path")" ]] || return 78
+    [[ "$bound_marker_dir" == "$marker_dir" && "$target_kind" == "$requested_kind" ]] || return 78
+    # The marker-bound workspace is the canonical IncidentLedger root. Bind it
+    # here, after the marker identity has been validated, so callers do not
+    # depend on an ambient ledger-root variable. Reject malformed workspaces
+    # and any pre-existing ambient root that disagrees with this authority.
+    [[ "$workspace" = /* && -d "$workspace" && ! -L "$workspace" ]] || return 78
+    workspace="$(cd "$workspace" 2>/dev/null && pwd -P)" || return 78
+    [[ -d "$workspace/.megaplan/incident-ledger" ]] || return 78
+    local ambient_ledger_root="${MEGAPLAN_NBF_LEDGER_ROOT:-}" ambient_ledger_canonical=""
+    if [[ -n "$ambient_ledger_root" ]]; then
+      [[ "$ambient_ledger_root" = /* && -d "$ambient_ledger_root" && ! -L "$ambient_ledger_root" ]] || return 78
+      ambient_ledger_canonical="$(cd "$ambient_ledger_root" 2>/dev/null && pwd -P)" || return 78
+      [[ "$ambient_ledger_canonical" == "$workspace" ]] || return 78
+    fi
+    export MEGAPLAN_NBF_MARKER_DIR="$bound_marker_dir"
+    export MEGAPLAN_NBF_SESSION="$session"
+    export MEGAPLAN_NBF_MARKER_PATH="$marker_path"
+    export MEGAPLAN_NBF_TARGET_KIND="$target_kind"
+    export MEGAPLAN_NBF_WORKSPACE="$workspace"
+    export MEGAPLAN_NBF_RUN_ID="$run_id"
+    export MEGAPLAN_NBF_BOOTSTRAP_MANIFEST_PATH="$manifest_path"
+    export MEGAPLAN_NBF_SUPERVISOR_PROCESS_START_IDENTITY="$supervisor_start"
+    export MEGAPLAN_NBF_BOOT_IDENTITY="$boot_identity"
+    export MEGAPLAN_NBF_CONTAINER_IDENTITY="$container_identity"
+    export MEGAPLAN_NBF_TMUX_SOCKET="$tmux_socket"
+    export MEGAPLAN_NBF_TMUX_SERVER_PID="$tmux_server_pid"
+    export MEGAPLAN_NBF_TMUX_SERVER_START="$tmux_server_start"
+    export MEGAPLAN_NBF_AUTHORITY_PATH="$marker_path"
+    export MEGAPLAN_NBF_LEDGER_ROOT="$workspace"
+    export MEGAPLAN_NBF_CONTEXT_BOUND=1
+  }
+  export -f arnold_supervisor_bind_signal_context
+  arnold_supervisor_bind_signal_context_for_session() {
+    local session="${1:-}" marker_dir="${2:-${MEGAPLAN_NBF_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}}" target_kind="${3:-non_worker}"
+    [[ "$session" =~ ^[A-Za-z0-9_.-]+$ && "$marker_dir" = /* ]] || return 78
+    local marker_path="$marker_dir/$session.json"
+    [[ -f "$marker_path" && ! -L "$marker_path" ]] || return 78
+    arnold_supervisor_bind_signal_context "$marker_path" "$target_kind" || return 78
+  }
+  export -f arnold_supervisor_bind_signal_context_for_session
+  arnold_supervisor_bind_signal_context_for_pid() {
+    local victim_pid="${1:-}" marker_dir="${2:-/workspace/.megaplan/cloud-sessions}" target_kind="${3:-non_worker}"
+    local root_pid="${4:-$victim_pid}" expected_start="${5:-}" marker_path
+    [[ "$victim_pid" =~ ^[0-9]+$ && "$root_pid" =~ ^[0-9]+$ && "$marker_dir" = /* ]] || return 78
+    if [[ -z "$expected_start" ]]; then
+      expected_start="$(arnold_supervisor_process_start "$victim_pid" 2>/dev/null || true)"
+    fi
+    [[ -n "$expected_start" ]] || return 78
+    # This is deliberately before marker admission and immediately before the
+    # signal door: a child is admissible only while its pinned incarnation is
+    # still descended from the marker's root. Never inherit the root PID as
+    # the physical target.
+    arnold_supervisor_validate_descendant "$root_pid" "$victim_pid" "$expected_start" || return 78
+    marker_path="$(arnold_supervisor_python - "$marker_dir" "$victim_pid" "$root_pid" <<'PY'
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+pid = int(sys.argv[2])
+matches = []
+for path in sorted(root.glob("*.json")):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if not isinstance(value, dict) or not isinstance(value.get("session"), str):
+        continue
+    observed = {value.get(key) for key in ("victim_pid", "pid", "supervisor_pid", "worker_pid", "root_pid")}
+    root_candidates = {value.get(key) for key in ("root_pid", "supervisor_pid", "pid", "victim_pid", "worker_pid")}
+    if pid in observed or int(sys.argv[3]) in root_candidates:
+        matches.append(path)
+if len(matches) != 1:
+    raise SystemExit(78)
+print(matches[0])
+PY
+    )" || return 78
+    arnold_supervisor_bind_signal_context "$marker_path" "$target_kind" || return 78
+    export MEGAPLAN_NBF_TARGET_PID="$victim_pid"
+    export MEGAPLAN_NBF_TARGET_PROCESS_START="$expected_start"
+    # Revalidate after reading the marker as well: marker lookup must not open
+    # a PID-reuse or detached-child window between admission and delivery.
+    arnold_supervisor_validate_descendant "$root_pid" "$victim_pid" "$expected_start" || return 78
+  }
+  export -f arnold_supervisor_bind_signal_context_for_pid
+  arnold_supervisor_tmux_session_socket() {
+    local session="${1:-}" socket marker_path
+    [[ -n "$session" ]] || return 78
+    marker_path="${MEGAPLAN_NBF_MARKER_DIR:-${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}}/$session.json"
+    socket="$(arnold_supervisor_python - "$marker_path" <<'PY'
+import json
+import pathlib
+import sys
+try:
+    marker = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    marker = {}
+if isinstance(marker, dict):
+    value = marker.get("tmux_socket", marker.get("socket_path", ""))
+    if isinstance(value, str) and value:
+        print(value)
+PY
+    )"
+    if [[ -z "$socket" ]]; then
+      socket="${MEGAPLAN_NBF_TMUX_SOCKET:-}"
+    fi
+    [[ "$socket" = /* && -S "$socket" ]] || return 78
+    printf '%s\n' "$socket"
+  }
+  export -f arnold_supervisor_tmux_session_socket
+  arnold_supervisor_tmux_session_exists() {
+    local session="${1:-}" socket marker_path expected current_pid current_start expected_pid expected_start
+    socket="$(arnold_supervisor_tmux_session_socket "$session")" || return 1
+    marker_path="${MEGAPLAN_NBF_MARKER_DIR:-${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}}/$session.json"
+    expected="$(arnold_supervisor_python - "$marker_path" <<'PY'
+import json
+import pathlib
+import sys
+try:
+    marker = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    pid = marker.get("tmux_server_pid")
+    start = marker.get("tmux_server_process_start_identity", marker.get("tmux_server_start"))
+    if isinstance(pid, str) and pid.isdigit():
+        pid = int(pid)
+    if not isinstance(pid, int) or pid <= 0 or not isinstance(start, str) or not start:
+        raise ValueError
+    print(f"{pid}\t{start}")
+except Exception:
+    raise SystemExit(78)
+PY
+    )" || return 1
+    IFS=$'\t' read -r expected_pid expected_start <<< "$expected"
+    tmux -S "$socket" has-session -t "=$session" >/dev/null 2>&1 || return 1
+    current_pid="$(tmux -S "$socket" display-message -p -t "=$session" '#{pid}' 2>/dev/null)" || return 1
+    current_start="$(arnold_supervisor_process_start "$current_pid")" || return 1
+    [[ "$current_pid" == "$expected_pid" && "$current_start" == "$expected_start" ]]
+  }
+  export -f arnold_supervisor_tmux_session_exists
+  arnold_supervisor_tmux_owned_pane() {
+    local session="${1:-}" marker_path="${2:-${MEGAPLAN_NBF_MARKER_PATH:-}}" socket="${3:-}" expected
+    [[ -n "$session" && -f "$marker_path" && "$socket" = /* ]] || return 78
+    expected="$(arnold_supervisor_python - "$marker_path" <<'PY'
+import json
+import pathlib
+import sys
+marker = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(marker, dict):
+    raise SystemExit(78)
+pid = marker.get("pid", marker.get("pane_pid", marker.get("victim_pid")))
+start = marker.get("process_start_identity", marker.get("pane_process_start_identity", marker.get("victim_process_start_identity")))
+pane_id = marker.get("pane_id", marker.get("tmux_pane_id", ""))
+if not isinstance(pid, int) or pid <= 0 or not isinstance(start, str) or not start:
+    raise SystemExit(78)
+if pane_id and not isinstance(pane_id, str):
+    raise SystemExit(78)
+print("\t".join((str(pane_id), str(pid), start)))
+PY
+    )" || return 78
+    local expected_id expected_pid expected_start rows pane_id pane_pid pane_command pane_start matches=0 match=""
+    IFS=$'\t' read -r expected_id expected_pid expected_start <<< "$expected"
+    rows="$(tmux -S "$socket" list-panes -t "=$session" -F '#{pane_id}	#{pane_pid}	#{pane_current_command}' 2>/dev/null)" || return 78
+    while IFS=$'\t' read -r pane_id pane_pid pane_command; do
+      [[ "$pane_pid" =~ ^[0-9]+$ ]] || return 78
+      pane_start="$(arnold_supervisor_process_start "$pane_pid")" || return 78
+      if [[ "$pane_pid" == "$expected_pid" && "$pane_start" == "$expected_start" \
+        && ( -z "$expected_id" || "$pane_id" == "$expected_id" ) ]]; then
+        matches=$((matches + 1))
+        match="$pane_id|$pane_pid|$pane_start|$(printf '%s' "$pane_command" | arnold_supervisor_sha256_text)"
+      fi
+    done <<< "$rows"
+    [[ "$matches" -eq 1 ]] || return 78
+    printf '%s\n' "$match"
+  }
+  export -f arnold_supervisor_tmux_owned_pane
+  arnold_supervisor_validate_descendant() {
+    local root_pid="${1:-}" victim_pid="${2:-}" expected_start="${3:-}"
+    [[ "$root_pid" =~ ^[0-9]+$ && "$victim_pid" =~ ^[0-9]+$ && -n "$expected_start" ]] || return 78
+    arnold_supervisor_python - "$root_pid" "$victim_pid" "$expected_start" <<'PY'
+import subprocess
+import sys
+from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+root, victim, expected = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+if read_process_start_identity(victim) != expected:
+    raise SystemExit(78)
+rows = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=False)
+parents = {}
+for line in rows.stdout.splitlines():
+    fields = line.split()
+    if len(fields) == 2 and all(field.isdigit() for field in fields):
+        parents[int(fields[0])] = int(fields[1])
+current = victim
+seen = set()
+while current not in seen and current in parents:
+    if current == root:
+        raise SystemExit(0)
+    seen.add(current)
+    current = parents[current]
+raise SystemExit(0 if victim == root else 78)
+PY
+  }
+  export -f arnold_supervisor_validate_descendant
+  arnold_supervisor_signal_bound_pid() {
+    # The caller supplies only the target door and physical identity. Context
+    # comes from the marker/manifest bound by the immediately preceding
+    # arnold_supervisor_bind_signal_context call; wrappers never reconstruct
+    # authority from ambient NBF variables.
+    local site_id="${1:-}" victim_pid="${2:-}" signal_name="${3:-}"
+    local ladder_stage="${4:-}" reason="${5:-shell-supervision}"
+    [[ "${MEGAPLAN_NBF_CONTEXT_BOUND:-0}" == "1" ]] || return 78
+    [[ "${MEGAPLAN_NBF_TARGET_PID:-}" == "$victim_pid" && -n "${MEGAPLAN_NBF_TARGET_PROCESS_START:-}" ]] || return 78
+    arnold_supervisor_signal_non_worker_pid \
+      "$site_id" "$2" "$victim_pid" "$signal_name" "$ladder_stage" "$reason" \
+      "${MEGAPLAN_NBF_LEDGER_ROOT:-}"
+  }
+  export -f arnold_supervisor_signal_bound_pid
+  arnold_supervisor_sha256_text() {
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum | awk '{print $1}'
+    else
+      shasum -a 256 | awk '{print $1}'
+    fi
+  }
+  arnold_supervisor_process_start() {
+    local pid="${1:-}" value
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 78
+    value="$(arnold_supervisor_python - "$pid" <<'PY'
+import sys
+from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+value = read_process_start_identity(int(sys.argv[1]))
+if value:
+    print(value)
+PY
+    )" || return 78
+    [[ -n "$value" ]] || return 78
+    printf '%s\n' "$value"
+  }
+  arnold_supervisor_tmux_session_snapshot() {
+    local session="${1:-}" socket socket_fingerprint server_pid server_start
+    local session_id session_name pane_rows pane_records pane_digest pane_records_framed
+    local pane_id pane_pid pane_command pane_start command_digest
+    [[ -n "$session" ]] || return 78
+    socket="$(arnold_supervisor_tmux_session_socket "$session")" || return 78
+    socket_fingerprint="$(stat -c '%d:%i' "$socket" 2>/dev/null || stat -f '%d:%i' "$socket" 2>/dev/null)" || return 78
+    server_pid="$(tmux -S "$socket" display-message -p -t "=$session" '#{pid}' 2>/dev/null)" || return 78
+    server_start="$(arnold_supervisor_process_start "$server_pid")" || return 78
+    [[ -z "${MEGAPLAN_NBF_TMUX_SOCKET:-}" || "$socket" == "$MEGAPLAN_NBF_TMUX_SOCKET" ]] || return 78
+    [[ -z "${MEGAPLAN_NBF_TMUX_SERVER_PID:-}" || "$server_pid" == "$MEGAPLAN_NBF_TMUX_SERVER_PID" ]] || return 78
+    [[ -z "${MEGAPLAN_NBF_TMUX_SERVER_START:-}" || "$server_start" == "$MEGAPLAN_NBF_TMUX_SERVER_START" ]] || return 78
+    session_id="$(tmux -S "$socket" display-message -p -t "=$session" '#{session_id}' 2>/dev/null)" || return 78
+    session_name="$(tmux -S "$socket" display-message -p -t "=$session" '#{session_name}' 2>/dev/null)" || return 78
+    [[ "$session_name" == "$session" ]] || return 78
+    pane_rows="$(tmux -S "$socket" list-panes -t "=$session" -F '#{pane_id}	#{pane_pid}	#{pane_current_command}' 2>/dev/null)" || return 78
+    [[ -n "$socket" && -n "$session_id" && -n "$pane_rows" ]] || return 78
+    pane_records=""
+    while IFS=$'	' read -r pane_id pane_pid pane_command; do
+      [[ "$pane_id" =~ ^%[0-9]+$ && "$pane_pid" =~ ^[0-9]+$ ]] || return 78
+      pane_start="$(arnold_supervisor_process_start "$pane_pid")" || return 78
+      command_digest="$(printf '%s' "$pane_command" | arnold_supervisor_sha256_text)" || return 78
+      pane_records+="$pane_id|$pane_pid|$pane_start|$command_digest"$'\n'
+    done <<< "$pane_rows"
+    pane_digest="$(printf '%s' "$pane_records" | arnold_supervisor_sha256_text)" || return 78
+    pane_records_framed="${pane_records//$'\n'/,}"
+    printf '%s	%s	%s	%s	%s	%s	%s	%s\n' \
+      "$socket" "$socket_fingerprint" "$server_pid" "$server_start" \
+      "$session_id" "$session_name" "$pane_records_framed" "$pane_digest"
+  }
+  export -f arnold_supervisor_tmux_session_snapshot
+  arnold_supervisor_tmux_session_revalidate() {
+    local session="${1:-}" expected_socket="${2:-}" expected_socket_fingerprint="${3:-}"
+    local expected_server_pid="${4:-}" expected_server_start="${5:-}"
+    local expected_session_id="${6:-}" expected_session_name="${7:-}"
+    local expected_pane_digest="${8:-}" current_socket current_fingerprint
+    local current_server_pid current_server_start current_session current_name current_records current_digest
+    [[ -n "$session" && -n "$expected_socket" && -n "$expected_pane_digest" ]] || return 78
+    current_socket="$expected_socket"
+    current_session="$(tmux -S "$expected_socket" display-message -p -t "=$session" '#{session_id}' 2>/dev/null)" || return 78
+    current_name="$(tmux -S "$expected_socket" display-message -p -t "=$session" '#{session_name}' 2>/dev/null)" || return 78
+    [[ "$current_socket" == "$expected_socket" && "$current_session" == "$expected_session_id" && "$current_name" == "$expected_session_name" && "$current_name" == "$session" ]] || return 78
+    current_fingerprint="$(stat -c '%d:%i' "$current_socket" 2>/dev/null || stat -f '%d:%i' "$current_socket" 2>/dev/null)" || return 78
+    [[ "$current_fingerprint" == "$expected_socket_fingerprint" ]] || return 78
+    current_server_pid="$(tmux -S "$expected_socket" display-message -p -t "=$session" '#{pid}' 2>/dev/null)" || return 78
+    current_server_start="$(arnold_supervisor_process_start "$current_server_pid")" || return 78
+    [[ "$current_server_pid" == "$expected_server_pid" && "$current_server_start" == "$expected_server_start" ]] || return 78
+    current_records="$(tmux -S "$expected_socket" list-panes -t "=$session" -F '#{pane_id}	#{pane_pid}	#{pane_current_command}' 2>/dev/null)" || return 78
+    [[ -n "$current_records" ]] || return 78
+    local records="" pane_id pane_pid pane_command pane_start command_digest
+    while IFS=$'	' read -r pane_id pane_pid pane_command; do
+      [[ "$pane_id" =~ ^%[0-9]+$ && "$pane_pid" =~ ^[0-9]+$ ]] || return 78
+      pane_start="$(arnold_supervisor_process_start "$pane_pid")" || return 78
+      command_digest="$(printf '%s' "$pane_command" | arnold_supervisor_sha256_text)" || return 78
+      records+="$pane_id|$pane_pid|$pane_start|$command_digest"$'\n'
+    done <<< "$current_records"
+    current_digest="$(printf '%s' "$records" | arnold_supervisor_sha256_text)" || return 78
+    [[ "$current_digest" == "$expected_pane_digest" ]] || return 78
+    return 0
+  }
+  export -f arnold_supervisor_tmux_session_revalidate
+  arnold_supervisor_signal_non_worker_pid() {
+    local site_id="${1:-}" lifecycle_identity="${2:-}" victim_pid="${3:-}"
+    local signal_name="${4:-}" ladder_stage="${5:-}" reason="${6:-shell-supervision}"
+    local ledger_root="${7:-}"
+    local killer_identity="${MEGAPLAN_NBF_KILLER_IDENTITY:-${HOSTNAME:-shell-supervisor}}"
+    local progress_identity="${8:-}"
+    local supervisor_identity="${9:-}"
+    local container_identity="${MEGAPLAN_NBF_CONTAINER_IDENTITY:-}"
+    local start payload
+    [[ "${MEGAPLAN_NBF_CONTEXT_BOUND:-0}" == "1" ]] || return 78
+    [[ -f "${MEGAPLAN_NBF_AUTHORITY_PATH:-}" && -n "${MEGAPLAN_NBF_SESSION:-}" && -n "${MEGAPLAN_NBF_MARKER_DIR:-}" ]] || return 78
+    [[ -n "$site_id" && -n "$lifecycle_identity" && "$victim_pid" =~ ^[0-9]+$ ]] || return 78
+    [[ -n "$signal_name" && -n "$ledger_root" && -d "$ledger_root" ]] || return 78
+    start="$(arnold_supervisor_python - "$victim_pid" <<'PY'
+import sys
+from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+value = read_process_start_identity(int(sys.argv[1]))
+if value:
+    print(value)
+PY
+)" || return 78
+    [[ -n "$start" ]] || return 78
+    local context_json
+    context_json="$(arnold_supervisor_python - "$site_id" "$MEGAPLAN_NBF_SESSION" "$MEGAPLAN_NBF_MARKER_PATH" "$victim_pid" "$start" "$ledger_root" "$MEGAPLAN_NBF_MARKER_DIR" "${MEGAPLAN_NBF_TARGET_KIND:-non_worker}" "$MEGAPLAN_NBF_BOOTSTRAP_MANIFEST_PATH" <<'PY'
+import json
+import subprocess
+import sys
+site, session, marker, pid, start, ledger, marker_dir, target_kind, manifest = sys.argv[1:]
+request = {"site_id": site, "session": session, "marker_path": marker,
+           "target_kind": target_kind, "marker_dir": marker_dir,
+           "bootstrap_manifest_path": manifest, "victim_pid": int(pid),
+           "victim_process_start_identity": start}
+result = subprocess.run(
+    [sys.executable, "-m", "arnold_pipelines.megaplan.incident.disposition",
+     "resolve-signal-context", "--ledger-root", ledger, "--marker-dir", marker_dir,
+     "--json-stdin"], input=json.dumps(request), text=True, capture_output=True,
+    check=False)
+if result.returncode != 0:
+    raise SystemExit(78)
+print(result.stdout.strip())
+PY
+    )" || return 78
+    payload="$(arnold_supervisor_python - "$context_json" "$killer_identity" "$signal_name" "$ladder_stage" "$reason" "$container_identity" <<'PY'
+import json
+import sys
+context, killer, signal_name, stage, reason, container = sys.argv[1:]
+payload = json.loads(context)
+payload.update({
+    "killer_identity": killer, "signal": signal_name,
+    "scan_interval_s": float(__import__("os").environ.get("MEGAPLAN_NBF_SCAN_INTERVAL_SECS", "1")),
+    "require_confirmation": True,
+    "container_identity": container or None,
+    "marker_dir": payload.get("marker_path", "").rsplit("/", 1)[0],
+    "ladder_stage": stage or None,
+    "evidence": {"reason": reason, "route": "shell-canonical-cli"},
+})
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+)" || return 78
+    printf '%s' "$payload" | arnold_supervisor_python -m arnold_pipelines.megaplan.incident.disposition \
+      signal-non-worker --ledger-root "$ledger_root" --marker-dir "$MEGAPLAN_NBF_MARKER_DIR" --json-stdin
+  }
+  export -f arnold_supervisor_signal_non_worker_pid
   # Existing wrapper bodies deliberately keep the familiar python3 spelling;
   # this function pins every call to the already-validated absolute path and
   # forces safe-path semantics even for stdin / -c launches.

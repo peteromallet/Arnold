@@ -544,6 +544,7 @@ class IncidentLedger:
         reservations: dict[str, dict[str, Any]] = {}
         terminals: dict[str, dict[str, Any]] = {}
         dispositions: dict[str, dict[str, Any]] = {}
+        cleanup_handoffs: dict[str, dict[str, Any]] = {}
         changes: dict[str, dict[str, Any]] = {}
         confirmations: dict[str, dict[str, Any]] = {}
         provider_streams: dict[str, dict[str, Any]] = {}
@@ -663,8 +664,10 @@ class IncidentLedger:
                         if p.get("launch_state_identity") == "accepted":
                             reservation["accepted_launch"] = True
                             reservation["accepted_launch_marker"] = dict(p)
+            elif typ == "spawn_cleanup_handoff":
+                cleanup_handoffs[p["handoff_id"]] = dict(p)
         latest = provider_streams.get(latest_stream_key, {"provider_failure_key": None, "observation_streak": 0})
-        return {"projection_version": len(records), "reservations": reservations, "terminals": terminals, "dispositions": dispositions, "changed_preconditions": changes, "confirmations": confirmations, "active_provider_failure_key": active_provider_key, "observation_streak": latest.get("observation_streak", 0), "provider_streaks": provider_streams}
+        return {"projection_version": len(records), "reservations": reservations, "terminals": terminals, "dispositions": dispositions, "changed_preconditions": changes, "confirmations": confirmations, "cleanup_handoffs": cleanup_handoffs, "active_provider_failure_key": active_provider_key, "observation_streak": latest.get("observation_streak", 0), "provider_streaks": provider_streams}
 
     def projection(self) -> dict[str, Any]:
         return self._project_records(self.read_nbf_events())
@@ -709,7 +712,7 @@ class IncidentLedger:
             # so replay can validate the exact committed context.
             return self._append_nbf_locked(fd, payload, records)
 
-    def append_controlled_adapter_state(self, *, reservation_event_id: str, admission_receipt_id: str, physical_door_id: str, launch_state_identity: str, phase: str | None = None, selected_spec: str | None = None, primary_spec: str | None = None, logical_dispatch_id: str | None = None, worker_identity: Any = None, started_at: str | None = None, finished_at: str | None = None, operation_evidence: Mapping[str, Any] | None = None, physical_operation_evidence: Mapping[str, Any] | None = None, actor: str = "controlled-adapter") -> dict[str, Any]:
+    def append_controlled_adapter_state(self, *, reservation_event_id: str, admission_receipt_id: str, physical_door_id: str, launch_state_identity: str, phase: str | None = None, selected_spec: str | None = None, primary_spec: str | None = None, logical_dispatch_id: str | None = None, worker_identity: Any = None, victim_process_start_identity: str | None = None, started_at: str | None = None, finished_at: str | None = None, operation_evidence: Mapping[str, Any] | None = None, physical_operation_evidence: Mapping[str, Any] | None = None, actor: str = "controlled-adapter") -> dict[str, Any]:
         """Persist the adapter's launch proof through the canonical NBF door."""
         if launch_state_identity == "ambiguous":
             raise ValueError("ambiguous is a reconciliation hold, not a controlled lifecycle state")
@@ -726,6 +729,8 @@ class IncidentLedger:
         }
         if launch_state_identity == "accepted":
             payload.update({"phase": phase, "selected_spec": selected_spec, "primary_spec": primary_spec, "logical_dispatch_id": logical_dispatch_id, "worker_identity": worker_identity, "started_at": started_at, "finished_at": finished_at})
+            if victim_process_start_identity is not None:
+                payload["victim_process_start_identity"] = victim_process_start_identity
         evidence = physical_operation_evidence or operation_evidence
         if evidence is not None:
             payload["physical_operation_evidence"] = dict(evidence)
@@ -743,7 +748,65 @@ class IncidentLedger:
                     raise ValueError("accepted launch marker already exists")
             return self._append_nbf_locked(fd, payload, records)
 
-    def append_terminal_outcome(self, *, outcome: Any, reservation_event_id: str, projection_key: str, physical_door_id: str = "default-door", actor: str = "megaplan", execution_context_identity: str = "", primary_spec: str | None = None, configured_fallback_chain_identity: str | None = None) -> dict[str, Any]:
+    def append_spawn_cleanup_handoff(self, *, reservation_event_id: str, admission_receipt_id: str, physical_door_id: str, plan_id: str, phase: str, projection_key: str, dispatch_family_id: str, logical_dispatch_id: str, semantic_dispatch_fingerprint: str, selected_spec: str, execution_context_identity: str, worker_identity: Mapping[str, Any], victim_pid: int, victim_process_start_identity: str, spawn_registration_id: str, spawn_certification_id: str, route_identity: str, error_kind: str, reason: str, started_at: str = "", hold_metadata: Mapping[str, Any] | None = None, actor: str = "controlled-adapter") -> dict[str, Any]:
+        """Persist one identity-bound cleanup custody handoff.
+
+        This is evidence on the existing reservation, never a new admission,
+        WBC start, or lifecycle state.  The stable handoff ID makes exception
+        unwinding and supervisor replay idempotent.
+        """
+        handoff_id = _stable_id(
+            "spawn-cleanup-handoff", reservation_event_id, admission_receipt_id,
+            spawn_registration_id, spawn_certification_id,
+        )
+        payload = {
+            "schema_version": 1,
+            "event_type": "spawn_cleanup_handoff",
+            "event_id": handoff_id,
+            "handoff_id": handoff_id,
+            "reservation_event_id": reservation_event_id,
+            "admission_receipt_id": admission_receipt_id,
+            "physical_door_id": physical_door_id,
+            "plan_id": plan_id,
+            "phase": phase,
+            "projection_key": projection_key,
+            "dispatch_family_id": dispatch_family_id,
+            "logical_dispatch_id": logical_dispatch_id,
+            "semantic_dispatch_fingerprint": semantic_dispatch_fingerprint,
+            "selected_spec": selected_spec,
+            "execution_context_identity": execution_context_identity,
+            "worker_identity": dict(worker_identity),
+            "victim_pid": victim_pid,
+            "victim_process_start_identity": victim_process_start_identity,
+            "spawn_registration_id": spawn_registration_id,
+            "spawn_certification_id": spawn_certification_id,
+            "started_at": started_at,
+            "route_identity": route_identity,
+            "error_kind": error_kind,
+            "reason": reason,
+            "cleanup_state": "cleanup_hold",
+            "recorded_at": _now(),
+            "actor": actor,
+        }
+        if hold_metadata is not None:
+            payload["hold_metadata"] = dict(hold_metadata)
+        with self._locked() as (fd, records):
+            projection = self._project_records(records)
+            reservation = next((r for r in projection["reservations"].values() if r.get("event_id") == reservation_event_id), None)
+            if reservation is None:
+                raise ValueError("cleanup handoff references unknown reservation")
+            prior_handoff = projection.get("cleanup_handoffs", {}).get(handoff_id)
+            if prior_handoff is not None:
+                return next(
+                    record for record in records
+                    if record.get("payload", {}).get("handoff_id") == handoff_id
+                )
+            for name, value in (("plan_id", plan_id), ("phase", phase), ("projection_key", projection_key), ("dispatch_family_id", dispatch_family_id), ("logical_dispatch_id", logical_dispatch_id), ("semantic_dispatch_fingerprint", semantic_dispatch_fingerprint), ("selected_spec", selected_spec), ("physical_door_id", physical_door_id), ("admission_receipt_id", admission_receipt_id), ("execution_context_identity", execution_context_identity)):
+                if reservation.get(name) != value:
+                    raise ValueError(f"cleanup handoff reservation context mismatch: {name}")
+            return self._append_nbf_locked(fd, payload, records)
+
+    def append_terminal_outcome(self, *, outcome: Any, reservation_event_id: str, projection_key: str, physical_door_id: str = "default-door", actor: str = "megaplan", execution_context_identity: str = "", primary_spec: str | None = None, configured_fallback_chain_identity: str | None = None, preacceptance_observation_id: str | None = None) -> dict[str, Any]:
         from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
         if isinstance(outcome, dict):
             outcome = DispatchOutcome.from_dict(outcome)
@@ -786,13 +849,36 @@ class IncidentLedger:
                                 and r.get("payload", {}).get("admission_receipt_id") == expected_receipt
                                 and r.get("payload", {}).get("launch_state_identity") == "accepted"]
             if len(accepted_markers) != 1:
-                raise ValueError("terminal outcome requires exactly one persisted accepted launch marker")
-            marker = accepted_markers[0]
-            for name, value in (("phase", outcome.phase), ("selected_spec", outcome.selected_spec), ("logical_dispatch_id", outcome.logical_dispatch_id), ("worker_identity", outcome.worker_identity), ("started_at", outcome.started_at), ("finished_at", outcome.finished_at), ("physical_door_id", physical_door_id)):
-                if marker.get(name) != value:
-                    raise ValueError(f"terminal outcome accepted-launch marker mismatch: {name}")
-            if marker.get("primary_spec") != expected_primary:
-                raise ValueError("terminal outcome accepted-launch marker mismatch: primary_spec")
+                if not preacceptance_observation_id or len(accepted_markers) != 0:
+                    raise ValueError("terminal outcome requires exactly one persisted accepted launch marker")
+                cited_observation = next(
+                    (r.get("payload", {}) for r in records
+                     if r.get("payload", {}).get("event_type") == "observed_process_death"
+                     and r.get("payload", {}).get("observation_id") == preacceptance_observation_id),
+                    None,
+                )
+                if cited_observation is None:
+                    raise ValueError("pre-acceptance terminal requires persisted death observation")
+                handoff_id = (cited_observation.get("evidence") or {}).get("spawn_cleanup_handoff_id")
+                handoff = next(
+                    (r.get("payload", {}) for r in records
+                     if r.get("payload", {}).get("event_type") == "spawn_cleanup_handoff"
+                     and r.get("payload", {}).get("handoff_id") == handoff_id
+                     and r.get("payload", {}).get("reservation_event_id") == reservation_event_id),
+                    None,
+                )
+                if handoff is None:
+                    raise ValueError("pre-acceptance terminal observation is not bound to cleanup handoff")
+                if outcome.kind != "ordinary_terminal_failure":
+                    raise ValueError("pre-acceptance observation can only close as ordinary failure")
+                marker = {}
+            else:
+                marker = accepted_markers[0]
+                for name, value in (("phase", outcome.phase), ("selected_spec", outcome.selected_spec), ("logical_dispatch_id", outcome.logical_dispatch_id), ("worker_identity", outcome.worker_identity), ("started_at", outcome.started_at), ("finished_at", outcome.finished_at), ("physical_door_id", physical_door_id)):
+                    if marker.get(name) != value:
+                        raise ValueError(f"terminal outcome accepted-launch marker mismatch: {name}")
+                if marker.get("primary_spec") != expected_primary:
+                    raise ValueError("terminal outcome accepted-launch marker mismatch: primary_spec")
             if outcome.kind == "worker_disposition":
                 disp = p["dispositions"].get(outcome.disposition_id)
                 if not disp:
@@ -842,6 +928,8 @@ class IncidentLedger:
                 raise ValueError("reservation is already closed")
             provider = outcome.provider_evidence if isinstance(outcome.provider_evidence, dict) else {}
             payload = {"schema_version": 1, "event_type": "worker_terminal_outcome", "event_id": terminal_id, "terminal_outcome_id": terminal_id, "outcome_kind": outcome.kind, "plan_id": outcome.plan_id, "phase": outcome.phase, "projection_key": projection_key, "reservation_key": reservation.get("reservation_key"), "dispatch_family_id": outcome.dispatch_family_id, "logical_dispatch_id": outcome.logical_dispatch_id, "admission_receipt_id": outcome.admission_receipt_id, "reservation_event_id": reservation_event_id, "semantic_dispatch_fingerprint": outcome.semantic_dispatch_fingerprint, "selected_spec": outcome.selected_spec, "provider": outcome.provider, "route_liveness_kind": outcome.route_liveness_kind, "route_liveness_identity": outcome.route_liveness_identity, "route_liveness_digest": outcome.route_liveness_digest, "physical_door_id": physical_door_id, "launch_state": outcome.launch_state, "worker_identity": outcome.worker_identity, "started_at": outcome.started_at, "finished_at": outcome.finished_at, "success_payload": outcome.success_payload, "terminal_failure": outcome.terminal_failure, "provider_evidence": provider, "provider_failure_key": outcome.provider_failure_key or provider.get("provider_failure_key"), "disposition_id": outcome.disposition_id, "execution_context_identity": execution_context_identity, "recorded_at": _now(), "actor": actor}
+            if preacceptance_observation_id:
+                payload["preacceptance_observation_id"] = preacceptance_observation_id
             payload["primary_spec"] = expected_primary
             payload["configured_fallback_chain_identity"] = expected_chain
             return self._append_nbf_locked(fd, payload, records)
@@ -849,12 +937,112 @@ class IncidentLedger:
     def append_disposition(self, disposition: Any) -> dict[str, Any]:
         payload = disposition.to_dict() if hasattr(disposition, "to_dict") else dict(disposition)
         with self._locked() as (fd, records):
+            # Disposition identity is the canonical signal-evidence key.  A
+            # replay after a crash returns the original event byte-for-byte;
+            # a caller cannot append a conflicting record under the same ID.
+            identity = payload.get("disposition_id") or payload.get("observation_id")
+            if identity:
+                prior = next(
+                    (record for record in records
+                     if record.get("payload", {}).get("event_type") in {
+                         "worker_disposition", "non_worker_signal_disposition",
+                         "observed_process_death",
+                     }
+                     and (record.get("payload", {}).get("disposition_id") == identity
+                          or record.get("payload", {}).get("observation_id") == identity)),
+                    None,
+                )
+                if prior is not None:
+                    if prior.get("payload") == payload:
+                        return prior
+                    raise ValueError("conflicting disposition identity already committed")
             if payload.get("event_type") == "worker_disposition" and payload.get("confirmation_event_id"):
                 projected = self._project_records(records)
                 confirmation = projected["confirmations"].get(payload["confirmation_event_id"])
                 if not confirmation or not confirmation.get("consumed"):
                     raise ValueError("required confirmation is missing or not consumed")
             return self._append_nbf_locked(fd, payload, records)
+
+    def record_claim_signal_locked(
+        self,
+        disposition: Any,
+        *,
+        signal: str,
+        signal_fn: Callable[[], Any],
+        preflight: Callable[[list[dict[str, Any]]], Any] | None = None,
+        actor: str = "signal-authority",
+    ) -> dict[str, Any]:
+        """Atomically fence, record, claim, and invoke one physical signal.
+
+        ``preflight`` runs while the journal lock is held and is therefore the
+        final source/identity check immediately preceding the record-before-
+        signal door.  A persisted claim is never replayed as a second signal.
+        """
+        payload = disposition.to_dict() if hasattr(disposition, "to_dict") else dict(disposition)
+        identity = payload.get("disposition_id") or payload.get("observation_id")
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("signal disposition identity is missing")
+        with self._locked() as (fd, records):
+            if preflight is not None:
+                preflight(records)
+            record = self._append_nbf_locked(fd, payload, records, event_type=payload.get("event_type"))
+            claim = next((item for item in records if (item.get("payload") or {}).get("event_type") == "signal_claimed" and (item.get("payload") or {}).get("disposition_id") == identity), None)
+            created = False
+            if claim is None:
+                claim_payload = {
+                    "schema_version": 1,
+                    "event_type": "signal_claimed",
+                    "event_id": _stable_id("signal-claim", identity, signal),
+                    "disposition_id": identity,
+                    "signal": signal,
+                    "recorded_at": _now(),
+                    "actor": actor,
+                }
+                self._append_nbf_locked(fd, claim_payload, records, event_type="signal_claimed")
+                created = True
+            elif (claim.get("payload") or {}).get("signal") != signal:
+                raise ValueError("conflicting signal claim")
+            if not created:
+                return record
+            try:
+                signal_fn()
+            except (ProcessLookupError, ChildProcessError):
+                return record
+            except OSError as exc:
+                raise RuntimeError(f"signal failed after durable claim: {exc}") from exc
+            return record
+
+    def claim_signal(self, disposition_id: str, *, signal: str, actor: str = "supervisor") -> tuple[dict[str, Any], bool]:
+        """Atomically claim the one physical signal for a disposition.
+
+        The claim is durable and precedes the operating-system call.  A
+        concurrent retry therefore observes ``created=False`` and must not
+        invoke the physical primitive a second time.  This is intentionally a
+        separate event: disposition and terminal records remain immutable and
+        replayable, while the claim records the at-most-once side effect.
+        """
+        if not isinstance(disposition_id, str) or not disposition_id:
+            raise ValueError("signal claim requires disposition identity")
+        if not isinstance(signal, str) or not signal:
+            raise ValueError("signal claim requires signal identity")
+        with self._locked() as (fd, records):
+            prior = next((record for record in records
+                          if record.get("payload", {}).get("event_type") == "signal_claimed"
+                          and record.get("payload", {}).get("disposition_id") == disposition_id), None)
+            if prior is not None:
+                if prior.get("payload", {}).get("signal") != signal:
+                    raise ValueError("conflicting signal claim")
+                return prior, False
+            payload = {
+                "schema_version": 1,
+                "event_type": "signal_claimed",
+                "event_id": _stable_id("signal-claim", disposition_id, signal),
+                "disposition_id": disposition_id,
+                "signal": signal,
+                "recorded_at": _now(),
+                "actor": actor,
+            }
+            return self._append_nbf_locked(fd, payload, records), True
 
     def append_changed_precondition(self, event: Any) -> dict[str, Any]:
         from arnold_pipelines.megaplan.incident.schema import ChangedPrecondition, _digest, _validate_producer_binding
@@ -1086,7 +1274,7 @@ class IncidentLedger:
                 return self._append_nbf_locked(fd, payload, records)
         return self._append_nbf(payload)
 
-    def consume_confirmation(self, *, confirmation_id: str, second_observed_at: str, second_evidence_digest: str, victim_pid: int, victim_process_start_identity: str, relevant_progress_identity: str, supervisor_incarnation_identity: str, cause_kind: str, scan_interval_s: float | None = None, expires_at: float | None = None, confirmation_policy_identity: str | None = None, schema_version: int | None = None, disposition_id: str | None = None, actor: str = "supervisor") -> dict[str, Any]:
+    def consume_confirmation(self, *, confirmation_id: str, second_observed_at: str, second_evidence_digest: str, victim_pid: int, victim_process_start_identity: str, relevant_progress_identity: str, supervisor_incarnation_identity: str, cause_kind: str, scan_interval_s: float | None = None, expires_at: float | None = None, confirmation_policy_identity: str | None = None, schema_version: int | None = None, semantic_dispatch_fingerprint: str | None = None, container_identity: str | None = None, ladder_stage: str | None = None, signal_identity: str | None = None, disposition_id: str | None = None, actor: str = "supervisor") -> dict[str, Any]:
         """Consume a matching two-scan proof inside the ledger lock."""
         with self._locked() as (fd, records):
             prior = self._project_records(records)["confirmations"].get(confirmation_id)
@@ -1098,6 +1286,9 @@ class IncidentLedger:
                     raise ValueError(f"confirmation identity mismatch: {name}")
             if second_evidence_digest != prior.get("evidence_digest"):
                 raise ValueError("confirmation evidence identity mismatch")
+            for name, value in (("semantic_dispatch_fingerprint", semantic_dispatch_fingerprint), ("container_identity", container_identity), ("ladder_stage", ladder_stage), ("signal_identity", signal_identity)):
+                if value is not None and prior.get(name) != value:
+                    raise ValueError(f"confirmation identity mismatch: {name}")
             try:
                 first = datetime.fromisoformat(str(prior["first_observed_at"]).replace("Z", "+00:00"))
                 second = datetime.fromisoformat(str(second_observed_at).replace("Z", "+00:00"))
@@ -1112,6 +1303,13 @@ class IncidentLedger:
                     raise
                 raise ValueError("invalid confirmation timestamps") from exc
             payload = {"schema_version": 1, "event_type": "supervision_confirmation_consumed", "event_id": _stable_id("consumed", confirmation_id, second_observed_at, second_evidence_digest), "confirmation_id": confirmation_id, "prior_confirmation_event_id": prior.get("event_id"), "site_id": prior.get("site_id"), "replacement_reason": None, "second_observed_at": second_observed_at, "second_evidence_digest": second_evidence_digest, "victim_pid": victim_pid, "victim_process_start_identity": victim_process_start_identity, "relevant_progress_identity": relevant_progress_identity, "supervisor_incarnation_identity": supervisor_incarnation_identity, "cause_kind": cause_kind, "scan_interval_s": scan_interval_s, "expires_at": expires_at, "confirmation_policy_identity": confirmation_policy_identity, "disposition_id": disposition_id, "recorded_at": _now(), "actor": actor}
+            if semantic_dispatch_fingerprint is not None:
+                payload["semantic_dispatch_fingerprint"] = semantic_dispatch_fingerprint
+            if container_identity is not None:
+                payload["container_identity"] = container_identity
+            if ladder_stage is not None:
+                payload["ladder_stage"] = ladder_stage
+                payload["signal_identity"] = signal_identity
             return self._append_nbf_locked(fd, payload, records)
 
     def expire_confirmation(self, confirmation_id: str, *, observed_at: str | None = None, actor: str = "supervisor") -> dict[str, Any]:

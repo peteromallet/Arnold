@@ -31,7 +31,8 @@ import time
 import traceback
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
+
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _LAUNCHER = _SCRIPT_DIR / "launch_omp_agent.py"
@@ -47,6 +48,28 @@ def _eprint(*args, **kwargs) -> None:
     kwargs.setdefault("file", sys.stderr)
     print(*args, **kwargs)
     sys.stderr.flush()
+
+
+def _canonical_group_signal(pid: int, number: int) -> Any:
+    """Invoke the canonical group primitive without a PID-only signal door."""
+    from arnold_pipelines.megaplan.incident import disposition
+    return getattr(disposition, "signal_process_group")(pid, number)
+
+
+def _pid_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _process_start_identity(pid: int) -> str:
+    """Read the live canonical, unprefixed process incarnation token."""
+    from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+    return str(read_process_start_identity(pid) or "")
 
 
 def _check_codex_network_sandbox() -> None:
@@ -86,21 +109,119 @@ def _write_pidfile(output_dir: Path) -> Path:
     return pidfile
 
 
-def _kill_tree(pid: int, sig: int) -> None:
-    """Signal the process group led by *pid* (spawned with start_new_session)."""
+def _kill_tree(
+    pid: int,
+    sig: int,
+    *,
+    environment: Mapping[str, Any] | None = None,
+    ladder_step: str | None = None,
+) -> bool:
+    """Signal one admitted worker process group through ``signal_worker``.
+
+    Fan tasks are workers, even though their transport is a launcher process.
+    A missing/inconsistent context is deliberately a no-op: the old PID-only
+    compatibility fallback could kill a recycled, unrelated process.
+    """
+    import sys as _sys
+    _root = str(_SCRIPT_DIR.parents[4])
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    env = os.environ if environment is None else environment
+    context_raw = env.get("ARNOLD_WORKER_EXECUTION_CONTEXT")
+    identity_raw = env.get("ARNOLD_WORKER_IDENTITY")
+    ledger_root = env.get("ARNOLD_INCIDENT_LEDGER_ROOT")
+    if not (context_raw and ledger_root):
+        _eprint("[fan] refusing worker signal: incomplete execution context")
+        return False
     try:
-        os.killpg(pid, sig)
+        from arnold_pipelines.megaplan.incident.disposition import WorkerSignalContext, confirmation_id, resolve_worker_execution_context, signal_worker_ladder
+        from launch_omp_agent import _gather_confirmation
+        from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+        ledger = IncidentLedger(Path(ledger_root))
+        context_ref = resolve_worker_execution_context(env)
+        if identity_raw:
+            worker = json.loads(identity_raw) if isinstance(identity_raw, str) else dict(identity_raw)
+        else:
+            projected = ledger.projection()
+            reservation = next((v for v in projected.get("reservations", {}).values() if v.get("admission_receipt_id") == context_ref.admission_receipt_id), None)
+            marker = reservation.get("accepted_launch_marker") if reservation else None
+            worker = marker.get("worker_identity") if isinstance(marker, dict) else None
+            if not isinstance(worker, dict):
+                raise ValueError("accepted launch marker lacks worker identity")
+        process_start = str(env.get("ARNOLD_WORKER_PROCESS_START_IDENTITY") or "")
+        if not process_start:
+            projected = ledger.projection()
+            reservation = next((v for v in projected.get("reservations", {}).values() if v.get("admission_receipt_id") == context_ref.admission_receipt_id), None)
+            marker = reservation.get("accepted_launch_marker") if reservation else None
+            process_start = str(marker.get("victim_process_start_identity") or "") if isinstance(marker, dict) else ""
+        context = WorkerSignalContext.from_ref(
+            context_ref, worker_identity=worker,
+            victim_pid=pid,
+            victim_process_start_identity=process_start,
+        )
+        number = int(sig)
+        ids = env.get("ARNOLD_WORKER_CONFIRMATION_EVENT_IDS")
+        if isinstance(ids, str):
+            ids = json.loads(ids)
+        term_id = env.get("ARNOLD_WORKER_CONFIRMATION_EVENT_ID")
+        kill_id = None
+        if isinstance(ids, Mapping):
+            term_id = ids.get("term") or ids.get("SIGTERM") or term_id
+            kill_id = ids.get("kill") or ids.get("SIGKILL")
+        elif isinstance(ids, (tuple, list)):
+            term_id = ids[0] if ids else term_id
+            kill_id = ids[1] if len(ids) > 1 else None
+        step = ladder_step or ("kill" if number == signal.SIGKILL else "term")
+        if not _pid_live(pid):
+            from arnold_pipelines.megaplan.incident.disposition import _worker_observation, record_disposition
+            record_disposition(ledger, _worker_observation(context, reason="already-dead-before-signal"))
+            return False
+        chosen = kill_id if step == "kill" else term_id
+        # Do not echo the captured expected token: PID reuse must become a
+        # typed observation and a zero-signal outcome.
+        start_fn = _process_start_identity
+        chosen = _gather_confirmation(
+            ledger, context, cause_kind="timeout", signal_label="SIGKILL" if step == "kill" else "SIGTERM",
+            confirmation_id_value=chosen, liveness_fn=_pid_live,
+            process_start_identity_fn=start_fn, environment=env,
+        )
+        if not chosen:
+            return False
+        if step == "kill":
+            kill_id = chosen
+            if not term_id:
+                # TERM proof identity is deterministic across the two caller
+                # invocations (_run_one calls us once per ladder step).
+                term_id = confirmation_id(
+                    site_id="subagent-launcher:sigterm", subject_class="worker",
+                    victim_pid=pid, victim_process_start_identity=process_start,
+                    relevant_progress_identity=str(env.get("ARNOLD_WORKER_RELEVANT_PROGRESS_IDENTITY") or ""),
+                    supervisor_incarnation_identity=str(env.get("ARNOLD_SUPERVISOR_INCAR_IDENTITY") or ""),
+                    cause_kind="timeout",
+                    semantic_dispatch_fingerprint=context.semantic_dispatch_fingerprint,
+                    container_identity=env.get("ARNOLD_CONTAINER_IDENTITY"),
+                    ladder_stage="term", signal_identity="SIGTERM",
+                )
+        else:
+            term_id = chosen
+        result = signal_worker_ladder(
+            ledger, context, killer_kind="resident_supervisor", killer_identity=f"fan:{os.getpid()}",
+            cause_kind="timeout", term_confirmation_event_id=term_id,
+            kill_confirmation_event_id=kill_id,
+            term_signal_fn=lambda: _canonical_group_signal(pid, signal.SIGTERM),
+            kill_signal_fn=lambda: _canonical_group_signal(pid, signal.SIGKILL),
+            liveness_fn=_pid_live,
+            process_start_identity_fn=start_fn,
+            relevant_progress_identity=env.get("ARNOLD_WORKER_RELEVANT_PROGRESS_IDENTITY"),
+            supervisor_incarnation_identity=env.get("ARNOLD_SUPERVISOR_INCAR_IDENTITY"),
+            container_identity=env.get("ARNOLD_CONTAINER_IDENTITY"),
+        )
+        return result.state in {"killed", "already_dead"}
     except ProcessLookupError:
-        # Group gone — try the pid directly (stale or reused pid edge).
-        try:
-            os.kill(pid, sig)
-        except ProcessLookupError:
-            pass
-    except OSError:
-        try:
-            os.kill(pid, sig)
-        except ProcessLookupError:
-            pass
+        return False
+    except Exception as exc:
+        _eprint(f"[fan] refusing worker signal: {exc}")
+        return False
 
 
 @dataclass
@@ -202,6 +323,11 @@ def _run_one(
     max_tokens: int,
     task_timeout: float,
     project_dir: Optional[str],
+    execution_context: Any = None,
+    worker_identity: Any = None,
+    process_start_identity: Optional[str] = None,
+    confirmation_event_id: Optional[str] = None,
+    confirmation_event_ids: Any = None,
 ) -> TaskResult:
     """Worker — one launcher subprocess (omp run), one brief in/out."""
     stem = brief_path.stem
@@ -262,6 +388,23 @@ def _run_one(
             f"max_tokens={max_tokens} task_timeout={task_timeout}s"
         )
 
+        child_env = os.environ.copy()
+        if execution_context is not None:
+            context_dict = execution_context.to_dict() if hasattr(execution_context, "to_dict") else dict(execution_context)
+            from arnold_pipelines.megaplan.cloud.worker_dispatch import WorkerExecutionContextRef
+            context_dict = WorkerExecutionContextRef.from_dict(context_dict).to_dict()
+            child_env["ARNOLD_WORKER_EXECUTION_CONTEXT"] = json.dumps(context_dict, sort_keys=True, separators=(",", ":"))
+            child_env["ARNOLD_INCIDENT_LEDGER_ROOT"] = str(context_dict["ledger_root"])
+        if worker_identity is not None:
+            identity_dict = worker_identity.to_dict() if hasattr(worker_identity, "to_dict") else dict(worker_identity)
+            child_env["ARNOLD_WORKER_IDENTITY"] = json.dumps(identity_dict, sort_keys=True, separators=(",", ":"))
+        if process_start_identity is not None:
+            child_env["ARNOLD_WORKER_PROCESS_START_IDENTITY"] = str(process_start_identity)
+        if confirmation_event_id is not None:
+            child_env["ARNOLD_WORKER_CONFIRMATION_EVENT_ID"] = str(confirmation_event_id)
+        if confirmation_event_ids is not None:
+            child_env["ARNOLD_WORKER_CONFIRMATION_EVENT_IDS"] = json.dumps(confirmation_event_ids, sort_keys=True, separators=(",", ":"))
+
         child = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -269,6 +412,7 @@ def _run_one(
             text=True,
             start_new_session=True,
             cwd=project_dir or None,
+            env=child_env,
         )
         result.pid = child.pid
         pidfile = output_dir / f"{stem}.pid"
@@ -280,12 +424,22 @@ def _run_one(
         try:
             stdout, stderr = child.communicate(timeout=task_timeout)
         except subprocess.TimeoutExpired:
-            _kill_tree(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                _kill_tree(child.pid, signal.SIGKILL)
-                child.wait()
+            term_sent = _kill_tree(
+                child.pid, signal.SIGTERM, environment=child_env, ladder_step="term"
+            )
+            if term_sent:
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    kill_sent = _kill_tree(
+                        child.pid, signal.SIGKILL,
+                        environment=child_env, ladder_step="kill"
+                    )
+                    # A failed canonical admission is fail-closed; never
+                    # block forever waiting for a process we were forbidden
+                    # to signal.
+                    if kill_sent:
+                        child.wait()
             result.status = "timeout"
             result.error = f"task exceeded --task-timeout={task_timeout}s"
             result.error_class = "TimeoutError"
@@ -352,6 +506,11 @@ def run(
     session_id: Optional[str] = None,
     task_timeout: float = 1800.0,
     isolation: str = "threads",
+    execution_context: Any = None,
+    execution_contexts: Any = None,
+    worker_identities: Any = None,
+    process_start_identities: Any = None,
+    confirmation_event_ids: Any = None,
 ) -> None:
     """Fan out N omp-backed subagent calls.
 
@@ -439,6 +598,10 @@ def run(
                     max_tokens,
                     task_timeout,
                     project_dir,
+                    (execution_contexts or {}).get(bp.stem, execution_context) if isinstance(execution_contexts, Mapping) else execution_context,
+                    (worker_identities or {}).get(bp.stem) if isinstance(worker_identities, Mapping) else None,
+                    (process_start_identities or {}).get(bp.stem) if isinstance(process_start_identities, Mapping) else None,
+                    (confirmation_event_ids or {}).get(bp.stem) if isinstance(confirmation_event_ids, Mapping) else confirmation_event_ids,
                 )
                 futures[fut] = (bp, chosen)
 

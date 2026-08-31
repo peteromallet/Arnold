@@ -1,0 +1,368 @@
+{
+  "aggregate_sha256": "7f134a29fee76c1f68436798482dca46a301a380456c0793ce3b2b0ecf80c958",
+  "base": "7453b3e57dbf6a9ddb5e1720aaf8720ee17bd47e",
+  "format": "NBF-BATCH3-DIFF-V1",
+  "framing": {
+    "absolute_header_normalization": "none; fail closed",
+    "diff_length": "uint64_be",
+    "magic_hex": "4e42462d4241544348332d444946462d563100",
+    "path_length": "uint64_be",
+    "status": {
+      "tracked": "T",
+      "untracked": "U"
+    }
+  },
+  "git_version": "git version 2.39.5 (Apple Git-154)",
+  "manifest": {
+    "bytes": 3100,
+    "count": 49,
+    "path": ".oracle/rework/batch-3-attempt-2.manifest.tsv",
+    "sha256": "632acc64daf412220eafeb290f26431122b436a22a5b7aaf1c2a748ce27b2ec0"
+  },
+  "paths": [
+    {
+      "classification": "NBF04",
+      "diff_bytes": 4798,
+      "diff_sha256": "a4e951cd864b00232ab5e9968dbeb087af12d660457124ab04db6430f7e82c2d",
+      "path": "arnold_pipelines/megaplan/auto.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 7750,
+      "diff_sha256": "118e44aa2eacab59e060b13347113c4c667f19d5437c10adcb900436179397cc",
+      "path": "arnold_pipelines/megaplan/cloud/cli.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 55697,
+      "diff_sha256": "58960f2d4675c73e30388a5c8c68b1fe6306f96d0d45363465e094a92b95343f",
+      "path": "arnold_pipelines/megaplan/cloud/controlled_final_launch.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 7455,
+      "diff_sha256": "7b6870a3692bf95f2936dc337682cd5c4faa0f2a07159e36c68f833e2770468e",
+      "path": "arnold_pipelines/megaplan/cloud/liveness_lease.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 15293,
+      "diff_sha256": "ddab23e3446b369bf8063de5c7307506c76ffe49ffd86bb252fcefee0d631d49",
+      "path": "arnold_pipelines/megaplan/cloud/operator_control.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 7859,
+      "diff_sha256": "7d5c0589ded722108b87a6a736cd78af75381e3d49132ef38af30755fcba36e1",
+      "path": "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-resident",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 2439,
+      "diff_sha256": "23ad92d37dfb35fd4c38c5d38c20c81149bacdfb918d2ee6a4337b054df9899a",
+      "path": "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-watchdog",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 1801,
+      "diff_sha256": "ff3bc1af384f4bee074ced6bc8330f106f1082db7e0c5948f7c1695e1ee39afc",
+      "path": "arnold_pipelines/megaplan/cloud/worker_dispatch.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 2868,
+      "diff_sha256": "5011dcab9e1d6d1e7f8c226a1298462135c77e7c46e9e5231f5143c24c44dd1b",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 2369,
+      "diff_sha256": "91d98654c1a48c681a2ca803bfedba850f1f0935a973abced29d2db8fb8a5447",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 24476,
+      "diff_sha256": "d2054462ccbf4480165a42f7af64ab6f572911a32f95978a207ce924c5861a24",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 16867,
+      "diff_sha256": "12dda6359d055810b30b67de19e29c76f01f6181fdcc4eb8189efa77bcb1d871",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 794,
+      "diff_sha256": "55b7f8aefc75943e5aaa5cc30ba55c4b4ed00fbec8f849a18cb22b0cfff605dd",
+      "path": "arnold_pipelines/megaplan/custody/__init__.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 10714,
+      "diff_sha256": "5b9862657185751c868c021dce49d240e44396c8f36d2d241c30608d1d55874c",
+      "path": "arnold_pipelines/megaplan/custody/common_worker_dispatch.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 4672,
+      "diff_sha256": "2b2328f8d088093e3ae6c665b02eef67d5a76669059bbe4abfccad3b4d244275",
+      "path": "arnold_pipelines/megaplan/custody/wbc_runtime.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 22254,
+      "diff_sha256": "469667693b7f0fb64b0525ff4cabbbb57719724c56be5ff0444aa6e1b8d5681c",
+      "path": "arnold_pipelines/megaplan/incident/authority.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 77252,
+      "diff_sha256": "02b9077fa0de323818517a04ac4ae677be6cdf96803f4bbad89b9d61f2988259",
+      "path": "arnold_pipelines/megaplan/incident/disposition.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 25027,
+      "diff_sha256": "a3b213af96967fc1f6b579915a3537e1df8fc0a9d24c97e217bf686d937bd718",
+      "path": "arnold_pipelines/megaplan/incident/ledger.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 15582,
+      "diff_sha256": "2f0d1082ff9e76b5b5222d32e4eef9d14e27b8fa841317c6d35072538da646ba",
+      "path": "arnold_pipelines/megaplan/incident/schema.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 19237,
+      "diff_sha256": "106d638c8c5e43fc7e80622d23728d7cbe7afdacb50f7e22bc81b5ebfda55a2b",
+      "path": "arnold_pipelines/megaplan/managed_agent.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 3684,
+      "diff_sha256": "a173605a7144517d2bb1c5f30097074f2cec51a6fd8c2c8d92e57d0f3ba74e60",
+      "path": "arnold_pipelines/megaplan/resident/agent_loop.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 6945,
+      "diff_sha256": "72a7cf44f9285db7af50fd1065607a0e36b139330586bea365a1f9f42ff08c92",
+      "path": "arnold_pipelines/megaplan/resident/subagent.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 13154,
+      "diff_sha256": "c4f1b20296a5eca193f700a0aee2e18af262f4b09424f0f14364e367c99c077d",
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/fan.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 11952,
+      "diff_sha256": "9df487fbac295ad77408a51cd65b28738319f5d02ff13adf88c839c943402455",
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/fan_kill.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 7233,
+      "diff_sha256": "9f07afd7c5f985221a48853d59c0c8be9876b677a01aeb408b146ff3d0293098",
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/fan_process.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 22723,
+      "diff_sha256": "a09a0a18fb83912501d496aed126e65f66bd31ecc61d6945ef4efc9378f5f251",
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 1839,
+      "diff_sha256": "2cd779041eb0d0bf6de8b02a39cb62d822ea2bce1cbcbd76460527ab789e1094",
+      "path": "arnold_pipelines/megaplan/watchdog/worker_identity.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 33334,
+      "diff_sha256": "7c50aed660c9019c3961a3b0da80815d932f5e2b3e04236d9cdbc0477254e932",
+      "path": "arnold_pipelines/megaplan/workers/_impl.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 114963,
+      "diff_sha256": "e970687b0a1e0ebbee3a6e33f5a81403528c32e63046f07fc5ce82a5e638d82f",
+      "path": "docs/nbf-signal-inventory.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 19804,
+      "diff_sha256": "8aff58f615080987c541499d309c3a6e63fe9a1967826d5f4ca128f99bf2a9d4",
+      "path": "scripts/generate_nbf_signal_inventory.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 12424,
+      "diff_sha256": "67890f29a628b26b2dcad3dd422c2155d63efb4ebc36d05a2ab89da77724b963",
+      "path": "tests/arnold_pipelines/megaplan/test_managed_signal_contract.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 14080,
+      "diff_sha256": "05d4c09f5d6f4008f37649bcfb83c2d9256e540c8812873ad5243dba7f97dbc1",
+      "path": "tests/arnold_pipelines/megaplan/test_nbf04_ladder.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 8717,
+      "diff_sha256": "fd960eef374a048b05b7c5bc248a234f5a0720f96f20322f58cb1a5cd76fd5b3",
+      "path": "tests/arnold_pipelines/megaplan/test_operator_pause.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 25884,
+      "diff_sha256": "32792aa2d3597beb4ea7bd8df7bbcda2e715c73dc4dbd5f992a30264d20d765e",
+      "path": "tests/arnold_pipelines/megaplan/test_python_signal_inventory.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 20580,
+      "diff_sha256": "890a7e59d8bd03cb6a39648adf5b11ee5ed4950d281a9467e99af74e9624598f",
+      "path": "tests/arnold_pipelines/megaplan/test_signal_authority.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 5857,
+      "diff_sha256": "f0cf3bba90b674e09dd73dc0786db773e99c29d054dca6671189370efca52094",
+      "path": "tests/arnold_pipelines/megaplan/test_subagent_launcher_disposition.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 437,
+      "diff_sha256": "b9b6d9f0ff8bc6b465d5bc5d17fd396c7b2b7554d7b564c251af11d2f7ea3302",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/critique-r5.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 431,
+      "diff_sha256": "f72f2cbeba12dbf275b9948f1501938fde4144dc845ca64d2317c4aeaae41293",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/demo-plan.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 431,
+      "diff_sha256": "d3d92b51ac38f52a1873ce0d951517e92721568759acc46cc336be45d5e37c3e",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/demo-sess.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 440,
+      "diff_sha256": "0045db5bb0ff8fb6350cda91324936a3048a12caf4da4f304b131ac3be409362",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/demo-session.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 443,
+      "diff_sha256": "5eeaf233cb653dc843f20cfe7aeb0eda1162f7f8d2cb2efdc48873f28080c923",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/fence-session.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 494,
+      "diff_sha256": "efbb6409f2da1028e81e46e32acb10edc095d8b6a3211b52ef6b1dcfb2664ddd",
+      "path": "tests/cloud/fixtures/watchdog-runtime-manifests/progress-auditor-stage-metrics.json",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 898,
+      "diff_sha256": "82af94b7149e24b93411f04d1855d41632b1302ae5ee3df7b5ef8c1857ae10f5",
+      "path": "tests/cloud/test_cloud_chain_command.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 33938,
+      "diff_sha256": "dd14b1cb7e082bb846df9832e08a5e2ff9019b649ba9032a9e1b8a0d708845af",
+      "path": "tests/cloud/test_controlled_final_launch.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 13667,
+      "diff_sha256": "399fc25f02e703ea913d7d7e52ab9dc185cdeeb4c481434169e20a8cc1ea2d28",
+      "path": "tests/cloud/test_repository_signal_inventory.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 22625,
+      "diff_sha256": "134f1c4aa27a1ba0d3c0284c415eb315e98ec5ed81a3ba8461c4b1f02844ceec",
+      "path": "tests/cloud/test_watchdog_dispositions.py",
+      "status": "U"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 31013,
+      "diff_sha256": "ef857718f6cf26533b0b84f6c0724416fb1844dcde2ecb08932957cf6783fc0f",
+      "path": "tests/cloud/test_watchdog_wrappers.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF04",
+      "diff_bytes": 5489,
+      "diff_sha256": "9ac3268fbede54c6da58f2f98ec18d985eafb671d12359764077162b6239b193",
+      "path": "tests/test_managed_agent.py",
+      "status": "T"
+    },
+    {
+      "classification": "NBF05",
+      "diff_bytes": 1168,
+      "diff_sha256": "88867a641787b7c74c5d302aeab3b938e5703e79eb249b8dd09fc5853ae9cfba",
+      "path": "tests/test_no_bare_subprocess.py",
+      "status": "T"
+    }
+  ],
+  "total_diff_bytes": 759851
+}

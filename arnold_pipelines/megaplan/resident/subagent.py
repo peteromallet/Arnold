@@ -35,8 +35,11 @@ from arnold_pipelines.megaplan.managed_agent import (
     managed_run_roots,
     validate_automatic_managed_manifest,
     observed_status as shared_observed_status,
+    _managed_worker_identity,
+    _pid_start_ticks,
+    certify_managed_worker_launch,
+    signal_managed_process,
 )
-
 from .config import ResidentConfig
 from .git_custody import (
     GitCustodyError,
@@ -4361,7 +4364,14 @@ def _interrupt_parent_for_followup(
             parent["completion_delivery"] = delivery
         _atomic_json(parent_path, parent)
         try:
-            os.kill(pid, signal.SIGINT)
+            signal_managed_process(
+                parent_path,
+                parent,
+                pid,
+                signal.SIGINT,
+                cause_kind="terminate",
+                ladder_step="term",
+            )
         except ProcessLookupError:
             latest = _read_managed_resident_manifest(parent_path)
             if str(latest.get("status") or "") not in {
@@ -4599,6 +4609,32 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     provider_options = dict(manifest.get("provider_options") or {})
     timeout_s = _explicit_manifest_timeout(manifest)
 
+    def _cleanup_held(result: Any, *, reason: str, error: BaseException | None = None) -> int:
+        """Retain custody when the worker signal door refuses cleanup.
+
+        In particular, never convert an uncertified live child into a terminal
+        failure merely because the supervisor timed out while trying to stop it.
+        Orphan reconciliation can inspect this durable hold later.
+        """
+        held = {
+            "classification": "cleanup_held",
+            "reason": reason,
+            "signal_result": result if isinstance(result, Mapping) else {"authorized": False},
+            "recorded_at": _utc_now(),
+        }
+        if error is not None:
+            held["error_class"] = error.__class__.__name__
+            held["error_message"] = str(error)
+        manifest["cleanup_hold"] = held
+        manifest["error_class"] = "WorkerCleanupHeld"
+        manifest["error_message"] = reason
+        manifest["updated_at"] = held["recorded_at"]
+        history = list(manifest.get("status_history") or [])
+        history.append({"status": manifest.get("status", "running"), "at": held["recorded_at"], "evidence": "worker_cleanup_held"})
+        manifest["status_history"] = history[-100:]
+        _atomic_json(manifest_path, manifest)
+        return 75
+
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
         interrupted_signal = signum
@@ -4770,6 +4806,11 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
                 int(provider_options.get("max_tokens") or 65_536)
             )
+        context_payload = manifest.get("worker_execution_context")
+        if isinstance(context_payload, Mapping):
+            worker_env["ARNOLD_WORKER_EXECUTION_CONTEXT"] = json.dumps(
+                dict(context_payload), sort_keys=True, separators=(",", ":")
+            )
         raw_handle = raw_output_path.open("wb")
         worker = subprocess.Popen(
             argv,
@@ -4784,6 +4825,18 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         ensure_managed_child_custody_fields(manifest_path, manifest)
         worker_started_at = _utc_now()
         manifest.update({"worker_started_at": worker_started_at, "worker_pid": worker.pid})
+        manifest["worker_start_ticks"] = _pid_start_ticks(worker.pid)
+        manifest["worker_identity"] = _managed_worker_identity(
+            worker.pid, manifest["worker_start_ticks"]
+        )
+        manifest["worker_launch_certified"] = certify_managed_worker_launch(
+            manifest_path,
+            manifest,
+            pid=worker.pid,
+            worker_identity=manifest["worker_identity"],
+            process_start_identity=str(manifest["worker_start_ticks"] or ""),
+            started_at=worker_started_at,
+        )
         manifest["session_dispatch"] = {
             "status": "accepted",
             "mode": (
@@ -4816,11 +4869,21 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         try:
             returncode = worker.wait(timeout=timeout_s) if timeout_s is not None else worker.wait()
         except subprocess.TimeoutExpired:
-            worker.terminate()
-            try:
-                worker.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                worker.kill()
+            signal_result = signal_managed_process(
+                manifest_path,
+                manifest,
+                worker.pid,
+                signal.SIGTERM,
+                cause_kind="timeout",
+                ladder_step="term",
+                worker=True,
+                wait_fn=lambda: worker.wait(timeout=5),
+                return_result=True,
+            )
+            state = signal_result.get("state") if isinstance(signal_result, Mapping) else None
+            if state not in {"killed", "already_dead"}:
+                return _cleanup_held(signal_result, reason="timeout cleanup was not authorized")
+            if state == "killed" and worker.poll() is None:
                 worker.wait()
             returncode = 124
         raw_handle.close()
@@ -5064,11 +5127,21 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         return returncode
     except BaseException as exc:
         if worker is not None and worker.poll() is None:
-            worker.terminate()
-            try:
-                worker.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                worker.kill()
+            signal_result = signal_managed_process(
+                manifest_path,
+                manifest,
+                worker.pid,
+                signal.SIGTERM,
+                cause_kind="terminate",
+                ladder_step="term",
+                worker=True,
+                wait_fn=lambda: worker.wait(timeout=5),
+                return_result=True,
+            )
+            state = signal_result.get("state") if isinstance(signal_result, Mapping) else None
+            if state not in {"killed", "already_dead"}:
+                return _cleanup_held(signal_result, reason="exception cleanup was not authorized", error=exc)
+            if state == "killed" and worker.poll() is None:
                 worker.wait()
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         control_status = str(manifest.get("status") or "")

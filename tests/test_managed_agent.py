@@ -589,9 +589,17 @@ def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidenc
 
 
 @pytest.mark.parametrize("split_options", [False, True])
-def test_nested_hermes_launch_reenters_shared_manager(
+def test_nested_omp_launch_does_not_self_reexec(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split_options: bool
 ) -> None:
+    """The canonical omp launcher stays a plain child of the managed caller.
+
+    The former Hermes launcher self-reexecuted through the managed manager;
+    the omp migration moved that responsibility to the caller.  Keep the
+    safety assertion here: inherited managed context must not cause the
+    launcher to create a second managed run or bypass the canonical child
+    process boundary.
+    """
     parent = spec(tmp_path, identity="nested-parent")
     assert run_managed_command(parent) == 0
     parent_manifest = manifest_path(tmp_path, parent)
@@ -600,9 +608,9 @@ def test_nested_hermes_launch_reenters_shared_manager(
     prompt.write_text("research this", encoding="utf-8")
     launcher_path = (
         Path(__file__).resolve().parents[1]
-        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
     )
-    module_spec = importlib.util.spec_from_file_location("test_hermes_launcher", launcher_path)
+    module_spec = importlib.util.spec_from_file_location("test_omp_launcher", launcher_path)
     assert module_spec and module_spec.loader
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
@@ -612,38 +620,37 @@ def test_nested_hermes_launch_reenters_shared_manager(
         "ARNOLD_MANAGED_AGENT_ORIGIN",
         json.dumps(parent_payload["launch_provenance"]),
     )
-    launcher_args = (
-        [
-            str(launcher_path),
-            "--model",
-            "deepseek:deepseek-v4-pro",
-            "--project_dir",
-            str(tmp_path),
-            "--query_file",
-            str(prompt),
-        ]
-        if split_options
-        else [
-            str(launcher_path),
-            "--model=deepseek:deepseek-v4-pro",
-            f"--project_dir={tmp_path}",
-            f"--query_file={prompt}",
-        ]
-    )
-    monkeypatch.setattr(sys, "argv", launcher_args)
+    monkeypatch.setattr(module, "_check_codex_network_sandbox", lambda: None)
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/omp")
     launched: list[str] = []
 
-    def fake_run(command, **_kwargs):
+    class FakeChild:
+        pid = 12345
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return None
+
+    def fake_popen(command, **kwargs):
         launched.extend(command)
-        return subprocess.CompletedProcess(command, 0)
+        assert kwargs["cwd"] == str(tmp_path.resolve())
+        assert kwargs["start_new_session"] is True
+        return FakeChild()
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    result = module.run(
+        model="deepseek:deepseek-v4-pro",
+        query="research this" if split_options else None,
+        query_file=None if split_options else str(prompt),
+        project_dir=str(tmp_path),
+    )
 
-    assert module._automatic_managed_reexec() == 0
-    assert "automatic_research_subagent" in launched
-    assert str(parent_payload["run_id"]) in launched
-    assert "@managed-stdin@" in "\n".join(launched)
-    assert str(tmp_path.resolve()) in launched
+    assert result == 0
+    assert launched[:5] == ["omp", "-p", "--model", "deepseek/deepseek-v4-pro", "--no-session"]
+    assert launched[-1] == "research this"
+    assert "automatic_research_subagent" not in launched
+    assert "@managed-stdin@" not in "\n".join(launched)
+    assert str(parent_payload["run_id"]) not in launched
 
 
 def test_root_authority_ceiling_is_durable_and_inherited_by_child(
@@ -704,14 +711,16 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     root = Path(__file__).resolve().parents[1]
     watchdog = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog").read_text()
     auditor = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor").read_text()
-    hermes = (
-        root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+    omp = (
+        root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_omp_agent.py"
     ).read_text()
+    managed_agent = (root / "arnold_pipelines/megaplan/managed_agent.py").read_text()
 
     assert "--run-kind automatic_watchdog_source_repair" in watchdog
     assert "--run-kind automatic_progress_audit_agent" in auditor
-    assert "automatic_research_subagent" in hermes
-    assert "_automatic_managed_reexec" in hermes
+    assert "automatic_research_subagent" in managed_agent
+    assert "does not self-reexec" in omp
+    assert "_automatic_managed_reexec" not in omp
 
     # Actual worker commands may remain as argv passed to the manager.  Every
     # shipped automatic wrapper containing one must also contain the canonical

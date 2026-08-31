@@ -117,6 +117,9 @@ if [[ -n "${ARNOLD_RUNTIME_MANIFEST:-}" ]]; then
   fi
 fi
 arnold_supervisor_runtime_init watchdog "$_BOOTSTRAP_SOURCE_ROOT" || exit $?
+# No global manifest or ambient NBF context is authority for a target.  Each
+# mutation path binds the exact session marker immediately before its ladder.
+export MEGAPLAN_NBF_CONTEXT_BOUND=0
 
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
@@ -1914,6 +1917,45 @@ def _progress_has_tool_line(paths):
     return False
 
 
+def _canonical_shell_signal(pid, site_id, signal_name="SIGTERM", stage="term"):
+    """Return no-signal from the embedded observer.
+
+    This Python observer has no target marker argument and therefore cannot
+    establish custody. Physical delivery is deliberately available only to
+    the shell bridge after it binds the exact session marker.
+    """
+    return False
+
+
+def _write_cleanup_hold(session, digest, run_root, payload, reason):
+    """Persist an unresolved wedge so the caller cannot redispatch.
+
+    This observer has no marker-bound authority and therefore must not signal.
+    The later canonical reaper can bind the session marker and perform the
+    validated ladder.
+    """
+    hold_root = run_root if run_root is not None and run_root.is_dir() else repair_data
+    hold_path = hold_root / "cleanup-hold.json"
+    hold = {
+        "kind": "cleanup_hold",
+        "status": "unresolved",
+        "reason": reason,
+        "session": session,
+        "occurrence_digest": digest,
+        "run_root": str(run_root) if run_root is not None else "",
+        "babysitter_pid": payload.get("babysitter_pid"),
+        "supervisor_pid": payload.get("supervisor_pid"),
+        "reconciliation": "canonical_reaper_after_marker_binding",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        hold_path.parent.mkdir(parents=True, exist_ok=True)
+        hold_path.write_text(json.dumps(hold, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"cleanup hold persistence failed: {exc}", file=sys.stderr)
+    return hold_path
+
+
 def signal_hung_fixer_children(root_pids):
     """SIGTERM hung ``codex exec`` descendants. Does not touch the babysitter.
 
@@ -1934,11 +1976,8 @@ def signal_hung_fixer_children(root_pids):
         age = _pid_age_seconds(pid, proc)
         if age is None or age < bound:
             continue
-        try:
-            os.kill(pid, 15)
-        except OSError:
-            continue
-        signaled.append(pid)
+        if _canonical_shell_signal(pid, "arnold-watchdog-worker"):
+            signaled.append(pid)
     return signaled
 
 
@@ -2030,6 +2069,12 @@ for name in (
                     file=sys.stderr,
                 )
             wedged_now = babysitter_wedged(payload, run_root)
+            # A verified live socket/progress observation is a healthy
+            # in-flight consultation.  Do not fall through to the stale
+            # receipt message (or any cleanup path) when the wedge predicate
+            # is false; the canonical shell bridge owns all physical signals.
+            if not wedged_now:
+                raise SystemExit(0)
             # I-2026-08-26-TIMEOUTKILL: a single-scan wedge verdict has repeatedly
             # SIGTERMed fixers that were mid-call (codex consult, long LLM wait
             # with momentarily no established socket). Require the wedge to be
@@ -2069,24 +2114,24 @@ for name in (
                         marker.unlink()
                     except OSError:
                         pass
-        # Wedged (or dead): terminate the stale babysitter + its agent tree so
-        # the fresh dispatch below does not race a zombie fixer on the same
-        # chain (observed 2026-08-17 I35: wedged 15:38 agents lingered beside
-        # 16:46 re-dispatches, both alive, competing). Best-effort SIGTERM;
-        # the receipt is left for the fresh launch to supersede.
+        # A confirmed wedge has no marker-bound authority in this observer.
+        # Persist an explicit cleanup hold and suppress redispatch; the later
+        # canonical reaper binds the session marker before any physical door.
         print(
-            "babysitter wedged or dead; signaling "
+            "babysitter wedged; cleanup hold required "
             f"session={session} babysitter_pid={payload.get('babysitter_pid')} "
             f"supervisor_pid={payload.get('supervisor_pid')} "
             f"run_root={run_root}",
             file=sys.stderr,
         )
-        for stale_pid in (payload.get("babysitter_pid"), payload.get("supervisor_pid")):
-            if isinstance(stale_pid, int) and stale_pid > 0 and pid_live(stale_pid):
-                try:
-                    os.kill(stale_pid, 15)
-                except OSError:
-                    pass
+        _write_cleanup_hold(
+            session,
+            digest,
+            run_root,
+            payload,
+            "confirmed_wedge_without_marker_bound_signal_authority",
+        )
+        raise SystemExit(75)
 raise SystemExit(1)
 PY
 }
@@ -2566,12 +2611,23 @@ babysitter_policy_dispatch() {
     fi
   fi
   digest="$(babysitter_occurrence_digest "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}" || true)"
-  if [[ -n "$digest" ]] && babysitter_running_for_occurrence "$session" "$digest"; then
-    log "babysitter already running for occurrence session=$session digest=$digest"
-    report_item "$report_items" "$session" "repair" "babysitter_running" \
-      "single-flash babysitter already running for this occurrence; observing" \
-      "$workspace" "$remote_spec"
-    return 0
+  if [[ -n "$digest" ]]; then
+    if babysitter_running_for_occurrence "$session" "$digest"; then
+      log "babysitter already running for occurrence session=$session digest=$digest"
+      report_item "$report_items" "$session" "repair" "babysitter_running" \
+        "single-flash babysitter already running for this occurrence; observing" \
+        "$workspace" "$remote_spec"
+      return 0
+    else
+      local babysitter_status=$?
+      if [[ "$babysitter_status" -eq 75 ]]; then
+        log "babysitter cleanup hold blocks redispatch session=$session digest=$digest"
+        report_item "$report_items" "$session" "repair" "cleanup_hold" \
+          "confirmed babysitter wedge requires canonical cleanup reconciliation; no redispatch" \
+          "$workspace" "$remote_spec"
+        return 0
+      fi
+    fi
   fi
   if [[ -n "$after" ]] && ! babysitter_after_elapsed "$after" "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
     log "babysitter after=$after not yet elapsed; observing session=$session reason=$reason"
@@ -3619,7 +3675,7 @@ session_health_status() {
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
   local wait_status
-  if ! tmux has-session -t "$session" 2>/dev/null; then
+  if ! arnold_supervisor_tmux_session_exists "$session"; then
     if matching_runner_process_alive "$workspace" "$remote_spec" "$run_kind" "$plan_name"; then
       echo "alive"
       return 0
@@ -3648,7 +3704,8 @@ session_health_status() {
   fi
 
   local pane log_path
-  pane="$(tmux capture-pane -pt "$session" -S -120 2>/dev/null || true)"
+  capture_socket="$(arnold_supervisor_tmux_session_socket "$session" 2>/dev/null || true)"
+  pane="$(tmux -S "$capture_socket" capture-pane -pt "$session" -S -120 2>/dev/null || true)"
   if printf '%s\n' "$pane" | grep -Eq 'cmd exited rc=[1-9]|error retry [0-9]+/[0-9]+'; then
     echo "retrying_failure"
     return 0
@@ -6484,11 +6541,16 @@ PY
 
 kill_process_group() {
   local pgid="$1"
+  local leader="${2:-}"
   [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
-  kill -- "-$pgid" >/dev/null 2>&1 || return 1
-  sleep 0.5
+  # Process-group membership is observation only. A group signal is admitted
+  # through the canonical per-process door using an explicit leader supplied
+  # by the caller; never fall back to kill(2) on a bare PGID.
+  [[ "$leader" =~ ^[0-9]+$ ]] || return 78
+  arnold_supervisor_signal_bound_pid arnold-watchdog "$leader" SIGTERM term repair-group-stale >/dev/null 2>/dev/null || return $?
+  sleep "${MEGAPLAN_SUPERVISOR_TERM_WAIT_SECS:-0.5}"
   if kill -0 -- "-$pgid" >/dev/null 2>&1; then
-    kill -9 -- "-$pgid" >/dev/null 2>&1 || true
+    arnold_supervisor_signal_bound_pid arnold-watchdog "$leader" SIGKILL kill repair-group-stale >/dev/null 2>/dev/null || return $?
     sleep 0.2
   fi
   ! kill -0 -- "-$pgid" >/dev/null 2>&1
@@ -6581,14 +6643,29 @@ print(" ".join(str(pid) for pid in order))
 PY
   )"
   [[ -n "$pid_list" ]] || return 1
-  local pid
+  local pid process_start root_process_start
+  declare -A descendant_starts=()
+  # Snapshot every descendant incarnation before the ladder. Each child is
+  # then revalidated against the root ancestry immediately before each door;
+  # a reused PID or detached child is never treated as root-owned custody.
   for pid in $pid_list; do
-    kill "$pid" >/dev/null 2>&1 || true
+    process_start="$(arnold_supervisor_process_start "$pid" 2>/dev/null || true)"
+    [[ -n "$process_start" ]] || return 78
+    descendant_starts[$pid]="$process_start"
   done
-  sleep 0.5
+  root_process_start="${descendant_starts[$root_pid]:-}"
+  [[ -n "$root_process_start" ]] || return 78
+  for pid in $pid_list; do
+    arnold_supervisor_bind_signal_context_for_pid "$pid" "$MARKER_DIR" non_worker "$root_pid" "${descendant_starts[$pid]}" || return 78
+    arnold_supervisor_validate_descendant "$root_pid" "$pid" "${descendant_starts[$pid]}" || return 78
+    arnold_supervisor_signal_bound_pid arnold-watchdog "$pid" SIGTERM term repair-tree-stale >/dev/null 2>/dev/null || return $?
+  done
+  sleep "${MEGAPLAN_SUPERVISOR_TERM_WAIT_SECS:-0.5}"
   for pid in $pid_list; do
     kill -0 "$pid" >/dev/null 2>&1 || continue
-    kill -9 "$pid" >/dev/null 2>&1 || true
+    arnold_supervisor_bind_signal_context_for_pid "$pid" "$MARKER_DIR" non_worker "$root_pid" "${descendant_starts[$pid]}" || return 78
+    arnold_supervisor_validate_descendant "$root_pid" "$pid" "${descendant_starts[$pid]}" || return 78
+    arnold_supervisor_signal_bound_pid arnold-watchdog "$pid" SIGKILL kill repair-tree-stale >/dev/null 2>/dev/null || return $?
   done
   ! kill -0 "$root_pid" >/dev/null 2>&1
 }
@@ -6605,7 +6682,7 @@ kill_repair_tree_complete() {
     groups="$root_pgid"
   fi
   for group in $groups; do
-    if kill_process_group "$group"; then
+    if kill_process_group "$group" "$root_pid"; then
       tried=0
     fi
   done
@@ -6648,6 +6725,7 @@ reap_stale_repairs() {
   reap_stalled_repair_candidates < "$ps_rows" >> "$candidates"
   while IFS=$'\t' read -r pid ppid pgid etimes kind session rule reason operator_dir stall_idle; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    export MEGAPLAN_NBF_CONTEXT_BOUND=0
     if [[ -n "$session" && -n "${seen_sessions[$session]:-}" ]]; then
       continue
     fi
@@ -6661,6 +6739,12 @@ reap_stale_repairs() {
     session_pgid=""
     if [[ -n "$session" ]]; then
       marker_path="$(session_marker_path "$session")"
+      # Reaping is target-scoped: a session marker is the only legal bridge
+      # into the durable context. No marker means observe/report only.
+      if [[ ! -f "$marker_path" ]] || ! arnold_supervisor_bind_signal_context_for_session "$session" "$MARKER_DIR" non_worker; then
+        log "stale repair reap blocked: session marker authority unavailable session=$session"
+        continue
+      fi
       if [[ -r "$(kimi_pgid_path "$session")" ]]; then
         read -r session_pgid < "$(kimi_pgid_path "$session")" || session_pgid=""
         live_pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
@@ -6670,6 +6754,7 @@ reap_stale_repairs() {
       fi
     else
       marker_path=""
+      export MEGAPLAN_NBF_CONTEXT_BOUND=0
     fi
     if [[ -n "$session_pgid" ]] && kill_repair_tree_complete "$pid" "$session_pgid"; then
       method="session_pgid_complete:$session_pgid"
@@ -8437,7 +8522,7 @@ PY
   custody_tmux_live=0
   custody_process_live=0
   custody_supervisor=""
-  if tmux has-session -t "$session" 2>/dev/null; then
+  if arnold_supervisor_tmux_session_exists "$session"; then
     custody_tmux_live=1
   fi
   if [[ "$health" == "alive" ]]; then
@@ -8802,11 +8887,42 @@ PY
   # current-target subprocess, marker, publication, or repair side effect, so
   # no re-check is needed here before the install-repair/tmux-kill side effects.
   ensure_install_or_repair || log "editable install still unhealthy; relaunching anyway"
-  if tmux has-session -t "$session" 2>/dev/null; then
+  if arnold_supervisor_tmux_session_exists "$session"; then
     log "killing stale tmux session before relaunch: $session"
-    tmux kill-session -t "$session" 2>/dev/null || true
+    if ! arnold_supervisor_bind_signal_context_for_session "$session" "$MARKER_DIR" non_worker; then
+      log "stale tmux session cleanup blocked: session marker authority unavailable"
+      return 1
+    fi
+    session_snapshot="$(arnold_supervisor_tmux_session_snapshot "$session" 2>/dev/null)" || {
+      log "stale tmux session cleanup blocked: exact session snapshot unavailable"
+      return 1
+    }
+    IFS=$'	' read -r tmux_socket tmux_socket_fingerprint tmux_server_pid tmux_server_start tmux_session_id tmux_session_name tmux_pane_records tmux_pane_digest <<< "$session_snapshot"
+    session_pane_record="$(arnold_supervisor_tmux_owned_pane "$session" "$MEGAPLAN_NBF_MARKER_PATH" "$tmux_socket")" || {
+      log "stale tmux session cleanup blocked: no marker-owned pane proof"
+      return 1
+    }
+    IFS='|' read -r tmux_pane_id session_pane_pid tmux_pane_start tmux_command_digest <<< "$session_pane_record"
+    [[ "$tmux_session_name" == "$session" ]] || return 1
+    if [[ "$session_pane_pid" =~ ^[0-9]+$ ]] \
+      && arnold_supervisor_signal_bound_pid arnold-watchdog "$session_pane_pid" SIGTERM term stale-tmux-session >/dev/null 2>/dev/null; then
+      sleep "${MEGAPLAN_SUPERVISOR_TERM_WAIT_SECS:-0.5}"
+      if arnold_supervisor_signal_bound_pid arnold-watchdog "$session_pane_pid" SIGKILL kill stale-tmux-session >/dev/null 2>/dev/null \
+        && arnold_supervisor_tmux_session_revalidate "$session" "$tmux_socket" "$tmux_socket_fingerprint" "$tmux_server_pid" "$tmux_server_start" "$tmux_session_id" "$tmux_session_name" "$tmux_pane_digest" >/dev/null 2>/dev/null; then
+        tmux -S "$tmux_socket" kill-session -t "=$tmux_session_id" 2>/dev/null || return 1
+        if tmux -S "$tmux_socket" has-session -t "=$tmux_session_id" >/dev/null 2>&1; then
+          return 1
+        fi
+      else
+        log "stale tmux session cleanup blocked: KILL confirmation or identity unavailable"
+        return 1
+      fi
+    else
+      log "stale tmux session cleanup blocked: TERM confirmation or identity unavailable"
+      return 1
+    fi
     for _ in 1 2 3 4 5; do
-      tmux has-session -t "$session" 2>/dev/null || break
+      tmux -S "$tmux_socket" has-session -t "=$tmux_session_id" 2>/dev/null || break
       sleep 0.2
     done
   fi
@@ -8847,9 +8963,19 @@ exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_s
 EOF
   chmod +x "$launch_script"
 
+  # Launches are target-scoped too: a marker-bound socket is mandatory even
+  # when no prior session exists. Never fall back to tmux's ambient/default
+  # server, which could create a session in another authority namespace.
+  local launch_tmux_socket
+  launch_tmux_socket="$(arnold_supervisor_tmux_session_socket "$session" 2>/dev/null)" || {
+    log "relaunch blocked: marker-bound tmux socket unavailable session=$session"
+    report_item "$report_items" "$session" "restart" "restart_failed" "marker-bound tmux socket unavailable" "$workspace" "$remote_spec"
+    rm -f "$launch_script"
+    return 1
+  }
   log "relaunching stopped session=$session kind=$run_kind spec=$remote_spec"
-  tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
-    if tmux has-session -t "$session" 2>/dev/null; then
+  tmux -S "$launch_tmux_socket" new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
+    if arnold_supervisor_tmux_session_exists "$session"; then
       local race_health
       if ! declare -F verify_relaunch_health >/dev/null 2>&1; then
         race_health="modular_invocation_unverified"

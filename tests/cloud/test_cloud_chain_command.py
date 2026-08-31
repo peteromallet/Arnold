@@ -97,8 +97,10 @@ def test_fresh_chain_stop_is_identity_guarded_before_reset() -> None:
     )
 
     assert "tmux has-session -t demo-chain" in command
-    assert "grep -F digest-123" in command
-    assert "tmux kill-session -t demo-chain" in command
+    assert "arnold_pipelines.megaplan.cloud.operator_control tmux-stop" in command
+    assert "--marker /workspace/.megaplan/cloud-sessions/demo-chain.json" in command
+    assert "grep -F digest-123" not in command
+    assert "tmux kill-session -t demo-chain" not in command
     assert "refusing fresh reset" in command
     assert "exit 17" in command
 

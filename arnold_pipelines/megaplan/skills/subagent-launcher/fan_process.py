@@ -22,7 +22,46 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+
 __all__ = ["_ProcTask", "_ProcessTaskRunner"]
+
+
+def _signal_process(
+    pid: int,
+    sig: int,
+    *,
+    environment: Optional[dict[str, Any]] = None,
+    ladder_step: str | None = None,
+) -> bool:
+    """Route a task-group signal through fan's admitted-worker door.
+
+    This runner must not regain the former PID-only compatibility primitive:
+    a fork-pool task is a worker and therefore needs the same receipt,
+    fingerprint, PID incarnation, and ledger as the launcher path.
+    """
+    import fan as _fan
+    return _fan._kill_tree(
+        pid, sig, environment=environment or os.environ, ladder_step=ladder_step
+    )
+
+
+def _task_environment(t: "_ProcTask") -> dict[str, Any]:
+    """Construct the exact context transport used by a task's launcher."""
+    env = os.environ.copy()
+    if len(t.task_args) > 7 and t.task_args[7] is not None:
+        value = t.task_args[7]
+        payload = value.to_dict() if hasattr(value, "to_dict") else dict(value)
+        import json
+        env["ARNOLD_WORKER_EXECUTION_CONTEXT"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        env["ARNOLD_INCIDENT_LEDGER_ROOT"] = str(payload["ledger_root"])
+    if len(t.task_args) > 8 and t.task_args[8] is not None:
+        value = t.task_args[8]
+        payload = value.to_dict() if hasattr(value, "to_dict") else dict(value)
+        import json
+        env["ARNOLD_WORKER_IDENTITY"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    if len(t.task_args) > 9 and t.task_args[9] is not None:
+        env["ARNOLD_WORKER_PROCESS_START_IDENTITY"] = str(t.task_args[9])
+    return env
 
 
 @dataclass
@@ -44,13 +83,7 @@ class _ProcTask:
 
 def _process_worker_with_queue(
     result_queue: Any,
-    brief_path_str: str,
-    output_dir_str: str,
-    model: str,
-    toolset_list: list[str],
-    max_tokens: int,
-    session_id: Optional[str],
-    task_timeout: float,
+    task_args: tuple,
 ) -> None:
     """Top-level callable for ``multiprocessing.Process`` in isolation=processes mode.
 
@@ -69,8 +102,8 @@ def _process_worker_with_queue(
 
     _fan._SHARED_SESSION_DB = None  # force re-init in this child
 
-    output_dir = Path(output_dir_str)
-    brief_path = Path(brief_path_str)
+    output_dir = Path(task_args[1])
+    brief_path = Path(task_args[0])
     stem = brief_path.stem
 
     pid_path = output_dir / f"{stem}.pid"
@@ -83,11 +116,16 @@ def _process_worker_with_queue(
         result = _fan._run_one(
             brief_path=brief_path,
             output_dir=output_dir,
-            model=model,
-            toolset_list=toolset_list,
-            max_tokens=max_tokens,
-            session_id=session_id,
-            task_timeout=task_timeout,
+            model=task_args[2],
+            toolset_list=task_args[3],
+            max_tokens=task_args[4],
+            task_timeout=task_args[5],
+            project_dir=task_args[6],
+            execution_context=task_args[7] if len(task_args) > 7 else None,
+            worker_identity=task_args[8] if len(task_args) > 8 else None,
+            process_start_identity=task_args[9] if len(task_args) > 9 else None,
+            confirmation_event_id=task_args[10] if len(task_args) > 10 else None,
+            confirmation_event_ids=task_args[11] if len(task_args) > 11 else None,
         )
         try:
             result_queue.put(asdict(result))
@@ -162,14 +200,14 @@ class _ProcessTaskRunner:
             # Deadline / shutdown enforcement
             if self._shutdown:
                 try:
-                    t.proc.terminate()
+                    _signal_process(t.proc.pid, signal.SIGTERM, environment=_task_environment(t), ladder_step="term")
                 except Exception:
                     pass
                 still_running.append(t)
                 continue
             if time.monotonic() > t.deadline:
                 try:
-                    t.proc.terminate()
+                    _signal_process(t.proc.pid, signal.SIGTERM, environment=_task_environment(t), ladder_step="term")
                 except Exception:
                     pass
                 still_running.append(t)
@@ -197,7 +235,7 @@ class _ProcessTaskRunner:
         for t in self._running:
             try:
                 if t.proc.is_alive():
-                    os.kill(t.proc.pid, sig)
+                    _signal_process(t.proc.pid, sig, environment=_task_environment(t), ladder_step="term" if sig == signal.SIGTERM else "kill")
             except (OSError, AttributeError):
                 pass
 
@@ -221,7 +259,7 @@ class _ProcessTaskRunner:
         for t in self._running:
             try:
                 if t.proc.is_alive():
-                    t.proc.kill()
+                    _signal_process(t.proc.pid, signal.SIGKILL, environment=_task_environment(t), ladder_step="kill")
                 t.proc.join(timeout=1)
             except Exception:
                 pass
@@ -241,7 +279,7 @@ class _ProcessTaskRunner:
         q = self._ctx.Queue()
         proc = self._ctx.Process(
             target=_process_worker_with_queue,
-            args=(q, *t.task_args),
+            args=(q, t.task_args),
             daemon=False,
         )
         proc.start()
@@ -250,7 +288,7 @@ class _ProcessTaskRunner:
         t.started_at_mono = time.monotonic()
         # The child has its own task_timeout watchdog; add slop here so the
         # child's watchdog wins normal completion races.
-        t.deadline = t.started_at_mono + max(t.task_args[6], 5.0) + 30.0
+        t.deadline = t.started_at_mono + max(t.task_args[5], 5.0) + 30.0
         self._running.append(t)
 
     def _harvest_done(self, t: _ProcTask) -> None:
@@ -260,7 +298,8 @@ class _ProcessTaskRunner:
 
         # Killed children (SIGKILL etc.) never reach their own finally-clause
         # pidfile cleanup. Remove the orphan here so the output dir stays tidy.
-        # task_args = (brief, output_dir, model, toolsets, max_tokens, session, timeout)
+        # task_args = (brief, output_dir, model, toolsets, max_tokens, timeout,
+        #              project_dir, execution context, worker identity, ...)
         try:
             pid_path = Path(t.task_args[1]) / f"{t.brief.stem}.pid"
             if pid_path.exists():
@@ -296,7 +335,7 @@ class _ProcessTaskRunner:
                         + ")"
                     ),
                     error_class="ChildExited",
-                    task_timeout_s=t.task_args[6],
+                    task_timeout_s=t.task_args[5],
                     pid=getattr(t.proc, "pid", None),
                 )
             )

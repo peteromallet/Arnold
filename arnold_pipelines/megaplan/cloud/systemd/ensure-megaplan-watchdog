@@ -54,8 +54,40 @@ if [[ "${watchdog_procs:-0}" -gt 0 ]]; then
     log "watchdog_alive container=$CONTAINER procs=${watchdog_procs} started=${started:-?} completed=${stale:-?}"
     exit 0
   fi
-  log "watchdog_heartbeat_stale container=$CONTAINER (older than ${STALE_HEARTBEAT_MIN}m); killing to restart"
-  docker exec "$CONTAINER" bash -lc "$WATCHDOG_PGREP | xargs -r kill 2>/dev/null || true; sleep 2; true" 2>/dev/null || true
+  log "watchdog_heartbeat_stale container=$CONTAINER; requesting canonical restart"
+  docker exec "$CONTAINER" bash -lc '
+    set -u
+    lib=/usr/local/bin/arnold-supervisor-runtime-lib
+    [[ -f "$lib" ]] || lib=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib
+    [[ -f "$lib" ]] || { echo watchdog_signal_runtime_missing >&2; exit 78; }
+    . "$lib"
+    arnold_supervisor_runtime_init ensure-megaplan-watchdog /workspace/arnold || exit $?
+    marker_dir="${MEGAPLAN_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+    pids="$(pgrep -f "bash /tmp/arnold-watchdog[.]" || true)"
+    [[ -n "$pids" ]] || exit 0
+    for pid in $pids; do
+      arnold_supervisor_bind_signal_context_for_pid "$pid" "$marker_dir" non_worker || continue
+      arnold_supervisor_signal_bound_pid ensure-megaplan-watchdog "$pid" SIGTERM term watchdog-heartbeat-stale
+      rc=$?
+      [[ "$rc" -eq 0 ]] || exit "$rc"
+    done
+    sleep 2
+    for pid in $pids; do
+      arnold_supervisor_bind_signal_context_for_pid "$pid" "$marker_dir" non_worker || continue
+      arnold_supervisor_signal_bound_pid ensure-megaplan-watchdog "$pid" SIGKILL kill watchdog-heartbeat-stale
+      rc=$?
+      [[ "$rc" -eq 0 ]] || exit "$rc"
+    done
+  ' 2>>"$LOG"
+  signal_rc=$?
+  if [[ "$signal_rc" -eq 75 ]]; then
+    log "watchdog_signal_confirmation_pending container=$CONTAINER"
+    exit 0
+  fi
+  if [[ "$signal_rc" -ne 0 ]]; then
+    log "watchdog_signal_blocked container=$CONTAINER rc=$signal_rc"
+    exit 1
+  fi
 fi
 
 log "watchdog_missing restarting container=$CONTAINER"

@@ -15,13 +15,14 @@
 
 ## Execution and model policy
 
-- Seven ordered tasks: `NBF-01` through `NBF-07`.
-- Five natural execution batches:
+- Eight ordered tasks: `NBF-01` through `NBF-08`.
+- Six natural execution batches:
   1. `NBF-01`
   2. `NBF-02` → `NBF-03`
   3. `NBF-04` → `NBF-05`
   4. `NBF-06`
-  5. `NBF-07`
+  5. `NBF-08`
+  6. `NBF-07`
 - Every task is **Normal** and must use **GPT-5.6 Luna**.
 - User-selection rationale: the contracts and ownership are frozen, and every task has deterministic structural, serialization, replay, ordering, discovery, or static validation. No task meets the exceptional `[XHARD]` threshold.
 - **GPT-5.6 Sol is Oracle only:** synchronization judgments, the separate freeze decision after fresh Luna PASS, pre-push acceptance, and final completion judgment. Sol does not execute implementation tasks.
@@ -457,6 +458,8 @@ On PASS: commit Batch 2 before beginning Batch 3.
 - **Executor:** GPT-5.6 Luna
 - **User-selection rationale:** Python signal sites, context transport, disposition-to-terminal linkage, ladder behavior, and durable confirmation are mechanically discoverable and testable.
 - **Dependencies:** NBF-01, NBF-02, NBF-03
+- **Status:** `ACCEPTED` — Batch 3 attempt-5 freeze; packet
+  `8481da7b8575d98ba4019e1620cfc72b1a9b6b2f26e93e942ce0cdf473e4e792`.
 
 ### Files and symbols
 
@@ -521,6 +524,8 @@ pytest -q \
 - **Executor:** GPT-5.6 Luna
 - **User-selection rationale:** Shell ordering, exact targeting, disposition linkage, two-scan persistence, and non-circular inventory freshness have deterministic oracles.
 - **Dependencies:** NBF-04
+- **Status:** `ACCEPTED` — Batch 3 attempt-5 freeze; packet
+  `8481da7b8575d98ba4019e1620cfc72b1a9b6b2f26e93e942ce0cdf473e4e792`.
 
 ### Files and symbols
 
@@ -632,7 +637,7 @@ pytest -q \
 
 ## Batch 3 checkpoint — Sol death and inventory gate
 
-**PASS only if all are true:**
+**PASS — ACCEPTED (attempt 5) only if all are true:**
 
 - All NBF-04 and NBF-05 focused tests and shell syntax checks pass.
 - Live repository discovery and `docs/nbf-signal-inventory.json` agree exactly.
@@ -812,14 +817,14 @@ pytest -q \
 
 On PASS: commit Batch 4 before beginning final integration.
 
-# Batch 5 — Fresh-base integration, exact-SHA validation, independent review, and guarded delivery
+# Batch 6 — Fresh-base integration, exact-SHA validation, independent review, and guarded delivery
 
 ## NBF-07 — Rebase, freeze candidate, validate, review, and push
 
 - **Classification:** Normal
 - **Executor:** GPT-5.6 Luna
 - **User-selection rationale:** Final work is bounded integration: custody verification, rebase, deterministic regeneration, exact-clean-SHA validation, evidence collation, independent review, Oracle gates, and guarded push.
-- **Dependencies:** NBF-01 through NBF-06
+- **Dependencies:** NBF-01 through NBF-06, NBF-08
 - **Authoritative validation owner:** NBF-07 alone owns the authoritative broad post-rebase validation.
 
 ### Work
@@ -1012,7 +1017,7 @@ No candidate-content mutation is permitted after these checks begin. Their logs 
 - **North Star principle:** fixes ship through the fixer contract; deployed-only or uncommitted fixes do not exist.
 - **Anti-pattern prevented:** stale-SHA validation, self-invalidating generated metadata, evidence that mutates its subject, lossy disposition closure, judgment-only health claims, unguarded force-push, and unauthorized merge.
 
-## Batch 5 checkpoint — Final Sol completion gate
+## Batch 6 checkpoint — Final Sol completion gate
 
 **PASS only if all are true:**
 
@@ -1073,6 +1078,61 @@ No candidate-content mutation is permitted after these checks begin. Their logs 
 
 On local pre-push PASS: push exactly the already-committed, validated, reviewed, and authorized candidate SHA to `origin/megado-nbf-guard-0826`; no post-gate candidate mutation is allowed. After mechanical remote-tip verification, obtain final Sol completion PASS, then stop before merge.
 
+# Batch 5 — Definitive chain-control ledger suffix
+
+## NBF-08 — Implement and verify the definitive chain-control ledger
+
+- **Classification:** Normal
+- **Executor:** GPT-5.6 Luna
+- **Dependencies:** NBF-01 through NBF-06
+- **Brief:** `.oracle/briefs/nbf08-definitive-chain-control-ledger.md` — SHA-256 `ef1d0260930343d6b60ace1bf11214c418c43aaf7203f674635ba6116a19437c`
+- **Plan addendum:** `.oracle/plan-addenda/nbf08-definitive-chain-control-ledger.md` — SHA-256 `36680fe27c6c293d70691fc470db16788ce9078edead6df87e74552e684c1875`
+- **Research inventory:** `.oracle/research/nbf08-control-surface-inventory.md` — SHA-256 `e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8`
+- **Mutation-gap sweep:** `.oracle/research/nbf08-mutation-gap-sweep.md` — SHA-256 `1909c7a68901d40c7187dd6a4528496042e367de35f159e665b7524e175c1439`
+
+### Scope and ownership
+
+Own the NBF08 definitive chain-control ledger suffix described by the frozen
+brief and addendum: the typed `ChainControlJournal` facade over the existing
+IncidentLedger physical events, strict replay and legacy-boundary handling,
+physical/evidence/semantic cursors, reservation recovery, lock/CAS protocol,
+local/epic/cloud/supervisor/control/rebind evidence, projection parity, and
+  the executable S1–S7 gates. Cover all 83 research surfaces `CC-001..CC-083`
+and the six mapped ambiguity IDs. Keep domain ledgers linked rather than
+duplicated, and preserve NBF01–NBF06 ownership of worker admission,
+disposition, signal, shell, and provider policy.
+
+The implementation must use the existing IncidentLedger journal, lock,
+sequence, and authority. Every accepted mutation needs durable lineage and
+replay-safe intent/claim/result semantics; uncertainty is
+`DURABILITY_UNKNOWN` and fail-closed. The future-suffix ceremony and the
+separate NBF07 dependency rebind are distinct operations, with no implicit
+tasklist/status mutation during implementation.
+
+### Acceptance and focused validation
+
+- S1–S7 are binary gates in dependency order; S7 reruns S1–S6 from a
+  quiescent checkout and verifies the exact research digest, all 83 IDs,
+  replay/parity, compile/static checks, and evidence hashes.
+- The strict reader rejects malformed, forked, stale, ambiguous, or
+  projection-drifting history; no snapshot or DB projection can advance the
+  authoritative cursor by itself.
+- Reservation sidecar recovery, lock ordering, CAS, direct-save rejection,
+  external-effect crash cutpoints, and future-suffix rebind have deterministic
+  tests and receipts.
+- The exact focused commands and required evidence are those frozen in the
+  brief/addendum; no broad whole-repository run is substituted for a failed
+  gate.
+
+The NBF08 entry is physically appended after the NBF07 entry for suffix
+preservation; physical file order is non-authoritative. The dependency/batch
+DAG is authoritative and executes Batch 4 `NBF-06` → Batch 5 `NBF-08` → Batch
+6 `NBF-07`; NBF07's earlier physical location does not permit early execution.
+
+On PASS: commit Batch 5 before beginning NBF-07 Batch 6. NBF-07 remains the
+sole owner of fresh-base integration, final candidate freeze, authoritative
+post-rebase validation, push, and final Sol completion judgment.
+
 # Pre-execution review checklist — mandatory Luna sense-check, then separate Sol freeze
 
 First, a fresh complete GPT-5.6 Luna reviewer must read the complete North Star, goal, archived v7 plan/tasklist, final v8 plan/tasklist, custody baseline, and Sol v7 BLOCKED review, then answer **YES** to every item while naming the final plan-v8 and tasklist-v8 raw digests. Only after Luna PASS may a separate fresh GPT-5.6 Sol Oracle answer **YES** to the same checklist and issue the freeze decision on those same digests. A stale v6/v7 Luna receipt or a Sol-only review cannot freeze this tasklist.
@@ -1080,7 +1140,7 @@ First, a fresh complete GPT-5.6 Luna reviewer must read the complete North Star,
 - [ ] Does the tasklist preserve the complete North Star and avoid every named anti-pattern?
 - [ ] Does it preserve frozen goal criteria 1–8 without redesign, widening, omission, or weakened evidence?
 - [ ] Does it reference settled plan v8 digest `0ec216cca92a6f99f7d73e78494a46f8acb08e22c506a58948640ea2c57421e1`, archived plan v7 digest `3e76fc3c9eeb8fbd6580d1217db341c1c3e9f16a4be3552eadddbef2ccd9276f`, and North Star digest `d75f89f043603b75425096e1c45ef8e11386fa1e5652d752aac64c373c77dd7e`?
-- [ ] Are all seven tasks present, ordered, and grouped into the five natural batches without combining away task ownership?
+- [ ] Are all eight tasks present and grouped into the six natural batches without combining away task ownership, with execution order determined by the dependency/batch DAG rather than physical entry order?
 - [ ] Are dependencies exact, including the hard NBF-06 barrier through NBF-05?
 - [ ] Is NBF-01 limited to schemas, replay, CAS, disposition-terminal mapping, terminal/reconciliation/change/confirmation primitives, and deterministic provider-failure-key/keyed-streak replay mechanics without T8 policy?
 - [ ] Does NBF-01 explicitly define `DispatchOutcome.kind=worker_disposition`, its accepted-state context, one-way terminal mapping, idempotency, and replay?
