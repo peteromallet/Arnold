@@ -50,7 +50,7 @@ import runpy
 import sys
 import time
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     cli_model,
@@ -66,6 +66,9 @@ from arnold_pipelines.megaplan.managed_agent import (
 LAUNCH_RECEIPT_SCHEMA = "arnold.superfixer.babysitter_launch_receipt.v1"
 DISPATCH_RECEIPT_NAME = "{session}.babysitter-receipt.json"
 LAUNCH_RECEIPT_NAME = "{session}.babysitter-launch-receipt.json"
+CHAIN_DRIVE_RECEIPT_SCHEMA = "arnold.megaplan.chain_drive_launch_receipt.v1"
+CHAIN_DRIVE_RECEIPT_NAME = "chain-drive-launch-receipt.json"
+CHAIN_DRIVE_RECEIPT_ENV = "ARNOLD_CHAIN_DRIVE_RECEIPT"
 
 DEFAULT_MODEL = "codex:gpt-5.6-luna"
 TOOLSETS = "file,web,terminal"
@@ -368,6 +371,71 @@ def _receipt_candidates(ctx: dict[str, Any]) -> list[Path]:
     return [directory / name for directory in directories for name in names]
 
 
+def _chain_drive_receipt_path(ctx: Mapping[str, Any]) -> Path:
+    configured = os.environ.get(CHAIN_DRIVE_RECEIPT_ENV, "").strip()
+    if configured:
+        return Path(configured)
+    return Path(str(ctx["run_root"])) / CHAIN_DRIVE_RECEIPT_NAME
+
+
+def _validate_chain_drive_receipt(
+    ctx: Mapping[str, Any], receipt: object
+) -> str | None:
+    """Validate the hub custody proof for a completed chain babysitter.
+
+    The managed agent may finish while a synchronous ``arnold-chain`` child
+    is still attached to its lifetime.  A prompt cannot prove that the child
+    was handed to durable hub custody, so completion is accepted only when a
+    hub-owned receipt binds the exact occurrence and launch contract.
+    """
+    if not isinstance(receipt, Mapping):
+        return "chain drive custody receipt is not a JSON object"
+    if receipt.get("schema") != CHAIN_DRIVE_RECEIPT_SCHEMA:
+        return "chain drive custody receipt has an invalid schema"
+    expected = {
+        "session": str(ctx.get("session") or ""),
+        "occurrence_digest": str(ctx.get("occurrence") or ""),
+        "plan": str(ctx.get("plan") or ""),
+        "workspace": str(ctx.get("workspace") or ""),
+    }
+    for key, value in expected.items():
+        if not value or receipt.get(key) != value:
+            return f"chain drive custody receipt identity mismatch for {key}"
+    if receipt.get("status") not in {"launched", "running", "completed"}:
+        return "chain drive custody receipt is not an accepted launch status"
+    custody = receipt.get("custody")
+    if not isinstance(custody, Mapping):
+        return "chain drive custody receipt is missing custody fields"
+    required = {
+        "persist": True,
+        "detached": True,
+        "pty": False,
+        "restart": "no",
+        "ready_matcher": None,
+    }
+    for key, value in required.items():
+        if custody.get(key) != value:
+            return f"chain drive custody contract violation: {key}"
+    return None
+
+
+def _chain_drive_custody_error(ctx: Mapping[str, Any]) -> str | None:
+    """Return a durable-custody error, or ``None`` when proof is present."""
+    if str(ctx.get("run_kind") or "").strip() != "chain":
+        return None
+    if not str(ctx.get("plan") or "").strip() or not str(ctx.get("workspace") or "").strip():
+        return "chain babysitter completion lacks plan/workspace custody identity"
+    path = _chain_drive_receipt_path(ctx)
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return f"durable chain drive custody receipt is missing: {path}"
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"durable chain drive custody receipt is unreadable: {path} ({exc})"
+    error = _validate_chain_drive_receipt(ctx, receipt)
+    return f"durable chain drive custody proof rejected: {error}" if error else None
+
+
 def _dedup_already_running(ctx: dict[str, Any]) -> bool:
     """True when a live babysitter supervisor owns this occurrence digest."""
     occurrence = ctx["occurrence"]
@@ -640,6 +708,16 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 f"session={ctx.get('session', '?')} occurrence={ctx.get('occurrence', '?')} "
                 f"reason={false_success_reason}"
             )
+        if terminal_status == "completed":
+            custody_error = _chain_drive_custody_error(ctx)
+            if custody_error:
+                terminal_status = "failed"
+                false_success_reason = custody_error
+                _eprint(
+                    f"[babysitter] FALSE SUCCESS downgraded to failed "
+                    f"session={ctx.get('session', '?')} occurrence={ctx.get('occurrence', '?')} "
+                    f"reason={custody_error}"
+                )
         _write_receipts(
             ctx,
             _receipt_payload(
