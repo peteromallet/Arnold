@@ -452,6 +452,7 @@ def _verify_owner_adoption_still_current(
     spec_path: Path,
     plan_state: Mapping[str, Any],
     chain_state: Any,
+    expected_session: str,
     adoption_identity: Mapping[str, Any],
     occurrence_id: str,
     claim_id: str,
@@ -489,9 +490,14 @@ def _verify_owner_adoption_still_current(
             "occurrence_not_recorded",
             "owner-boundary adoption identity is malformed",
         )
-    if str(adoption_occurrence.get("chain_session") or "").strip() != str(
-        getattr(chain_state, "chain_session", "") or ""
-    ).strip():
+    adopted_session = str(adoption_occurrence.get("chain_session") or "").strip()
+    requested_session = str(expected_session or "").strip()
+    chain_session = str(getattr(chain_state, "chain_session", "") or "").strip()
+    # Local chain specs legitimately predate the optional chain_session field.
+    # In that shape, the explicit session already checked against the queued
+    # request is the authoritative session for this join.  A populated chain
+    # session remains a hard consistency check.
+    if adopted_session != requested_session or (chain_session and adopted_session != chain_session):
         raise CliError(
             "occurrence_cas_changed",
             "chain session changed since the occurrence was adopted",
@@ -1108,6 +1114,7 @@ def join_exact_occurrence(
             spec_path=spec_path,
             plan_state=plan_state,
             chain_state=chain_state,
+            expected_session=session_n,
             adoption_identity=adoption_identity,
             occurrence_id=occurrence_id_n,
             claim_id=claim_id_n,
