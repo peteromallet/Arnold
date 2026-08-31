@@ -137,9 +137,13 @@ class DispatchOutcome:
     disposition_id: str | None = None
     reconciliation_event_id: str | None = None
     terminal_outcome_event_id: str | None = None
+    provider: str | None = None
+    route_liveness_kind: str | None = None
+    route_liveness_identity: str | None = None
+    route_liveness_digest: str | None = None
     schema_version: int = 1
 
-    _FIELDS = frozenset({"schema_version", "kind", "launch_state", "plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "admission_receipt_id", "semantic_dispatch_fingerprint", "selected_spec", "worker_identity", "started_at", "finished_at", "success_payload", "terminal_failure", "provider_evidence", "provider_failure_key", "disposition_id", "reconciliation_event_id", "terminal_outcome_event_id"})
+    _FIELDS = frozenset({"schema_version", "kind", "launch_state", "plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "admission_receipt_id", "semantic_dispatch_fingerprint", "selected_spec", "provider", "route_liveness_kind", "route_liveness_identity", "route_liveness_digest", "worker_identity", "started_at", "finished_at", "success_payload", "terminal_failure", "provider_evidence", "provider_failure_key", "disposition_id", "reconciliation_event_id", "terminal_outcome_event_id"})
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -157,9 +161,16 @@ class DispatchOutcome:
         for name in ("plan_id", "phase", "dispatch_family_id", "logical_dispatch_id", "selected_spec"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name):
                 raise ValueError(f"DispatchOutcome.{name} must be non-empty")
-        if kind in {DispatchOutcomeKind.no_launch, DispatchOutcomeKind.unresolved_launch}:
+        if kind is DispatchOutcomeKind.no_launch:
             if any(getattr(self, n) is not None for n in ("admission_receipt_id", "semantic_dispatch_fingerprint", "worker_identity", "started_at", "finished_at", "provider_evidence", "provider_failure_key", "disposition_id", "terminal_outcome_event_id", "terminal_failure", "success_payload")):
                 raise ValueError("no_launch cannot carry worker/provider/disposition evidence")
+        elif kind is DispatchOutcomeKind.unresolved_launch:
+            if any(getattr(self, n) is not None for n in ("provider_evidence", "provider_failure_key", "disposition_id", "terminal_failure", "success_payload")):
+                raise ValueError("no_launch cannot carry worker/provider/disposition evidence")
+            if self.admission_receipt_id is not None and not self.semantic_dispatch_fingerprint:
+                raise ValueError("unresolved outcome receipt requires fingerprint")
+            if self.worker_identity is not None and not isinstance(self.worker_identity, Mapping):
+                raise ValueError("unresolved outcome worker identity must be typed")
         else:
             if not self.admission_receipt_id or not self.semantic_dispatch_fingerprint or self.worker_identity is None or not self.started_at or not self.finished_at:
                 raise ValueError("accepted outcome requires receipt, worker, and timing context")
@@ -224,6 +235,8 @@ class DispatchOutcome:
             "schema_version", "kind", "launch_state", "plan_id", "phase",
             "dispatch_family_id", "logical_dispatch_id", "admission_receipt_id",
             "semantic_dispatch_fingerprint", "selected_spec", "worker_identity",
+            "provider", "route_liveness_kind", "route_liveness_identity",
+            "route_liveness_digest",
             "started_at", "finished_at", "success_payload", "terminal_failure",
             "provider_evidence", "disposition_id", "reconciliation_event_id",
             "terminal_outcome_event_id", "provider_failure_key",
@@ -234,7 +247,10 @@ class DispatchOutcome:
         unknown = set(payload) - cls._FIELDS
         if unknown:
             raise ValueError(f"unknown DispatchOutcome fields: {sorted(unknown)}")
-        missing = cls._FIELDS - set(payload)
+        missing = cls._FIELDS - set(payload) - {
+            "provider", "route_liveness_kind", "route_liveness_identity",
+            "route_liveness_digest",
+        }
         if missing:
             raise ValueError(f"missing DispatchOutcome fields: {sorted(missing)}")
         return cls(**dict(payload))
@@ -1084,10 +1100,82 @@ def phase_result_guard(plan_dir: Path):
         else:
             ek = ExitKind.internal_error.value
         scheduling_condition = None
+        dispatch_outcome = None
         if ek == ExitKind.scheduling_condition.value:
-            raw_condition = exc.extra.get("condition", exc.extra)
-            if isinstance(raw_condition, dict):
-                scheduling_condition = SchedulingCondition.from_dict(raw_condition)
+            # Native/OMP doors retain the historical CliError boundary, but
+            # their unresolved envelope is deliberately two typed values:
+            # ``reason`` plus ``dispatch_outcome``. Passing that whole
+            # mapping to SchedulingCondition.from_dict used to fail on the
+            # extra keys, so decode the outcome separately and construct a
+            # condition from only condition-owned fields.
+            raw_extra = exc.extra if isinstance(exc.extra, Mapping) else {}
+            raw_outcome = raw_extra.get("dispatch_outcome")
+            if isinstance(raw_outcome, Mapping):
+                try:
+                    dispatch_outcome = DispatchOutcome.from_dict(raw_outcome)
+                except (TypeError, ValueError):
+                    dispatch_outcome = None
+            raw_condition = raw_extra.get("condition")
+            if raw_condition is None and raw_outcome is None:
+                # Preserve the established wire form where the condition
+                # itself is the CliError.extra mapping.
+                raw_condition = raw_extra
+            condition_fields = (
+                dict(raw_condition) if isinstance(raw_condition, Mapping) else {}
+            )
+            if dispatch_outcome is not None:
+                condition_fields = {
+                    key: value
+                    for key, value in condition_fields.items()
+                    if key in SchedulingCondition._FIELDS
+                }
+                condition_fields.update(
+                    {
+                        "condition_id": condition_fields.get(
+                            "condition_id",
+                            f"unresolved:{dispatch_outcome.logical_dispatch_id}",
+                        ),
+                        "reason": condition_fields.get("reason", "unresolved_launch"),
+                        "plan_id": condition_fields.get("plan_id", dispatch_outcome.plan_id),
+                        "phase": condition_fields.get("phase", dispatch_outcome.phase),
+                        "spec": condition_fields.get("spec", dispatch_outcome.selected_spec),
+                        "dispatch_family_id": condition_fields.get(
+                            "dispatch_family_id", dispatch_outcome.dispatch_family_id
+                        ),
+                        "logical_dispatch_id": condition_fields.get(
+                            "logical_dispatch_id", dispatch_outcome.logical_dispatch_id
+                        ),
+                        "admission_attempt": condition_fields.get("admission_attempt", 1),
+                        "retry_after_s": condition_fields.get("retry_after_s", 0.0),
+                        "observed_at": condition_fields.get(
+                            "observed_at", dispatch_outcome.finished_at or now_utc()
+                        ),
+                        "cause_event_id": condition_fields.get(
+                            "cause_event_id", dispatch_outcome.terminal_outcome_event_id
+                        ),
+                        "disposition_id": condition_fields.get("disposition_id"),
+                        "from_spec": condition_fields.get("from_spec"),
+                        "to_spec": condition_fields.get("to_spec"),
+                        "evidence": {
+                            **(
+                                condition_fields.get("evidence")
+                                if isinstance(condition_fields.get("evidence"), Mapping)
+                                else {}
+                            ),
+                            "dispatch_outcome": dispatch_outcome.to_dict(),
+                        },
+                        "schema_version": condition_fields.get("schema_version", 1),
+                    }
+                )
+                try:
+                    scheduling_condition = SchedulingCondition(**condition_fields)
+                except (TypeError, ValueError):
+                    scheduling_condition = None
+            elif condition_fields:
+                try:
+                    scheduling_condition = SchedulingCondition.from_dict(condition_fields)
+                except (TypeError, ValueError):
+                    scheduling_condition = None
         external_error = None
         if ek == ExitKind.internal_error.value:
             external_error = _classify_external_error(exc)
@@ -1113,6 +1201,7 @@ def phase_result_guard(plan_dir: Path):
                         exit_kind=ek,
                         external_error=external_error,
                         scheduling_condition=scheduling_condition,
+                        dispatch_outcome=dispatch_outcome,
                     )
                     validate_phase_result_current(result.to_dict())
                     atomic_write_phase_result(plan_dir, result)

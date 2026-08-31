@@ -68,7 +68,7 @@ from .shared import (
     attach_agent_fallback,
     worker_module,
 )
-from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation, DispatchOutcome
 from arnold_pipelines.megaplan.orchestration.authority_readers import effective_execute_completed_task_ids
 from arnold_pipelines.megaplan.workflows.handler_contract import (
     apply_response_projection,
@@ -1237,6 +1237,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 blocked_tasks=blocked,
                 deviations=devs,
                 artifacts_written=tuple(response.get("artifacts", [])),
+                dispatch_outcome=(
+                    DispatchOutcome.from_dict(response["dispatch_outcome"])
+                    if isinstance(response.get("dispatch_outcome"), dict)
+                    else None
+                ),
             )
             response.pop("_phase_outcome", None)
             response.pop("blocked_task_notes", None)

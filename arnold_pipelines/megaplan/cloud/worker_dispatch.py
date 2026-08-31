@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import shutil
-import socket
 import subprocess
 import time
 from dataclasses import dataclass, field, replace
@@ -25,11 +24,12 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     DispatchOutcome,
     SchedulingCondition,
 )
-from arnold_pipelines.megaplan.types import CliError, parse_agent_spec
+from arnold_pipelines.megaplan.types import AgentSpec, CliError, format_agent_spec, parse_agent_spec
 
 SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
+NATIVE_PROOF_MAX_AGE_S = 24.0 * 60.0 * 60.0
 
 
 def _now() -> str:
@@ -142,11 +142,16 @@ class WorkerAdmissionRequest:
     timeout_budget_s: float = DEFAULT_TIMEOUT_BUDGET_S
     parent_logical_dispatch_id: str | None = None
     authorizing_event_id: str | None = None
+    parent_terminal_event_id: str | None = None
+    parent_source_spec: str | None = None
+    transition_kind: str | None = None
+    precondition_identity: str | None = None
     admission_attempt: int = 1
     production_intent: bool = True
     ledger_root: Path | None = None
     changed_precondition_event_id: str | None = None
     route_liveness_resolver: Callable[[str, str, str], Mapping[str, Any]] | None = field(default=None, compare=False, repr=False)
+    native_construction_seam: Callable[[str, str, str], Mapping[str, Any]] | None = field(default=None, compare=False, repr=False)
     source_runtime_validator: Callable[["WorkerAdmissionRequest"], Any] | None = field(default=None, compare=False, repr=False)
     memory_headroom_reader: Callable[[str], Mapping[str, Any] | None] | None = field(default=None, compare=False, repr=False)
     cooldown_reader: Callable[[Path | None, str, str], float] | None = field(default=None, compare=False, repr=False)
@@ -156,6 +161,7 @@ class WorkerAdmissionRequest:
         """Return the transport form, excluding process-local callback hooks."""
         local_only = {
             "route_liveness_resolver", "source_runtime_validator",
+            "native_construction_seam",
             "memory_headroom_reader", "cooldown_reader", "ledger",
         }
         result: dict[str, Any] = {}
@@ -206,6 +212,7 @@ class WorkerAdmissionReceipt:
     route_transition_event_id: str | None
     admitted_at: str
     execution_context: WorkerExecutionContextRef
+    production_intent: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         result = {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "execution_context"}
@@ -248,6 +255,120 @@ class LaunchResult:
     """Optional adapter result for closures that are not already outcomes."""
     accepted: bool
     value: Any = None
+    worker_identity: Mapping[str, Any] | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ManagedCommandResult:
+    """Operation-specific result for the managed command adapter."""
+
+    returncode: int
+    worker_identity: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.returncode, bool) or not isinstance(self.returncode, int):
+            raise ValueError("managed command returncode must be an integer")
+
+
+def _is_worker_result(value: Any) -> bool:
+    return type(value).__name__ == "WorkerResult" and type(value).__module__.endswith("workers._impl")
+
+
+def _is_worker_operation_result(value: Any) -> bool:
+    return _is_worker_result(value) or (
+        isinstance(value, tuple)
+        and len(value) == 4
+        and _is_worker_result(value[0])
+    )
+
+
+def _worker_result_is_failure_shaped(value: Any) -> bool:
+    payload = getattr(value, "payload", None)
+    if not isinstance(payload, Mapping):
+        return False
+    if payload.get("ok") is False or payload.get("success") is False:
+        return True
+    status = payload.get("status")
+    if isinstance(status, str) and status.lower() in {"failed", "failure", "error", "aborted"}:
+        return True
+    return any(key in payload for key in ("error", "failure", "exception", "terminal_failure"))
+
+
+def _outcome_from_terminal_exception(
+    exc: BaseException,
+    receipt: WorkerAdmissionReceipt,
+    started: str,
+    finished: str,
+) -> DispatchOutcome | None:
+    """Translate only explicitly typed adapter failures; never infer one."""
+    candidate = getattr(exc, "dispatch_outcome", None)
+    if candidate is None:
+        candidate = getattr(exc, "outcome", None)
+    if isinstance(candidate, DispatchOutcome):
+        return _normalize_outcome(candidate, receipt, started, finished)
+    if isinstance(candidate, Mapping):
+        if not isinstance(candidate.get("worker_identity"), Mapping):
+            return None
+        return _normalize_outcome(candidate, receipt, started, finished)
+    code = str(getattr(exc, "code", ""))
+    extra = getattr(exc, "extra", {})
+    if not isinstance(extra, Mapping):
+        extra = {}
+    if code in {"provider_exhausted", "provider_exhaustion"}:
+        evidence = extra.get("provider_evidence")
+        worker_identity = extra.get("worker_identity")
+        if not isinstance(evidence, Mapping) or not isinstance(worker_identity, Mapping):
+            return None
+        return DispatchOutcome(
+            kind="provider_exhausted", launch_state="accepted",
+            plan_id=receipt.plan_id, phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            worker_identity=dict(worker_identity),
+            started_at=started, finished_at=finished,
+            provider_evidence=dict(evidence),
+            provider_failure_key=str(extra.get("provider_failure_key") or evidence.get("provider_failure_key")),
+        )
+    if code in {"ordinary_terminal_failure", "worker_failure"}:
+        worker_identity = extra.get("worker_identity")
+        if not isinstance(worker_identity, Mapping):
+            return None
+        return DispatchOutcome(
+            kind="ordinary_terminal_failure", launch_state="accepted",
+            plan_id=receipt.plan_id, phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            worker_identity=dict(worker_identity),
+            started_at=started, finished_at=finished,
+            terminal_failure=dict(extra.get("terminal_failure") or {"code": code, "message": str(exc)}),
+        )
+    if code in {"worker_disposition", "worker_killed", "worker_terminated", "worker_timeout"}:
+        disposition_id = extra.get("disposition_id")
+        worker_identity = extra.get("worker_identity")
+        if not disposition_id or not isinstance(worker_identity, Mapping):
+            return None
+        return DispatchOutcome(
+            kind="worker_disposition", launch_state="accepted",
+            plan_id=receipt.plan_id, phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=receipt.admission_receipt_id,
+            semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+            selected_spec=receipt.normalized_spec,
+            worker_identity=dict(worker_identity),
+            started_at=str(extra.get("started_at") or started),
+            finished_at=str(extra.get("finished_at") or finished),
+            disposition_id=str(disposition_id),
+        )
+    return None
 
 
 def _family(provider: str, model: str, selected_spec: str) -> str:
@@ -311,7 +432,28 @@ def resolve_omp_live_membership(provider: str, model: str, *, timeout_s: float =
     return {"kind": "omp_membership", "identity": normalized, "digest": digest, "provider": provider, "model": model, "observed_at": _now()}
 
 
-def _default_native_liveness(agent: str, model: str) -> Mapping[str, Any]:
+def _extract_native_models(value: Any) -> set[str]:
+    """Extract exact model identities from a backend-owned catalog response."""
+    models = value.get("models") if isinstance(value, Mapping) else value
+    if not isinstance(models, list):
+        return set()
+    result: set[str] = set()
+    for item in models:
+        if isinstance(item, str) and item.strip():
+            result.add(item.strip())
+        elif isinstance(item, Mapping):
+            slug = item.get("slug") or item.get("id") or item.get("model")
+            if isinstance(slug, str) and slug.strip():
+                result.add(slug.strip())
+    return result
+
+
+def _default_native_liveness(agent: str, model: str, *, runner: Callable[..., Any] | None = None) -> Mapping[str, Any]:
+    """Obtain native capability from the installed backend catalog.
+
+    Executable presence alone is not route proof. ``debug models`` is a
+    backend-owned, read-only catalog seam; exact membership is required.
+    """
     binary = "claude" if agent in {"claude", "shannon"} else "codex" if agent == "codex" else agent
     path = shutil.which(binary)
     if not path:
@@ -319,10 +461,252 @@ def _default_native_liveness(agent: str, model: str) -> Mapping[str, Any]:
     resolved = str(Path(path).resolve())
     try:
         stat = Path(resolved).stat()
-        identity = f"{binary}:{resolved}:{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}"
+        executable = {"path": resolved, "st_dev": stat.st_dev, "st_ino": stat.st_ino, "mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
     except OSError as exc:
         raise CliError("route_liveness_unreadable", f"native backend proof is unreadable: {exc}") from exc
-    return {"kind": "native_backend", "identity": identity, "digest": _digest(identity), "backend": binary, "provider": agent, "model": model, "observed_at": _now()}
+    run = runner or subprocess.run
+    try:
+        probe = run([resolved, "debug", "models"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CliError("route_liveness_unavailable", f"native model catalog failed: {exc}") from exc
+    if getattr(probe, "returncode", 1) != 0:
+        raise CliError("route_liveness_unavailable", f"native model catalog failed for {model!r}")
+    try:
+        catalog = json.loads(getattr(probe, "stdout", ""))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CliError("route_liveness_invalid", "native model catalog was not valid JSON") from exc
+    models = sorted(_extract_native_models(catalog))
+    if model not in models:
+        raise CliError("route_liveness_missing", f"native backend model {model!r} is not an exact catalog member")
+    # Catalog membership is only the first half of native admission.  Prepare
+    # the actual backend execution capability with its read-only help path;
+    # this binds constructability to the installed executable rather than
+    # asserting it from a model-name registry.
+    try:
+        prepare_argv = [resolved, "exec", "--help"] if binary == "codex" else [resolved, "--help"]
+        prepared = run(prepare_argv, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CliError("native_constructor_unavailable", f"native constructor preparation failed: {exc}") from exc
+    if getattr(prepared, "returncode", 1) != 0:
+        raise CliError("native_constructor_unavailable", f"native constructor preparation failed for {model!r}")
+    registry = {"backend": binary, "executable": executable, "models": models}
+    preparation = {"ok": True, "backend": agent, "provider": agent, "model": model, "route": f"{agent}:{model}", "operation": "exec --help" if binary == "codex" else "--help", "executable": executable}
+    proof = {"constructable": True, "catalog": models, "registry": registry, "preparation": preparation, "seam": "backend constructor preparation"}
+    observed_at = _now()
+    route = f"{agent}:{model}"
+    content = {"backend": agent, "provider": agent, "normalized_model": model, "route": route, "capability_registry": registry, "registry_generation": _digest(registry), "proof": proof, "proof_generation": _digest(proof), "family": _family(agent, model, route)}
+    identity = _digest(content)
+    return {"kind": "native_backend", **content, "identity": identity, "digest": _digest({**content, "identity": identity, "observed_at": observed_at}), "observed_at": observed_at}
+
+
+def _runtime_binding_proof(request: WorkerAdmissionRequest) -> Mapping[str, Any]:
+    """Resolve current runtime evidence; an injected seam can only attest it."""
+    if not request.production_intent:
+        validator = request.source_runtime_validator
+        if validator is None:
+            return {"ok": True, "development": True}
+        result = validator(request)
+        if result is False or (isinstance(result, Mapping) and result.get("ok") is False):
+            raise CliError("source_runtime_invalid", "source/runtime validator rejected dispatch")
+        if isinstance(result, Mapping):
+            return result
+        if result is True:
+            raise CliError("source_runtime_invalid", "runtime validator returned an untyped success marker")
+        raise CliError("source_runtime_invalid", "source/runtime validator returned an untyped result")
+
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        _json_file,
+        configured_seed_path,
+        validate_runtime_launch_seed,
+    )
+
+    seed_path = configured_seed_path()
+    if seed_path is None:
+        raise CliError("source_runtime_missing", "production worker dispatch requires a configured runtime seed")
+    seed = _json_file(seed_path, label="runtime launch seed")
+    validation = validate_runtime_launch_seed(seed, component="worker")
+    if not isinstance(validation, Mapping) or validation.get("status") != "ready":
+        raise CliError("source_runtime_invalid", "runtime seed validation did not produce ready evidence")
+    authoritative = {
+        "ok": True,
+        "source_revision": seed.get("expected_revision"),
+        "runtime_vector": seed.get("runtime_provenance"),
+        "runtime_vector_sha256": validation.get("runtime_vector_sha256"),
+        "manifest_identity": seed.get("manifest_sha256"),
+        "seed_identity": hashlib.sha256(seed_path.read_bytes()).hexdigest(),
+        "seed_sha256": seed.get("content_sha256"),
+        "dependency_interpreter_identity": (
+            (seed.get("dependency_generation") or {}).get("interpreter_path")
+            or (seed.get("interpreter") or {}).get("executable")
+        ),
+        "attestation": validation,
+    }
+    validator = request.source_runtime_validator
+    if validator is not None:
+        result = validator(request)
+        if result is False or (isinstance(result, Mapping) and result.get("ok") is False):
+            raise CliError("source_runtime_invalid", "source/runtime validator rejected dispatch")
+        if not isinstance(result, Mapping) or result is True:
+            raise CliError("source_runtime_invalid", "source/runtime validator returned an untyped result")
+        for name in (
+            "source_revision",
+            "runtime_vector",
+            "manifest_identity",
+            "seed_identity",
+            "dependency_interpreter_identity",
+        ):
+            if result.get(name) != authoritative.get(name):
+                raise CliError(
+                    "runtime_binding_mismatch",
+                    f"injected runtime proof does not match current {name}",
+                )
+    return authoritative
+
+
+def _validate_runtime_binding(request: WorkerAdmissionRequest) -> None:
+    proof = _runtime_binding_proof(request)
+    if not isinstance(proof, Mapping) or proof.get("ok") is False:
+        raise CliError("source_runtime_invalid", "runtime binding proof is not positive")
+    if request.production_intent:
+        required_groups = (
+            ("source_revision", "expected_revision"),
+            ("manifest_identity", "manifest_sha256"),
+            ("seed_identity", "seed_sha256"),
+            ("dependency_interpreter_identity", "interpreter_path"),
+        )
+        if any(not any(proof.get(name) not in (None, "") for name in group) for group in required_groups):
+            raise CliError("source_runtime_invalid", "runtime binding proof is missing a settled identity")
+        if not proof.get("runtime_vector") and not proof.get("runtime_vector_sha256"):
+            raise CliError("source_runtime_invalid", "runtime binding proof is missing the runtime vector")
+    checks = {
+        "source_revision": ("source_revision", "expected_revision"),
+        "manifest_identity": ("manifest_identity", "manifest_sha256"),
+        "seed_identity": ("seed_identity", "seed_sha256"),
+        "dependency_interpreter_identity": ("dependency_interpreter_identity", "interpreter_path"),
+    }
+    for request_name, proof_names in checks.items():
+        values = [proof.get(name) for name in proof_names if proof.get(name) not in (None, "")]
+        if values and str(getattr(request, request_name)) not in {str(value) for value in values}:
+            raise CliError("runtime_binding_mismatch", f"{request_name} does not match authoritative runtime proof")
+    runtime_sha = proof.get("runtime_vector_sha256")
+    authoritative_vector = proof.get("runtime_vector")
+    if authoritative_vector is not None and authoritative_vector != request.runtime_vector:
+        raise CliError("runtime_binding_mismatch", "runtime_vector does not match authoritative runtime proof")
+    requested_runtime_sha = (
+        request.runtime_vector.get("runtime_vector_sha256")
+        if isinstance(request.runtime_vector, Mapping)
+        else None
+    )
+    if runtime_sha and requested_runtime_sha and runtime_sha != requested_runtime_sha:
+        raise CliError("runtime_binding_mismatch", "runtime_vector does not match authoritative runtime proof")
+
+
+def _validate_native_liveness(
+    liveness: Mapping[str, Any], *, provider: str, model: str, normalized_spec: str,
+    backend: str, authoritative: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any]:
+    required = ("kind", "identity", "digest", "backend", "provider", "normalized_model", "capability_registry", "proof", "observed_at")
+    if any(not liveness.get(name) for name in required):
+        raise CliError("route_liveness_invalid", "native route proof is incomplete")
+    if liveness.get("kind") != "native_backend":
+        raise CliError("route_liveness_invalid", "native route proof kind is invalid")
+    if liveness.get("backend") != backend or liveness.get("provider") != provider:
+        raise CliError("route_liveness_invalid", "native route proof backend/provider mismatch")
+    if liveness.get("normalized_model") != model:
+        raise CliError("route_liveness_invalid", "native route proof model/content mismatch")
+    # Effort remains in the selected receipt/spec, but native liveness is
+    # proved for the route/model coordinate only.
+    route_identity = format_agent_spec(AgentSpec(provider, model=model))
+    expected_family = _family(provider, model, route_identity)
+    if authoritative is not None and liveness.get("family") != expected_family:
+        raise CliError("route_liveness_invalid", "native route proof family mismatch")
+    proof = liveness.get("proof")
+    if authoritative is not None and (not isinstance(proof, Mapping) or proof.get("constructable") is not True):
+        raise CliError("route_liveness_invalid", "native construction proof is not positively constructable")
+    route = liveness.get("route") or liveness.get("route_identity")
+    if route != route_identity:
+        raise CliError("route_liveness_invalid", "native route proof selected route mismatch")
+    if authoritative is not None:
+        # The caller may carry an attestation for diagnostics, but the selected
+        # construction seam is the authority.  Compare every proof component,
+        # then recompute both identities from the authoritative content so a
+        # well-shaped arbitrary digest cannot cross admission.
+        proof_fields = (
+            "backend", "provider", "normalized_model", "route", "route_identity",
+            "family", "capability_registry", "registry_generation", "proof", "proof_generation",
+            "identity", "observed_at",
+        )
+        for name in proof_fields:
+            if name in liveness and name in authoritative and liveness.get(name) != authoritative.get(name):
+                raise CliError("route_liveness_invalid", f"native route proof {name} disagrees with construction seam")
+        liveness = authoritative
+        route = liveness.get("route") or liveness.get("route_identity")
+        if route != route_identity:
+            raise CliError("route_liveness_invalid", "native construction seam selected route mismatch")
+        registry = liveness.get("capability_registry")
+        proof = liveness.get("proof")
+        generation = liveness.get("registry_generation")
+        proof_generation = liveness.get("proof_generation")
+        if not isinstance(registry, Mapping) or not isinstance(proof, Mapping):
+            raise CliError("route_liveness_invalid", "native construction proof content is untyped")
+        catalog = registry.get("models") or registry.get("catalog")
+        if isinstance(catalog, Mapping):
+            catalog = list(catalog.values())
+        members: set[str] = set()
+        if isinstance(catalog, (list, tuple, set)):
+            for item in catalog:
+                if isinstance(item, str):
+                    members.add(item.removeprefix("omp:").strip())
+                elif isinstance(item, Mapping):
+                    slug = item.get("slug") or item.get("id") or item.get("model")
+                    if isinstance(slug, str):
+                        members.add(slug.removeprefix("omp:").strip())
+        if model not in members:
+            raise CliError("route_liveness_missing", "native model is not an authoritative catalog member")
+        if proof.get("constructable") is not True:
+            raise CliError("route_liveness_invalid", "native construction proof is not positively constructable")
+        preparation = proof.get("preparation")
+        if (
+            not isinstance(preparation, Mapping)
+            or preparation.get("ok") is not True
+            or preparation.get("provider") != provider
+            or preparation.get("model") != model
+            or preparation.get("route") != route_identity
+        ):
+            raise CliError("route_liveness_invalid", "native constructor preparation is missing or mismatched")
+        if isinstance(proof.get("registry"), Mapping) and proof.get("registry") != registry:
+            raise CliError("route_liveness_invalid", "native construction proof registry disagrees with capability registry")
+        if generation in (None, "") or proof_generation in (None, ""):
+            raise CliError("route_liveness_invalid", "native route proof generation is missing")
+        try:
+            observed = datetime.fromisoformat(str(liveness.get("observed_at")).replace("Z", "+00:00"))
+            age_s = time.time() - observed.timestamp()
+        except (TypeError, ValueError, OverflowError):
+            raise CliError("route_liveness_invalid", "native route proof observation timestamp is invalid")
+        if age_s < -300.0 or age_s > NATIVE_PROOF_MAX_AGE_S:
+            raise CliError("route_liveness_stale", "native route proof observation is stale")
+        identity_content = {
+            "backend": backend,
+            "provider": provider,
+            "normalized_model": model,
+            "route": route_identity,
+            "capability_registry": registry,
+            "registry_generation": generation,
+            "proof": proof,
+            "proof_generation": proof_generation,
+        }
+        identity_content["family"] = expected_family
+        expected_identity = _digest(identity_content)
+        if liveness.get("identity") != expected_identity:
+            raise CliError("route_liveness_invalid", "native route proof identity is not recomputed from authoritative content")
+        expected_digest = _digest({
+            **identity_content,
+            "identity": expected_identity,
+            "observed_at": liveness.get("observed_at"),
+        })
+        if liveness.get("digest") != expected_digest:
+            raise CliError("route_liveness_invalid", "native route proof digest is not recomputed from authoritative content")
+    return liveness
 
 
 def _validate_basic(request: WorkerAdmissionRequest) -> AdmissionRefusal | None:
@@ -372,6 +756,26 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
     basic = _validate_basic(request)
     if basic:
         return basic
+    if request.production_intent and any(
+        hook is not None
+        for hook in (
+            request.route_liveness_resolver,
+            request.source_runtime_validator,
+            request.memory_headroom_reader,
+            request.cooldown_reader,
+        )
+    ):
+        return _refusal(
+            request,
+            "production_input_substitution",
+            "production admission observations are backend/system-owned",
+        )
+    if request.production_intent and request.native_construction_seam is not None:
+        return _refusal(
+            request,
+            "production_constructor_unauthorized",
+            "production construction seam is not a request-supplied capability",
+        )
     try:
         parsed = parse_agent_spec(request.selected_spec)
         agent = parsed.agent
@@ -384,13 +788,47 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
             normalized_model = validate_omp_catalog_model(provider, model_id)
             normalized_spec = f"omp:{normalized_model}"
             family = _family(provider, model_id, normalized_spec)
-            liveness = (request.route_liveness_resolver or (lambda p, m, _s: resolve_omp_live_membership(p, m, timeout_s=min(10.0, float(request.timeout_budget_s)))))(provider, model_id, normalized_spec)
+            if request.production_intent:
+                # The OMP catalog command is the sole live-membership authority.
+                # A request callback cannot replace it with caller-shaped data.
+                liveness = resolve_omp_live_membership(
+                    provider, model_id,
+                    timeout_s=min(10.0, float(request.timeout_budget_s)),
+                )
+            else:
+                liveness = (request.route_liveness_resolver or (lambda p, m, _s: resolve_omp_live_membership(p, m, timeout_s=min(10.0, float(request.timeout_budget_s)))))(provider, model_id, normalized_spec)
         else:
             normalized_spec = request.selected_spec.strip()
             provider = agent
             model = model
-            family = _family(provider, model, normalized_spec)
-            liveness = (request.route_liveness_resolver or (lambda p, m, _s: _default_native_liveness(agent, m)))(provider, model, normalized_spec)
+            route_identity = format_agent_spec(AgentSpec(provider, model=model))
+            family = _family(provider, model, route_identity)
+            if request.production_intent:
+                authoritative = _default_native_liveness(agent, model)
+                liveness = _validate_native_liveness(
+                    authoritative,
+                    provider=provider,
+                    model=model,
+                    normalized_spec=normalized_spec,
+                    backend=agent,
+                    authoritative=authoritative,
+                )
+            elif request.native_construction_seam is not None:
+                # Explicitly non-production unit seam.  Production requests
+                # are rejected above before this branch can be reached.
+                authoritative = request.native_construction_seam(provider, model, normalized_spec)
+                supplied = request.route_liveness_resolver(provider, model, normalized_spec) if request.route_liveness_resolver is not None else authoritative
+                liveness = _validate_native_liveness(
+                    supplied,
+                    provider=provider,
+                    model=model,
+                    normalized_spec=normalized_spec,
+                    backend=agent,
+                    authoritative=authoritative,
+                )
+            else:
+                liveness = (request.route_liveness_resolver or (lambda p, m, _s: _default_native_liveness(agent, m)))(provider, model, normalized_spec)
+                liveness = _validate_native_liveness(liveness, provider=provider, model=model, normalized_spec=normalized_spec, backend=agent)
         if request.authorized_route_identity not in {request.selected_spec.strip(), normalized_spec}:
             return _refusal(request, "route_authorization_invalid", "authorized route does not match selected route")
         if not isinstance(liveness, Mapping) or not liveness.get("identity") or not liveness.get("digest"):
@@ -398,13 +836,7 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
         expected_kind = "omp_membership" if agent == "omp" else "native_backend"
         if liveness.get("kind") != expected_kind:
             return _refusal(request, "route_liveness_invalid", f"route proof kind must be {expected_kind}")
-        if request.source_runtime_validator is not None:
-            result = request.source_runtime_validator(request)
-            if result is False or (isinstance(result, Mapping) and result.get("ok") is False):
-                return _refusal(request, "source_runtime_invalid", "source/runtime validator rejected dispatch", result=result)
-        for name in ("source_revision", "manifest_identity", "seed_identity", "dependency_interpreter_identity"):
-            if not str(getattr(request, name)).strip():
-                return _refusal(request, "runtime_binding_missing", f"{name} is required")
+        _validate_runtime_binding(request)
         cooldown_reader = request.cooldown_reader
         if cooldown_reader is None:
             from arnold_pipelines.megaplan.runtime.memory_headroom import memory_cooldown_wait_secs
@@ -422,36 +854,285 @@ def require_production_worker_dispatch_runtime(request: WorkerAdmissionRequest |
         fingerprint = semantic_dispatch_fingerprint(phase=request.phase, selected_spec=normalized_spec, model_family=family, prompt_or_phase_input_identity=request.prompt_or_phase_input_identity, source_revision=request.source_revision, runtime_vector=request.runtime_vector, manifest_identity=request.manifest_identity, seed_identity=request.seed_identity, dependency_interpreter_identity=request.dependency_interpreter_identity, timeout_policy_identity=_digest(request.timeout_budget_s), configured_fallback_chain_identity=request.configured_fallback_chain_identity, authorized_route_identity=request.authorized_route_identity)
         ledger = request.ledger or IncidentLedger(request.ledger_root)
         execution_context_identity = _digest({"plan_id": request.plan_id, "phase": request.phase, "logical_dispatch_id": request.logical_dispatch_id, "physical_door_id": request.physical_door_id, "semantic_dispatch_fingerprint": fingerprint})
-        reserved = ledger.reserve(plan_id=request.plan_id, phase=request.phase, projection_key=request.projection_key, semantic_dispatch_fingerprint=fingerprint, logical_dispatch_id=request.logical_dispatch_id, dispatch_family_id=request.dispatch_family_id, physical_door_id=request.physical_door_id, expected_projection_version=request.expected_projection_version, changed_precondition_event_id=request.changed_precondition_event_id, selected_spec=normalized_spec, primary_spec=normalized_spec, configured_fallback_chain_identity=request.configured_fallback_chain_identity, execution_context_identity=execution_context_identity, actor="worker-admission")
+        if request.parent_logical_dispatch_id or request.authorizing_event_id or request.parent_terminal_event_id:
+            if not (request.parent_logical_dispatch_id and request.authorizing_event_id and request.parent_terminal_event_id):
+                return _refusal(request, "linked_child_authorization_missing", "linked child authority is incomplete")
+            if request.expected_projection_version is None:
+                return _refusal(request, "linked_child_projection_version_missing", "linked child requires an expected projection version")
+            if not request.transition_kind or not request.precondition_identity:
+                return _refusal(request, "linked_child_authorization_missing", "linked child transition authority is incomplete")
+            reserved = ledger.reserve_provider_route_child(
+                plan_id=request.plan_id,
+                phase=request.phase,
+                projection_key=request.projection_key,
+                expected_projection_version=request.expected_projection_version,
+                transition_kind=request.transition_kind,
+                from_spec=request.parent_source_spec or request.configured_spec,
+                to_spec=normalized_spec,
+                parent_logical_dispatch_id=request.parent_logical_dispatch_id,
+                parent_terminal_event_id=request.parent_terminal_event_id,
+                authorizing_event_id=request.authorizing_event_id,
+                configured_fallback_chain_identity=request.configured_fallback_chain_identity,
+                precondition_identity=request.precondition_identity,
+                child_dispatch_family_id=request.dispatch_family_id,
+                child_logical_dispatch_id=request.logical_dispatch_id,
+                child_physical_door_id=request.physical_door_id,
+                child_semantic_dispatch_fingerprint=fingerprint,
+                child_route_liveness_identity=str(liveness.get("identity")),
+                consumed_changed_precondition_event_id=request.changed_precondition_event_id,
+                execution_context_identity=execution_context_identity,
+                actor="worker-admission",
+            )
+        else:
+            reserved = ledger.reserve(plan_id=request.plan_id, phase=request.phase, projection_key=request.projection_key, semantic_dispatch_fingerprint=fingerprint, logical_dispatch_id=request.logical_dispatch_id, dispatch_family_id=request.dispatch_family_id, physical_door_id=request.physical_door_id, expected_projection_version=request.expected_projection_version, changed_precondition_event_id=request.changed_precondition_event_id, selected_spec=normalized_spec, primary_spec=normalized_spec, configured_fallback_chain_identity=request.configured_fallback_chain_identity, execution_context_identity=execution_context_identity, actor="worker-admission")
         payload = reserved.get("payload", reserved) if isinstance(reserved, Mapping) else {}
         reservation_event_id = str(payload.get("event_id") or payload.get("reservation_event_id") or "")
         receipt_id = str(payload.get("admission_receipt_id") or ledger.derive_receipt(payload))
         context = WorkerExecutionContextRef(str(request.ledger_root or Path.cwd()), request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, receipt_id, fingerprint, normalized_spec, request.physical_door_id)
-        return WorkerAdmissionReceipt(receipt_id, request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, request.parent_logical_dispatch_id, request.authorizing_event_id, request.physical_door_id, request.admission_attempt, normalized_spec, provider, model, family, str(liveness.get("kind")), str(liveness.get("identity")), str(liveness.get("digest")), float(request.timeout_budget_s), request.source_revision, request.runtime_vector, request.manifest_identity, request.seed_identity, request.dependency_interpreter_identity, fingerprint, request.projection_key, int(payload.get("expected_projection_version", 0)), reservation_event_id, request.changed_precondition_event_id, payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None, _now(), context)
+        return WorkerAdmissionReceipt(receipt_id, request.plan_id, request.phase, request.dispatch_family_id, request.logical_dispatch_id, request.parent_logical_dispatch_id, request.authorizing_event_id, request.physical_door_id, request.admission_attempt, normalized_spec, provider, model, family, str(liveness.get("kind")), str(liveness.get("identity")), str(liveness.get("digest")), float(request.timeout_budget_s), request.source_revision, request.runtime_vector, request.manifest_identity, request.seed_identity, request.dependency_interpreter_identity, fingerprint, request.projection_key, int(payload.get("expected_projection_version", 0)), reservation_event_id, request.changed_precondition_event_id, payload.get("event_id") if payload.get("event_type") == "provider_route_child_reserved" else None, _now(), context, request.production_intent)
     except (CliError, ValueError, OSError) as exc:
         return _refusal(request, getattr(exc, "code", "admission_rejected"), str(exc))
 
 
 def _worker_identity(value: Any) -> Mapping[str, Any]:
-    if isinstance(value, Mapping) and all(key in value for key in ("host", "pid", "boot_id")):
-        return value
-    return {"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "dispatch-process"}
+    if not isinstance(value, Mapping) or not all(
+        key in value for key in ("host", "pid", "boot_id")
+    ):
+        raise ValueError("worker identity is required from the final worker result")
+    if (
+        not isinstance(value.get("host"), str)
+        or not value.get("host")
+        or isinstance(value.get("pid"), bool)
+        or not isinstance(value.get("pid"), int)
+        or value["pid"] <= 0
+        or not isinstance(value.get("boot_id"), str)
+        or not value.get("boot_id")
+    ):
+        raise ValueError("worker identity is malformed")
+    return dict(value)
+
+
+def _validate_outcome_context(
+    value: DispatchOutcome,
+    receipt: WorkerAdmissionReceipt,
+    started: str,
+    finished: str,
+    *,
+    require_accepted: bool = True,
+) -> DispatchOutcome:
+    # Fill transport context from the authoritative admission receipt. This
+    # keeps legacy typed outcomes source-compatible while making the canonical
+    # provider/route proof survive every boundary.
+    for name, expected_value in {
+        "provider": receipt.provider,
+        "route_liveness_kind": receipt.route_liveness_kind,
+        "route_liveness_identity": receipt.route_liveness_identity,
+        "route_liveness_digest": receipt.route_liveness_digest,
+    }.items():
+        supplied = getattr(value, name)
+        if supplied is not None and supplied != expected_value:
+            raise ValueError(f"dispatch outcome context mismatch: {name}")
+    value = replace(
+        value,
+        provider=value.provider or receipt.provider,
+        route_liveness_kind=value.route_liveness_kind or receipt.route_liveness_kind,
+        route_liveness_identity=value.route_liveness_identity or receipt.route_liveness_identity,
+        route_liveness_digest=value.route_liveness_digest or receipt.route_liveness_digest,
+    )
+    expected = {
+        "plan_id": receipt.plan_id,
+        "phase": receipt.phase,
+        "dispatch_family_id": receipt.dispatch_family_id,
+        "logical_dispatch_id": receipt.logical_dispatch_id,
+        "admission_receipt_id": receipt.admission_receipt_id,
+        "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint,
+        "selected_spec": receipt.normalized_spec,
+    }
+    if require_accepted:
+        expected["launch_state"] = "accepted"
+    for name, expected_value in expected.items():
+        if getattr(value, name) != expected_value:
+            raise ValueError(f"dispatch outcome context mismatch: {name}")
+    if not value.worker_identity or not isinstance(value.worker_identity, Mapping):
+        raise ValueError("dispatch outcome requires typed worker identity")
+    if not value.started_at or not value.finished_at:
+        raise ValueError("dispatch outcome requires complete timing context")
+    return value
+
+
+def _unresolved_outcome(
+    receipt: WorkerAdmissionReceipt,
+    *,
+    worker_identity: Any = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> DispatchOutcome:
+    return DispatchOutcome(
+        kind="unresolved_launch",
+        launch_state="ambiguous",
+        plan_id=receipt.plan_id,
+        phase=receipt.phase,
+        dispatch_family_id=receipt.dispatch_family_id,
+        logical_dispatch_id=receipt.logical_dispatch_id,
+        admission_receipt_id=receipt.admission_receipt_id,
+        semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint,
+        selected_spec=receipt.normalized_spec,
+        provider=receipt.provider,
+        route_liveness_kind=receipt.route_liveness_kind,
+        route_liveness_identity=receipt.route_liveness_identity,
+        route_liveness_digest=receipt.route_liveness_digest,
+        worker_identity=worker_identity,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
 
 
 def _normalize_outcome(value: Any, receipt: WorkerAdmissionReceipt, started: str, finished: str) -> DispatchOutcome:
+    launch_metadata: Mapping[str, Any] = {}
     if isinstance(value, DispatchOutcome):
-        if value.kind in {"no_launch", "unresolved_launch"}:
+        if value.kind == "no_launch":
             return value
-        return replace(value, plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, launch_state="accepted", started_at=value.started_at or started, finished_at=value.finished_at or finished, worker_identity=_worker_identity(value.worker_identity))
+        if value.kind == "unresolved_launch":
+            if value.admission_receipt_id is not None:
+                return _validate_outcome_context(
+                    value, receipt, started, finished, require_accepted=False
+                )
+            return value
+        return _validate_outcome_context(value, receipt, started, finished)
     if isinstance(value, LaunchResult):
         if not value.accepted:
             raise RuntimeError("launch operation did not positively establish no-acceptance")
+        launch_metadata = {
+            name: item for name, item in {
+                "worker_identity": value.worker_identity,
+                "started_at": value.started_at,
+                "finished_at": value.finished_at,
+            }.items() if item is not None
+        }
         value = value.value
     if isinstance(value, Mapping) and "kind" in value:
         data = dict(value)
-        data.update({"schema_version": 1, "plan_id": receipt.plan_id, "phase": receipt.phase, "dispatch_family_id": receipt.dispatch_family_id, "logical_dispatch_id": receipt.logical_dispatch_id, "admission_receipt_id": receipt.admission_receipt_id, "semantic_dispatch_fingerprint": receipt.semantic_dispatch_fingerprint, "selected_spec": receipt.normalized_spec, "launch_state": "accepted", "started_at": data.get("started_at") or started, "finished_at": data.get("finished_at") or finished, "worker_identity": _worker_identity(data.get("worker_identity"))})
-        return DispatchOutcome.from_dict(data)
-    return DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(getattr(value, "worker_identity", None)), started_at=started, finished_at=finished, success_payload=getattr(value, "payload", value))
+        data.setdefault("schema_version", 1)
+        data.setdefault("plan_id", receipt.plan_id)
+        data.setdefault("phase", receipt.phase)
+        data.setdefault("dispatch_family_id", receipt.dispatch_family_id)
+        data.setdefault("logical_dispatch_id", receipt.logical_dispatch_id)
+        data.setdefault("admission_receipt_id", receipt.admission_receipt_id)
+        data.setdefault("semantic_dispatch_fingerprint", receipt.semantic_dispatch_fingerprint)
+        data.setdefault("selected_spec", receipt.normalized_spec)
+        data.setdefault("provider", receipt.provider)
+        data.setdefault("route_liveness_kind", receipt.route_liveness_kind)
+        data.setdefault("route_liveness_identity", receipt.route_liveness_identity)
+        data.setdefault("route_liveness_digest", receipt.route_liveness_digest)
+        data.setdefault("launch_state", "accepted")
+        data.setdefault("started_at", started)
+        data.setdefault("finished_at", finished)
+        data.setdefault("worker_identity", _worker_identity(data.get("worker_identity")))
+        candidate = DispatchOutcome.from_dict(data)
+        if candidate.kind == "no_launch":
+            return candidate
+        if candidate.kind == "unresolved_launch":
+            if candidate.admission_receipt_id is None:
+                return candidate
+            _validate_outcome_context(candidate, receipt, started, finished, require_accepted=False)
+            return candidate
+        return _validate_outcome_context(candidate, receipt, started, finished)
+    if _is_worker_result(value):
+        payload = getattr(value, "payload", None)
+        embedded = payload.get("dispatch_outcome") if isinstance(payload, Mapping) else None
+        if embedded is None:
+            metadata = getattr(value, "auth_metadata", None)
+            embedded = metadata.get("dispatch_outcome") if isinstance(metadata, Mapping) else None
+        own_identity = getattr(value, "worker_identity", None)
+        if isinstance(embedded, Mapping) and isinstance(own_identity, Mapping) and embedded.get("worker_identity") is not None and embedded.get("worker_identity") != own_identity:
+            raise ValueError("worker identity disagrees with typed terminal outcome")
+        if isinstance(embedded, Mapping):
+            embedded = {
+                "schema_version": 1,
+                "kind": embedded.get("kind"),
+                "launch_state": embedded.get("launch_state", "accepted"),
+                "plan_id": embedded.get("plan_id", receipt.plan_id),
+                "phase": embedded.get("phase", receipt.phase),
+                "dispatch_family_id": embedded.get("dispatch_family_id", receipt.dispatch_family_id),
+                "logical_dispatch_id": embedded.get("logical_dispatch_id", receipt.logical_dispatch_id),
+                "admission_receipt_id": embedded.get("admission_receipt_id", receipt.admission_receipt_id),
+                "semantic_dispatch_fingerprint": embedded.get("semantic_dispatch_fingerprint", receipt.semantic_dispatch_fingerprint),
+                "selected_spec": embedded.get("selected_spec", receipt.normalized_spec),
+                "provider": embedded.get("provider", receipt.provider),
+                "route_liveness_kind": embedded.get("route_liveness_kind", receipt.route_liveness_kind),
+                "route_liveness_identity": embedded.get("route_liveness_identity", receipt.route_liveness_identity),
+                "route_liveness_digest": embedded.get("route_liveness_digest", receipt.route_liveness_digest),
+                "worker_identity": embedded.get("worker_identity") or getattr(value, "worker_identity", None) or launch_metadata.get("worker_identity"),
+                "started_at": embedded.get("started_at") or getattr(value, "started_at", None) or launch_metadata.get("started_at") or started,
+                "finished_at": embedded.get("finished_at") or getattr(value, "finished_at", None) or launch_metadata.get("finished_at") or finished,
+                "success_payload": embedded.get("success_payload"),
+                "terminal_failure": embedded.get("terminal_failure"),
+                "provider_evidence": embedded.get("provider_evidence"),
+                "provider_failure_key": embedded.get("provider_failure_key"),
+                "disposition_id": embedded.get("disposition_id"),
+                "reconciliation_event_id": embedded.get("reconciliation_event_id"),
+                "terminal_outcome_event_id": embedded.get("terminal_outcome_event_id"),
+            }
+            return _normalize_outcome(embedded, receipt, started, finished)
+    # WorkerResult is the only legacy operation result still accepted: its
+    # typed payload is the native worker seam's positive completion proof.  A
+    # terminal outcome must use the explicit ``dispatch_outcome`` envelope;
+    # arbitrary payload fields never change a successful WorkerResult.
+    if _is_worker_result(value):
+        if _worker_result_is_failure_shaped(value):
+            raise TypeError("failure-shaped WorkerResult requires a typed dispatch_outcome envelope")
+        identity = getattr(value, "worker_identity", None) or launch_metadata.get("worker_identity")
+        return _validate_outcome_context(DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(identity), started_at=getattr(value, "started_at", None) or launch_metadata.get("started_at") or started, finished_at=getattr(value, "finished_at", None) or launch_metadata.get("finished_at") or finished, success_payload=getattr(value, "payload", None)), receipt, started, finished)
+    if isinstance(value, tuple) and len(value) == 4 and _is_worker_result(value[0]):
+        worker = value[0]
+        worker_identity = getattr(worker, "worker_identity", None)
+        payload = getattr(worker, "payload", None)
+        embedded = payload.get("dispatch_outcome") if isinstance(payload, Mapping) else None
+        if embedded is None:
+            metadata = getattr(worker, "auth_metadata", None)
+            embedded = metadata.get("dispatch_outcome") if isinstance(metadata, Mapping) else None
+        if isinstance(embedded, Mapping):
+            if (
+                isinstance(worker_identity, Mapping)
+                and embedded.get("worker_identity") is not None
+                and embedded.get("worker_identity") != worker_identity
+            ):
+                raise ValueError("worker identity disagrees with typed terminal outcome")
+            embedded = {
+                "schema_version": 1,
+                "kind": embedded.get("kind"),
+                "launch_state": embedded.get("launch_state", "accepted"),
+                "plan_id": embedded.get("plan_id", receipt.plan_id),
+                "phase": embedded.get("phase", receipt.phase),
+                "dispatch_family_id": embedded.get("dispatch_family_id", receipt.dispatch_family_id),
+                "logical_dispatch_id": embedded.get("logical_dispatch_id", receipt.logical_dispatch_id),
+                "admission_receipt_id": embedded.get("admission_receipt_id", receipt.admission_receipt_id),
+                "semantic_dispatch_fingerprint": embedded.get("semantic_dispatch_fingerprint", receipt.semantic_dispatch_fingerprint),
+                "selected_spec": embedded.get("selected_spec", receipt.normalized_spec),
+                "provider": embedded.get("provider", receipt.provider),
+                "route_liveness_kind": embedded.get("route_liveness_kind", receipt.route_liveness_kind),
+                "route_liveness_identity": embedded.get("route_liveness_identity", receipt.route_liveness_identity),
+                "route_liveness_digest": embedded.get("route_liveness_digest", receipt.route_liveness_digest),
+                "worker_identity": embedded.get("worker_identity") or worker_identity or launch_metadata.get("worker_identity"),
+                "started_at": embedded.get("started_at") or getattr(worker, "started_at", None) or launch_metadata.get("started_at") or started,
+                "finished_at": embedded.get("finished_at") or getattr(worker, "finished_at", None) or launch_metadata.get("finished_at") or finished,
+                "success_payload": embedded.get("success_payload"),
+                "terminal_failure": embedded.get("terminal_failure"),
+                "provider_evidence": embedded.get("provider_evidence"),
+                "provider_failure_key": embedded.get("provider_failure_key"),
+                "disposition_id": embedded.get("disposition_id"),
+                "reconciliation_event_id": embedded.get("reconciliation_event_id"),
+                "terminal_outcome_event_id": embedded.get("terminal_outcome_event_id"),
+            }
+            return _normalize_outcome(embedded, receipt, started, finished)
+        if _worker_result_is_failure_shaped(worker):
+            raise TypeError("failure-shaped WorkerResult requires a typed dispatch_outcome envelope")
+        identity = getattr(worker, "worker_identity", None) or launch_metadata.get("worker_identity")
+        return _validate_outcome_context(DispatchOutcome(kind="success", launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(identity), started_at=getattr(worker, "started_at", None) or launch_metadata.get("started_at") or started, finished_at=getattr(worker, "finished_at", None) or launch_metadata.get("finished_at") or finished, success_payload=getattr(worker, "payload", None)), receipt, started, finished)
+    if isinstance(value, ManagedCommandResult):
+        kind = "success" if value.returncode == 0 else "ordinary_terminal_failure"
+        return _validate_outcome_context(DispatchOutcome(kind=kind, launch_state="accepted", plan_id=receipt.plan_id, phase=receipt.phase, dispatch_family_id=receipt.dispatch_family_id, logical_dispatch_id=receipt.logical_dispatch_id, admission_receipt_id=receipt.admission_receipt_id, semantic_dispatch_fingerprint=receipt.semantic_dispatch_fingerprint, selected_spec=receipt.normalized_spec, worker_identity=_worker_identity(value.worker_identity), started_at=started, finished_at=finished, success_payload=None if value.returncode else {"returncode": 0}, terminal_failure=None if value.returncode == 0 else {"returncode": value.returncode}), receipt, started, finished)
+    raise TypeError(f"untyped final-launch result cannot be projected: {type(value).__name__}")
 
 
 def build_authorized_linked_child_request(
@@ -486,6 +1167,10 @@ def build_authorized_linked_child_request(
         logical_dispatch_id=logical_dispatch_id,
         parent_logical_dispatch_id=parent.logical_dispatch_id,
         authorizing_event_id=authorizing_event_id,
+        parent_terminal_event_id=parent_terminal,
+        parent_source_spec=parent.selected_spec,
+        transition_kind=changes.pop("transition_kind", "provider_recovery"),
+        precondition_identity=changes.pop("precondition_identity", authorizing_event_id),
         physical_door_id=physical_door_id or parent.physical_door_id,
         dispatch_family_id=dispatch_family_id or parent.dispatch_family_id,
         selected_spec=selected_spec,
@@ -508,6 +1193,67 @@ def reconcile_no_launch(
     ids = tuple(str(item) for item in evidence_event_ids if str(item))
     if not ids:
         raise ValueError("no-launch reconciliation requires positive evidence IDs")
+    persisted = ledger.read_nbf_events()
+    related = []
+    for record in persisted:
+        item = record.get("payload", {})
+        if (
+            item.get("reservation_event_id") == receipt.reservation_event_id
+            and item.get("admission_receipt_id") == receipt.admission_receipt_id
+        ) or (
+            item.get("event_type") == "worker_disposition"
+            and item.get("admission_receipt_id") == receipt.admission_receipt_id
+            and item.get("logical_dispatch_id") == receipt.logical_dispatch_id
+        ):
+            related.append(item)
+    prior_release = next(
+        (item for item in related
+         if item.get("event_type") == "reservation_reconciled"
+         and item.get("resolution") == "released_no_launch"),
+        None,
+    )
+    if prior_release is not None:
+        return DispatchOutcome(
+            kind="no_launch", launch_state="not_started",
+            plan_id=receipt.plan_id, phase=receipt.phase,
+            dispatch_family_id=receipt.dispatch_family_id,
+            logical_dispatch_id=receipt.logical_dispatch_id,
+            admission_receipt_id=None, semantic_dispatch_fingerprint=None,
+            selected_spec=receipt.normalized_spec,
+            reconciliation_event_id=str(prior_release.get("reconciliation_id") or prior_release.get("event_id")),
+        )
+    if any(
+        item.get("launch_state_identity") in {"entered", "accepted", "closed", "ambiguous"}
+        or item.get("event_type") in {"worker_terminal_outcome", "worker_disposition"}
+        or (item.get("event_type") == "reservation_reconciled" and item.get("resolution") != "released_no_launch")
+        for item in related
+    ):
+        raise ValueError("no-launch reconciliation has contradictory persisted launch evidence")
+    evidence = [
+        record.get("payload", {})
+        for record in persisted
+        if record.get("payload", {}).get("event_id") in ids
+    ]
+    valid_physical_evidence = False
+    for item in evidence:
+        operation = item.get("physical_operation_evidence") or item.get("operation_evidence")
+        if (
+            item.get("event_type") == "controlled_adapter_state"
+            and item.get("reservation_event_id") == receipt.reservation_event_id
+            and item.get("admission_receipt_id") == receipt.admission_receipt_id
+            and item.get("physical_door_id") == receipt.physical_door_id
+            and item.get("launch_state_identity") == "not_started"
+            and isinstance(operation, Mapping)
+            and operation.get("reservation_event_id") == receipt.reservation_event_id
+            and operation.get("admission_receipt_id") == receipt.admission_receipt_id
+            and operation.get("physical_door_id") == receipt.physical_door_id
+            and operation.get("launch_state_identity") == "not_started"
+            and operation.get("observed_at")
+        ):
+            valid_physical_evidence = True
+            break
+    if not valid_physical_evidence:
+        raise ValueError("no-launch reconciliation requires a bound not_started marker")
     when = observed_at or _now()
     reconciliation_id = _digest((receipt.reservation_event_id, "released_no_launch", ids))
     reconciliation = ReservationReconciled(
@@ -578,6 +1324,26 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
         from arnold_pipelines.megaplan.cloud.controlled_final_launch import ControlledFinalLaunch
         controlled = ControlledFinalLaunch(decision, ledger=ledger or current.ledger)
         try:
+            pre_entry = getattr(launch, "pre_entry", None)
+            if callable(pre_entry):
+                evidence_result = pre_entry(controlled.context)
+                if not isinstance(evidence_result, LaunchResult) or evidence_result.accepted:
+                    raise TypeError("pre-entry hook must return a rejected LaunchResult")
+                evidence = evidence_result.value
+                if not isinstance(evidence, Mapping):
+                    raise TypeError("pre-entry no-launch evidence must be a mapping")
+                evidence_ids = evidence.get("evidence_event_ids")
+                if isinstance(evidence_ids, str):
+                    evidence_ids = (evidence_ids,)
+                if not isinstance(evidence_ids, (tuple, list)):
+                    raise TypeError("pre-entry no-launch evidence requires event IDs")
+                return reconcile_no_launch(
+                    decision,
+                    evidence_event_ids=tuple(str(item) for item in evidence_ids),
+                    ledger=ledger or current.ledger or controlled.ledger,
+                    evidence_kind=str(evidence.get("evidence_kind") or "controlled_adapter"),
+                    observed_at=evidence.get("observed_at"),
+                )
             started = _now()
             value = controlled.run(launch)
             finished = _now()
@@ -586,7 +1352,18 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                 return outcome
             active_ledger = ledger or current.ledger or IncidentLedger(current.ledger_root)
             execution_context_identity = _digest({"plan_id": decision.plan_id, "phase": decision.phase, "logical_dispatch_id": decision.logical_dispatch_id, "physical_door_id": decision.physical_door_id, "semantic_dispatch_fingerprint": decision.semantic_dispatch_fingerprint})
-            terminal = active_ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=decision.reservation_event_id, projection_key=decision.projection_key, physical_door_id=decision.physical_door_id, execution_context_identity=execution_context_identity, primary_spec=decision.normalized_spec, configured_fallback_chain_identity=current.configured_fallback_chain_identity)
+            try:
+                terminal = active_ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=decision.reservation_event_id, projection_key=decision.projection_key, physical_door_id=decision.physical_door_id, execution_context_identity=execution_context_identity, primary_spec=decision.normalized_spec, configured_fallback_chain_identity=current.configured_fallback_chain_identity)
+            except Exception:
+                # The worker was accepted, but the canonical terminal could not
+                # be committed.  Keep the reservation open and return every
+                # identity needed for reconciliation; never relaunch blindly.
+                return _unresolved_outcome(
+                    decision,
+                    worker_identity=outcome.worker_identity,
+                    started_at=outcome.started_at,
+                    finished_at=outcome.finished_at,
+                )
             terminal_outcome = replace(outcome, terminal_outcome_event_id=str((terminal.get("payload", terminal)).get("terminal_outcome_id")))
             try:
                 controlled.close()
@@ -595,9 +1372,22 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                 # post-terminal bookkeeping marker must not erase that fact or
                 # turn a successful worker result into an unresolved launch.
                 pass
-            return value if return_worker else terminal_outcome
+            if return_worker:
+                raw = value.value if isinstance(value, LaunchResult) else value
+                transport_worker = raw[0] if isinstance(raw, tuple) and len(raw) == 4 else raw
+                if isinstance(terminal_outcome, DispatchOutcome) and hasattr(transport_worker, "auth_metadata"):
+                    metadata = dict(getattr(transport_worker, "auth_metadata", {}) or {})
+                    metadata["dispatch_outcome"] = terminal_outcome.to_dict()
+                    transport_worker.auth_metadata = metadata
+                return raw.returncode if isinstance(raw, ManagedCommandResult) else raw
+            return terminal_outcome
         except Exception:
             # ControlledFinalLaunch only normalizes a pre-entry exception. All
             # post-entry uncertainty is held and never blindly redispatched.
-            return DispatchOutcome(kind="unresolved_launch", launch_state="ambiguous", plan_id=decision.plan_id, phase=decision.phase, dispatch_family_id=decision.dispatch_family_id, logical_dispatch_id=decision.logical_dispatch_id, admission_receipt_id=None, semantic_dispatch_fingerprint=None, selected_spec=decision.normalized_spec, reconciliation_event_id=None)
-__all__ = ["AdmissionRefusal", "LaunchResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]
+            return _unresolved_outcome(
+                decision,
+                worker_identity=controlled.accepted_worker_identity,
+                started_at=controlled.accepted_started_at,
+                finished_at=controlled.accepted_finished_at,
+            )
+__all__ = ["AdmissionRefusal", "LaunchResult", "ManagedCommandResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]

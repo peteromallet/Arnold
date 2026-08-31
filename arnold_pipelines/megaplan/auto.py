@@ -296,7 +296,7 @@ def _is_auto_supported_target(target_id: str | None) -> bool:
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
+    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required" | "scheduling_condition"
     plan: str
     final_state: str
     iterations: int
@@ -315,6 +315,7 @@ class DriverOutcome:
     tier_escalations_used: int = 0
     escalation_tier_pin: int | None = None
     publish: dict[str, Any] | None = None
+    scheduling_condition: Any | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -338,6 +339,11 @@ class DriverOutcome:
                 "tier_escalations_used": self.tier_escalations_used,
                 "escalation_tier_pin": self.escalation_tier_pin,
                 "publish": self.publish,
+                "scheduling_condition": (
+                    self.scheduling_condition.to_dict()
+                    if hasattr(self.scheduling_condition, "to_dict")
+                    else self.scheduling_condition
+                ),
             },
             indent=2,
         )
@@ -5682,6 +5688,7 @@ def drive(
         last_phase: str | None = None,
         blocking_reasons: list[str] | None = None,
         publish: dict[str, Any] | None = None,
+        scheduling_condition: Any | None = None,
     ) -> DriverOutcome:
         return DriverOutcome(
             status=status,
@@ -5703,6 +5710,7 @@ def drive(
             tier_escalations_used=tier_escalations_used,
             escalation_tier_pin=escalation_tier_pin,
             publish=publish,
+            scheduling_condition=scheduling_condition,
         )
 
     while iteration < max_iterations:
@@ -7207,10 +7215,14 @@ def drive(
             repeated_failure_signature = None
             repeated_failure_occurrence = None
             repeated_failure_signature_count = 0
-            wait_s = float(getattr(condition, "retry_after_s", 0.0) or 0.0)
-            if wait_s > 0:
-                time.sleep(wait_s)
-            continue
+            return _outcome(
+                "scheduling_condition",
+                final_state=state,
+                iterations=iteration,
+                reason="dispatch scheduling condition requires injected-owner retry",
+                last_phase=next_step,
+                scheduling_condition=condition,
+            )
         if result is None or getattr(result, "exit_kind", None) not in {
             ExitKind.internal_error.value,
             ExitKind.malformed_model_output.value,

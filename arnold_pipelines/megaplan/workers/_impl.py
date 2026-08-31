@@ -118,6 +118,7 @@ from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _bu
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_WORKER_CHANNEL = "codex_cli"
+_WORKER_IDENTITY_METADATA_KEY = "worker_identity"
 _LOCAL_STRICT_ARTIFACT_DIRNAME = "local-strict-artifacts"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 _ZERO_RECOVERY_MODEL_PHASES = frozenset(
@@ -2338,6 +2339,9 @@ class WorkerResult:
     worker_channel: str | None = None
     auth_channel: str | None = None
     auth_metadata: dict[str, Any] | None = None
+    # Identity captured by the actual worker/process seam.  Keep optional for
+    # legacy callers that only returned a payload.
+    worker_identity: dict[str, Any] | None = None
     configured_specs: tuple[str, ...] = ()
     attempt_index: int = 0
     attempted_specs: tuple[str, ...] = ()
@@ -2349,6 +2353,38 @@ class WorkerResult:
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
         """Project a runtime ``AgentResult`` into the worker compatibility type."""
         metadata = getattr(agent_result, "metadata", {}) or {}
+        raw_auth_metadata = metadata.get("auth_metadata")
+        auth_metadata = (
+            dict(raw_auth_metadata) if isinstance(raw_auth_metadata, dict) else raw_auth_metadata
+        )
+        identity_candidates: list[dict[str, Any]] = []
+
+        def collect_identity(candidate: Any, source: str) -> None:
+            if candidate is None:
+                return
+            if not isinstance(candidate, dict):
+                raise ValueError(f"{source} worker_identity must be an object")
+            if (
+                not isinstance(candidate.get("host"), str)
+                or not candidate.get("host")
+                or isinstance(candidate.get("pid"), bool)
+                or not isinstance(candidate.get("pid"), int)
+                or candidate["pid"] <= 0
+                or not isinstance(candidate.get("boot_id"), str)
+                or not candidate.get("boot_id")
+            ):
+                raise ValueError(f"{source} worker_identity is malformed")
+            identity_candidates.append(dict(candidate))
+
+        collect_identity(metadata.get(_WORKER_IDENTITY_METADATA_KEY), "metadata")
+        if isinstance(auth_metadata, dict):
+            collect_identity(auth_metadata.get(_WORKER_IDENTITY_METADATA_KEY), "auth_metadata")
+            raw_outcome = auth_metadata.get("dispatch_outcome")
+            if isinstance(raw_outcome, dict):
+                collect_identity(raw_outcome.get("worker_identity"), "dispatch_outcome")
+        if identity_candidates and any(item != identity_candidates[0] for item in identity_candidates[1:]):
+            raise ValueError("worker identity conflicts across AgentResult metadata")
+        worker_identity = identity_candidates[0] if identity_candidates else None
         rate_limit = getattr(agent_result, "rate_limit", None)
         if rate_limit is None:
             rate_limit = metadata.get("rate_limit")
@@ -2372,7 +2408,8 @@ class WorkerResult:
             rate_limit=rate_limit,
             worker_channel=metadata.get("worker_channel"),
             auth_channel=metadata.get("auth_channel"),
-            auth_metadata=metadata.get("auth_metadata"),
+            auth_metadata=auth_metadata,
+            worker_identity=worker_identity,
             configured_specs=tuple(metadata.get("configured_specs", ())),
             attempt_index=int(metadata.get("attempt_index", 0) or 0),
             attempted_specs=tuple(metadata.get("attempted_specs", ())),
@@ -2387,13 +2424,25 @@ class WorkerResult:
         """Project the worker compatibility type into the runtime ``AgentResult``."""
         from arnold_pipelines.megaplan.agent_runtime import AgentResult
 
+        # Keep the identity in the authenticated metadata envelope as well as
+        # the top-level metadata.  The latter is the compatibility carrier for
+        # old consumers; the former lets custody-aware consumers validate it
+        # without depending on a payload field.  ``setdefault`` deliberately
+        # leaves a conflicting embedded value visible to ``from_agent_result``.
+        auth_metadata = self.auth_metadata
+        if self.worker_identity is not None:
+            auth_metadata = dict(auth_metadata or {})
+            auth_metadata.setdefault(_WORKER_IDENTITY_METADATA_KEY, self.worker_identity)
         metadata = {
             key: value
             for key, value in {
                 "rate_limit": self.rate_limit,
                 "worker_channel": self.worker_channel,
                 "auth_channel": self.auth_channel,
-                "auth_metadata": self.auth_metadata,
+                "auth_metadata": auth_metadata,
+                # Reserved top-level metadata preserves this identity across
+                # the AgentResult projection; older results simply omit it.
+                _WORKER_IDENTITY_METADATA_KEY: self.worker_identity,
                 "cost_pricing": self.cost_pricing,
                 "model_evidence": self.model_evidence,
                 "configured_specs": list(self.configured_specs),
@@ -6981,6 +7030,7 @@ def _omp_to_agent_result(
     prompt_kwargs: dict[str, Any] | None,
     output_path: Path | None,
     effective_refreshed: bool,
+    wbc_dispatch: CommonWorkerDispatchSpec | None = None,
 ) -> Any:
     """Call run_omp_step and project WorkerResult → AgentResult (flag-on path)."""
     from arnold_pipelines.megaplan.workers.omp import run_omp_step
@@ -6996,7 +7046,7 @@ def _omp_to_agent_result(
             "AgentMode.resolved_model should hold e.g. "
             "'omp:deepseek/deepseek-v4-pro'."
         )
-    _w = run_omp_step(
+    _w = _coerce_omp_dispatch_result(run_omp_step(
         step,
         state,
         plan_dir,
@@ -7009,8 +7059,61 @@ def _omp_to_agent_result(
         read_only=read_only,
         output_path=output_path,
         worker_options=worker_options,
-    )
+        wbc_dispatch=wbc_dispatch,
+    ))
     return _w.to_agent_result()
+
+
+def _coerce_omp_dispatch_result(value: Any) -> WorkerResult:
+    """Keep typed OMP terminals on the historical WorkerResult seam.
+
+    ``run_omp_step`` owns admission and may return a canonical
+    :class:`DispatchOutcome` for an accepted terminal.  The surrounding
+    worker loop still performs fallback classification against ``payload``
+    and the dispatcher adapter still projects to ``AgentResult``; both need a
+    compatibility worker carrying the lossless outcome envelope instead of
+    attempting ``DispatchOutcome.to_agent_result()`` or ``.payload``.
+    """
+    from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
+
+    if not isinstance(value, DispatchOutcome):
+        if not isinstance(value, WorkerResult):
+            raise CliError(
+                "internal_error",
+                "canonical OMP dispatch returned an invalid worker result",
+            )
+        return value
+    if value.kind == "unresolved_launch":
+        raise CliError(
+            "scheduling_condition",
+            "canonical OMP launch remains unresolved",
+            extra={"reason": "unresolved_launch", "dispatch_outcome": value.to_dict()},
+        )
+    if value.kind == "no_launch":
+        raise CliError(
+            "internal_error",
+            "canonical OMP dispatch completed without a worker launch",
+            extra=value.to_dict(),
+        )
+    payload: dict[str, Any] = {}
+    if isinstance(value.success_payload, dict):
+        payload.update(value.success_payload)
+    if value.kind != "success":
+        payload.setdefault("success", False)
+        if value.terminal_failure is not None:
+            payload.setdefault("terminal_failure", dict(value.terminal_failure))
+        if value.provider_evidence is not None:
+            payload.setdefault("provider_evidence", dict(value.provider_evidence))
+        if value.disposition_id is not None:
+            payload.setdefault("disposition_id", value.disposition_id)
+    return WorkerResult(
+        payload=payload,
+        raw_output="",
+        duration_ms=0,
+        cost_usd=0.0,
+        worker_identity=dict(value.worker_identity or {}),
+        auth_metadata={"dispatch_outcome": value.to_dict()},
+    )
 
 
 def _codex_to_agent_result(
@@ -7343,6 +7446,22 @@ def _patch_active_step_fallback_metadata(
     except Exception:
         return
 
+
+def _native_construction_proof(
+    backend: str, provider: str, model: str, route: str,
+) -> dict[str, Any]:
+    """Delegate proof production to the backend-owned catalog seam.
+
+    This helper intentionally contains no model-name predicate or registry of
+    its own.  The cloud admission seam performs exact catalog membership and
+    derives all proof identities from the observed backend response.
+    """
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import _default_native_liveness
+    proof = _default_native_liveness(backend, model)
+    if proof.get("route") != route:
+        raise CliError("route_liveness_invalid", "native catalog selected a different route")
+    return dict(proof)
+
 def _production_worker_dispatch(
     step: str,
     state: PlanState,
@@ -7357,7 +7476,7 @@ def _production_worker_dispatch(
     output_path: Path | None,
     worker_options: dict[str, Any] | None,
     wbc_dispatch: CommonWorkerDispatchSpec | None = None,
-) -> tuple[WorkerResult, str, str, bool]:
+) -> Any:
     if wbc_dispatch is None:
         raise CliError(
             "wbc_dispatch_required",
@@ -7370,13 +7489,16 @@ def _production_worker_dispatch(
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
+        LaunchResult,
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
     )
+    from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
 
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
+    mode = am.mode if isinstance(am, AgentMode) else am[1]
     model = am.resolved_model if isinstance(am, AgentMode) else am[3]
     effort = am.effort if isinstance(am, AgentMode) else None
     selected_spec = format_selected_spec(agent, model, effort) or agent
@@ -7392,8 +7514,8 @@ def _production_worker_dispatch(
         phase=step,
         dispatch_family_id=str(options.get("dispatch_family_id") or logical_id),
         logical_dispatch_id=logical_id,
-        physical_door_id=str(options.get("physical_door_id") or "workers._impl.run_step_with_worker"),
-        configured_spec=str(options.get("configured_spec") or selected_spec),
+        physical_door_id="workers._impl.run_step_with_worker",
+        configured_spec=selected_spec,
         selected_spec=selected_spec,
         source_revision=str(provenance.get("source_revision") or ""),
         runtime_vector=provenance,
@@ -7402,19 +7524,21 @@ def _production_worker_dispatch(
         dependency_interpreter_identity=str(Path(sys.executable).resolve()),
         prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or _digest_prompt_identity(prompt_override, prompt_kwargs, step)),
         configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
-        authorized_route_identity=str(options.get("authorized_route_identity") or selected_spec),
+        authorized_route_identity=selected_spec,
         projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
         timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
         production_intent=True,
         ledger_root=root,
-        route_liveness_resolver=options.get("route_liveness_resolver"),
-        memory_headroom_reader=options.get("memory_headroom_reader"),
-        cooldown_reader=options.get("cooldown_reader"),
+        # Production route liveness is backend-owned; caller options cannot
+        # inject a substitute attestation.
     )
 
+    transport_result: Any = None
+
     def launch(_context: Any) -> Any:
+        nonlocal transport_result
         if wbc_dispatch is not None:
-            return wbc_dispatch.run(
+            result = wbc_dispatch.run(
                 lambda _start: _run_step_with_worker_legacy(
                     step, state, plan_dir, args, root=root, resolved=am,
                     prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
@@ -7422,6 +7546,9 @@ def _production_worker_dispatch(
                     worker_options=worker_options, record_routing=True,
                 )
             ).worker_result
+            transport_result = result
+            worker = result[0] if isinstance(result, tuple) and len(result) == 4 else result
+            return LaunchResult(True, result, worker_identity=worker.worker_identity)
         return _run_step_with_worker_legacy(
             step, state, plan_dir, args, root=root, resolved=am,
             prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
@@ -7429,13 +7556,72 @@ def _production_worker_dispatch(
             worker_options=worker_options, record_routing=True,
         )
 
+    # Ask the admission seam for the canonical typed terminal.  The native
+    # worker API still has a legacy tuple contract, so terminal outcomes are
+    # projected back into that shape below after the ledger assigns the final
+    # terminal event id.
     outcome = dispatch_with_admission(
-        request, launch, gate=require_production_worker_dispatch_runtime, return_worker=True,
+        request, launch, gate=require_production_worker_dispatch_runtime, return_worker=False,
     )
     if isinstance(outcome, AdmissionRefusal):
         raise CliError(outcome.code, outcome.reason, extra=outcome.to_dict())
     if isinstance(outcome, SchedulingCondition):
         raise CliError("scheduling_condition", outcome.reason, extra=outcome.to_dict())
+    if isinstance(outcome, DispatchOutcome):
+        if outcome.kind == "unresolved_launch":
+            raise CliError(
+                "scheduling_condition",
+                "canonical native launch remains unresolved",
+                extra={"reason": "unresolved_launch", "dispatch_outcome": outcome.to_dict()},
+            )
+        if outcome.kind == "no_launch":
+            raise CliError(
+                "internal_error",
+                "canonical native dispatch completed without a worker launch",
+                extra=outcome.to_dict(),
+            )
+
+        raw = transport_result
+        if isinstance(raw, LaunchResult):
+            raw = raw.value
+        if isinstance(raw, tuple) and len(raw) == 4:
+            transport_worker = raw[0]
+            legacy_tail = raw[1:]
+        else:
+            transport_worker = raw
+            legacy_tail = (agent, mode, bool(am.refreshed if isinstance(am, AgentMode) else am[2]))
+
+        # A typed terminal can originate from an exception and therefore have
+        # no ordinary WorkerResult transport.  Synthesize the compatibility
+        # element in that case; all canonical identity/context remains in the
+        # dispatch_outcome envelope, never inferred from a payload.
+        if not isinstance(transport_worker, WorkerResult):
+            payload: dict[str, Any] = {}
+            if isinstance(outcome.success_payload, dict):
+                payload.update(outcome.success_payload)
+            if outcome.kind != "success":
+                payload.setdefault("success", False)
+                if outcome.terminal_failure is not None:
+                    payload.setdefault("terminal_failure", dict(outcome.terminal_failure))
+                if outcome.provider_evidence is not None:
+                    payload.setdefault("provider_evidence", dict(outcome.provider_evidence))
+                if outcome.disposition_id is not None:
+                    payload.setdefault("disposition_id", outcome.disposition_id)
+            transport_worker = WorkerResult(
+                payload=payload,
+                raw_output="",
+                duration_ms=0,
+                cost_usd=0.0,
+            )
+
+        metadata = dict(transport_worker.auth_metadata or {})
+        metadata["dispatch_outcome"] = outcome.to_dict()
+        transport_worker.auth_metadata = metadata
+        # The typed outcome is authoritative.  This also repairs legacy
+        # transports that omitted identity while preventing a second identity
+        # from being invented at the handler boundary.
+        transport_worker.worker_identity = dict(outcome.worker_identity)
+        return (transport_worker, *legacy_tail)
     if not isinstance(outcome, tuple) or len(outcome) != 4:
         raise CliError("internal_error", "canonical worker dispatch returned an invalid worker result")
     return outcome
@@ -7472,14 +7658,25 @@ def run_step_with_worker(
     ledger_fallback_trigger: str | None = None,
     wbc_dispatch: CommonWorkerDispatchSpec | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
-    production_intent = bool(
+    dispatcher_enabled = os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") == "1"
+    am = resolved or resolve_agent_mode(step, args)
+    agent_name = am.agent if isinstance(am, AgentMode) else am[0]
+    has_runtime_binding = bool(
         os.environ.get("ARNOLD_RUNTIME_MANIFEST")
         or os.environ.get("MEGAPLAN_RUNTIME_LAUNCH_SEED")
+    )
+    production_intent = bool(
+        has_runtime_binding
         or (worker_options or {}).get("production_intent")
     )
+    # Dispatcher-on is itself the higher-level native route.  When a caller
+    # supplies only the OMP production option (without a process-wide runtime
+    # binding), keep that route inside ArnoldDispatcher so its AgentResult
+    # projection is exercised; the OMP door still performs its own admission
+    # from worker_options.
+    if dispatcher_enabled and not has_runtime_binding:
+        production_intent = False
     if production_intent:
-        am = resolved or resolve_agent_mode(step, args)
-        agent_name = am.agent if isinstance(am, AgentMode) else am[0]
         if agent_name != "omp":
             return _production_worker_dispatch(
                 step, state, plan_dir, args, root=root, resolved=am,
@@ -7496,6 +7693,25 @@ def run_step_with_worker(
             read_only=read_only, output_path=output_path,
             worker_options=worker_options, wbc_dispatch=wbc_dispatch,
             record_routing=record_routing,
+        )
+    if dispatcher_enabled and agent_name == "omp" and wbc_dispatch is not None:
+        # The OMP adapter owns the physical admission door.  In dispatcher-on
+        # mode the common WBC supplied by the caller must be handed to that
+        # door directly; wrapping the whole dispatcher call in the same WBC
+        # would recursively re-enter the adapter and lose its identity.
+        return _run_step_with_worker_legacy(
+            step,
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=resolved,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            read_only=read_only,
+            worker_options=worker_options,
+            record_routing=record_routing,
+            wbc_dispatch=wbc_dispatch,
         )
     if wbc_dispatch is None:
         return _run_step_with_worker_legacy(
@@ -7748,7 +7964,7 @@ def _run_step_with_worker_legacy(
                         )
                     from arnold_pipelines.megaplan.workers.omp import run_omp_step
 
-                    worker = run_omp_step(
+                    worker = _coerce_omp_dispatch_result(run_omp_step(
                         step,
                         state,
                         plan_dir,
@@ -7762,7 +7978,7 @@ def _run_step_with_worker_legacy(
                         output_path=output_path,
                         worker_options=worker_options,
                         wbc_dispatch=wbc_dispatch,
-                    )
+                    ))
                 else:
                     # Defensive guard: codex must receive an explicit model. The
                     # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
@@ -7846,6 +8062,7 @@ def _run_step_with_worker_legacy(
                     prompt_kwargs=prompt_kwargs,
                     output_path=output_path,
                     effective_refreshed=effective_refreshed,
+                    wbc_dispatch=wbc_dispatch,
                 )
                 # All omp-spec agents route through the omp adapter.
                 _dispatcher.register("omp", _omp_closure)

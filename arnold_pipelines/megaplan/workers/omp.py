@@ -1185,7 +1185,12 @@ def _run_omp_with_admission(
     read_only: bool,
     prompt_kwargs: dict[str, Any] | None,
     wbc_dispatch: Any = None,
-) -> WorkerResult:
+) -> Any:
+    if wbc_dispatch is None:
+        raise CliError(
+            "wbc_dispatch_required",
+            "production OMP dispatch requires the canonical WBC adapter before admission",
+        )
     from arnold_pipelines.megaplan.cloud.runtime_attestation import (
         configured_seed_path,
         require_production_worker_dispatch_runtime,
@@ -1213,8 +1218,8 @@ def _run_omp_with_admission(
         phase=step,
         dispatch_family_id=str(options.get("dispatch_family_id") or logical_id),
         logical_dispatch_id=logical_id,
-        physical_door_id=str(options.get("physical_door_id") or "workers.omp.run_omp_step"),
-        configured_spec=str(options.get("configured_spec") or selected_spec),
+        physical_door_id="workers.omp.run_omp_step",
+        configured_spec=selected_spec,
         selected_spec=selected_spec,
         source_revision=str(provenance.get("source_revision") or ""),
         runtime_vector=provenance,
@@ -1223,18 +1228,17 @@ def _run_omp_with_admission(
         dependency_interpreter_identity=str(Path(os.sys.executable).resolve()),
         prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or hashlib.sha256(f"{step}:{prompt_override or ''}".encode()).hexdigest()),
         configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
-        authorized_route_identity=str(options.get("authorized_route_identity") or selected_spec),
+        authorized_route_identity=selected_spec,
         projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
         timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
         production_intent=True,
         ledger_root=root,
-        route_liveness_resolver=options.get("route_liveness_resolver"),
-        memory_headroom_reader=options.get("memory_headroom_reader"),
-        cooldown_reader=options.get("cooldown_reader"),
     )
     token = _OMP_ADMISSION_ACTIVE.set(True)
+    transport_worker: WorkerResult | None = None
     try:
         def launch(_context: Any) -> WorkerResult:
+            nonlocal transport_worker
             def final_launch(_start: Any = None) -> WorkerResult:
                 return run_omp_step(
                     step, state, plan_dir, root=root, fresh=fresh, model=selected_spec,
@@ -1242,13 +1246,16 @@ def _run_omp_with_admission(
                     worker_options=worker_options, read_only=read_only,
                     prompt_kwargs=prompt_kwargs,
                 )
-            if wbc_dispatch is not None:
-                return wbc_dispatch.run(final_launch).worker_result
-            return final_launch()
+            result = wbc_dispatch.run(final_launch).worker_result
+            if isinstance(result, WorkerResult):
+                # Keep the legacy worker available for the historical caller
+                # while the shared seam returns its canonical typed outcome.
+                transport_worker = result
+            return result
 
         result = dispatch_with_admission(
             request, launch, gate=require_production_worker_dispatch_runtime,
-            return_worker=True,
+            return_worker=False,
         )
     finally:
         _OMP_ADMISSION_ACTIVE.reset(token)
@@ -1256,6 +1263,25 @@ def _run_omp_with_admission(
         raise CliError(result.code, result.reason, extra=result.to_dict())
     if isinstance(result, SchedulingCondition):
         raise CliError("scheduling_condition", result.reason, extra=result.to_dict())
+    from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
+    if isinstance(result, DispatchOutcome) and result.kind == "unresolved_launch":
+        # Keep the canonical typed hold visible to downstream consumers while
+        # retaining the historical exception boundary for OMP callers.
+        raise CliError(
+            "scheduling_condition",
+            "canonical OMP launch remains unresolved",
+            extra={"reason": "unresolved_launch", "dispatch_outcome": result.to_dict()},
+        )
+    if isinstance(result, DispatchOutcome):
+        # Typed ordinary/provider/disposition terminals are already canonical
+        # results from the shared dispatch seam.  Preserve them losslessly so
+        # callers can consume the durable identity and provider context.
+        if result.kind == "success" and transport_worker is not None:
+            metadata = dict(transport_worker.auth_metadata or {})
+            metadata["dispatch_outcome"] = result.to_dict()
+            transport_worker.auth_metadata = metadata
+            return transport_worker
+        return result
     if not isinstance(result, WorkerResult):
         raise CliError("internal_error", "canonical OMP dispatch returned an invalid worker result")
     return result
@@ -1277,7 +1303,7 @@ def run_omp_step(
     free_text: bool = False,
     prompt_kwargs: dict[str, Any] | None = None,
     wbc_dispatch: Any = None,
-) -> WorkerResult:
+) -> Any:
     """Run a megaplan phase through a fresh stateless omp RPC session.
 
     Structured output is enforced locally (local-strict): the model writes the

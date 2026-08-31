@@ -49,6 +49,7 @@ import json
 import os
 import runpy
 import sys
+import socket
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -674,6 +675,14 @@ def _managed_spec(
     return spec
 
 
+class ManagedLaunchUnresolved(RuntimeError):
+    """Typed managed-door hold; keeps the legacy public return code intact."""
+
+    def __init__(self, outcome: Any) -> None:
+        self.outcome = outcome
+        super().__init__("managed launch remains unresolved")
+
+
 def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     """Run the managed command only after one canonical admission decision."""
     from arnold_pipelines.megaplan.cloud.runtime_attestation import require_production_worker_dispatch_runtime
@@ -681,12 +690,18 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
         AdmissionRefusal,
+        LaunchResult,
+        ManagedCommandResult,
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
     )
+    from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
+    from arnold_pipelines.megaplan.types import parse_agent_spec
 
-    model = str(ctx.get("model") or DEFAULT_MODEL)
+    # The immutable managed command spec is the authority for route identity;
+    # ambient context cannot substitute a model after the spec is built.
+    model = str(spec.model)
     plan = str(ctx.get("plan") or ctx["session"])
     identity = str(ctx.get("managed_run_id") or ctx["run_id"])
     seed_path = configured_seed_path()
@@ -726,13 +741,35 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         ledger_root=Path(ctx["run_root"]),
     )
     result = dispatch_with_admission(
-        request, lambda _context: run_managed_command(spec),
-        gate=require_production_worker_dispatch_runtime, return_worker=True,
+        request, lambda _context: LaunchResult(
+            True,
+            ManagedCommandResult(
+                run_managed_command(spec),
+                worker_identity={"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "managed-supervisor"},
+            ),
+            worker_identity={"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "managed-supervisor"},
+        ),
+        # Keep the canonical typed outcome at the managed-door boundary.  The
+        # integer API is restored below after the outcome is published on ctx.
+        gate=require_production_worker_dispatch_runtime,
     )
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
     if isinstance(result, SchedulingCondition):
         raise RuntimeError(f"babysitter admission scheduled: {result.reason}")
+    if isinstance(result, DispatchOutcome):
+        # The managed entry point is an established integer-returning API,
+        # while the canonical dispatch path carries the lossless typed
+        # terminal outcome.  Keep that outcome on the managed-door context so
+        # launch_babysitter can publish it in the receipt without asking the
+        # caller to unpack or reinterpret a transport value.
+        ctx["dispatch_outcome"] = result.to_dict()
+        if result.kind == "unresolved_launch":
+            raise ManagedLaunchUnresolved(result)
+        if result.kind == "success":
+            return 0
+        if result.kind in {"ordinary_terminal_failure", "provider_exhausted", "worker_disposition"}:
+            return 1
     if not isinstance(result, int):
         raise RuntimeError("babysitter admission returned an invalid managed result")
     return result
@@ -775,12 +812,12 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         ctx["managed_manifest_path"] = str(ctx["run_root"] / managed_run_id / "manifest.json")
         spec = _managed_spec(ctx, goal_path=goal_path, identity_key=identity_key)
 
-        _write_receipts(ctx, _receipt_payload(ctx, status="running"))
         # The managed supervisor reserves the run itself (clean
         # created=True "supervisor_start" path — no pre-reservation, which
         # would be misread as a dead-supervisor restart) and then blocks
         # until the Flash agent finishes.
         rc = _admit_managed_launch(ctx, spec)
+        _write_receipts(ctx, _receipt_payload(ctx, status="running"))
         managed_terminal = "unknown"
         try:
             managed_terminal = str(
@@ -855,12 +892,29 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 finished_at=_utcnow_iso(),
                 returncode=rc,
                 managed_terminal_status=managed_terminal,
+                dispatch_outcome=ctx.get("dispatch_outcome"),
                 false_success_reason=false_success_reason or None,
             ),
         )
         return _terminal_returncode(rc, terminal_status)
     except SystemExit:
         raise
+    except ManagedLaunchUnresolved as exc:
+        _eprint(json.dumps({"dispatch_outcome": exc.outcome.to_dict()}, sort_keys=True))
+        try:
+            _write_receipts(
+                ctx,
+                _receipt_payload(
+                    ctx,
+                    status="unresolved",
+                    finished_at=_utcnow_iso(),
+                    returncode=2,
+                    dispatch_outcome=exc.outcome.to_dict(),
+                ),
+            )
+        except BaseException as write_exc:
+            _eprint(f"[babysitter] could not record unresolved receipt: {write_exc!r}")
+        return 2
     except BaseException as exc:
         _eprint(f"[babysitter] launch failed session={ctx.get('session', '?')} err={exc!r}")
         try:

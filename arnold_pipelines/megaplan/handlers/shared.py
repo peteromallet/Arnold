@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
@@ -47,6 +48,8 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+    DispatchOutcome,
+    SchedulingCondition,
 )
 from arnold_pipelines.megaplan.workflows.handler_contract import (
     apply_response_projection,
@@ -443,7 +446,7 @@ def _run_worker(
     try:
         if phase_wbc_required(step) and not reuse_active_phase and not _canonical_production:
             activate_phase_wbc(state=state, plan_dir=plan_dir, step=step, agent=agent)
-        if wbc_dispatch is None and not _canonical_production:
+        if wbc_dispatch is None:
             selected_spec = format_selected_spec(agent, model, effort) or agent
             wbc_dispatch = build_worker_dispatch_spec(
                 plan_dir=plan_dir,
@@ -453,6 +456,12 @@ def _run_worker(
                 selected_spec=selected_spec,
                 route_kind="direct",
             )
+            if _canonical_production and wbc_dispatch is None:
+                raise CliError(
+                    "wbc_dispatch_required",
+                    "canonical production worker dispatch requires an active common WBC",
+                    extra={"phase": step, "selected_spec": selected_spec},
+                )
         # Phases hold the lock for many minutes; merge meta to avoid clobbering
         # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
         save_state_merge_meta(plan_dir, state)
@@ -468,15 +477,87 @@ def _run_worker(
                 run_step_kwargs["read_only"] = True
             if wbc_dispatch is not None:
                 run_step_kwargs["wbc_dispatch"] = wbc_dispatch
-            return worker_module.run_step_with_worker(
+            worker_result = worker_module.run_step_with_worker(
                 step,
                 state,
                 plan_dir,
                 args,
                 **run_step_kwargs,
             )
+            # Native/OMP physical doors may return the canonical typed
+            # terminal directly.  Handlers historically unpack a four-tuple,
+            # so project that terminal into a compatibility WorkerResult here
+            # while preserving its complete outcome envelope and identity.
+            if isinstance(worker_result, DispatchOutcome):
+                if worker_result.kind == "unresolved_launch":
+                    raise CliError(
+                        "scheduling_condition",
+                        "canonical worker launch remains unresolved",
+                        extra={
+                            "reason": "unresolved_launch",
+                            "dispatch_outcome": worker_result.to_dict(),
+                        },
+                    )
+                if worker_result.kind == "no_launch":
+                    raise CliError(
+                        "internal_error",
+                        "canonical worker dispatch completed without a worker launch",
+                        extra=worker_result.to_dict(),
+                    )
+                payload: dict[str, Any] = {}
+                if isinstance(worker_result.success_payload, Mapping):
+                    payload.update(worker_result.success_payload)
+                if worker_result.kind != "success":
+                    payload.setdefault("success", False)
+                    if worker_result.terminal_failure is not None:
+                        payload.setdefault("terminal_failure", dict(worker_result.terminal_failure))
+                    if worker_result.provider_evidence is not None:
+                        payload.setdefault("provider_evidence", dict(worker_result.provider_evidence))
+                    if worker_result.disposition_id is not None:
+                        payload.setdefault("disposition_id", worker_result.disposition_id)
+                compatibility_worker = WorkerResult(
+                    payload=payload,
+                    raw_output="",
+                    duration_ms=0,
+                    cost_usd=0.0,
+                    worker_identity=dict(worker_result.worker_identity or {}),
+                    auth_metadata={"dispatch_outcome": worker_result.to_dict()},
+                )
+                return compatibility_worker, agent, mode, refreshed
+            return worker_result
     except CliError as error:
         clear_active_step(state, run_id=run_id)
+        raw_outcome = (error.extra or {}).get("dispatch_outcome")
+        if isinstance(raw_outcome, dict):
+            try:
+                unresolved = DispatchOutcome.from_dict(raw_outcome)
+                condition = SchedulingCondition(
+                    condition_id=f"unresolved:{unresolved.logical_dispatch_id}",
+                    reason="unresolved_launch",
+                    plan_id=unresolved.plan_id,
+                    phase=unresolved.phase,
+                    spec=unresolved.selected_spec,
+                    dispatch_family_id=unresolved.dispatch_family_id,
+                    logical_dispatch_id=unresolved.logical_dispatch_id,
+                    admission_attempt=1,
+                    retry_after_s=0.0,
+                    observed_at=unresolved.finished_at or now_utc(),
+                    cause_event_id=unresolved.terminal_outcome_event_id,
+                    evidence={"dispatch_outcome": unresolved.to_dict()},
+                )
+                _emit_phase_result(
+                    phase=step,
+                    state=state,
+                    plan_dir=plan_dir,
+                    exit_kind="scheduling_condition",
+                    cli_provenance={"error_code": error.code},
+                    scheduling_condition=condition,
+                    dispatch_outcome=unresolved,
+                )
+            except (TypeError, ValueError):
+                # Preserve the original typed error if a producer supplied an
+                # invalid payload; do not manufacture a terminal result.
+                pass
         if error.code != "scheduling_condition":
             record_step_failure(plan_dir, state, step=step, iteration=failure_iteration, error=error)
         raise
@@ -1041,6 +1122,12 @@ def _finish_step(
         "next_step": resolved_next,
         "state": state["current_state"],
     }
+    dispatch_outcome = None
+    metadata = worker.auth_metadata if isinstance(worker.auth_metadata, dict) else {}
+    raw_dispatch_outcome = metadata.get("dispatch_outcome")
+    if isinstance(raw_dispatch_outcome, dict):
+        dispatch_outcome = DispatchOutcome.from_dict(raw_dispatch_outcome)
+        response["dispatch_outcome"] = dispatch_outcome.to_dict()
     if response_fields:
         response.update(response_fields)
     route_signal = response.get("route_signal")
@@ -1066,6 +1153,7 @@ def _finish_step(
         deviations=_extract_deviations_from_state(state),
         artifacts_written=tuple(artifacts),
         cli_provenance=_snapshot_cli_provenance(state),
+        dispatch_outcome=dispatch_outcome,
     )
     try:
         strict_boundary_receipt = phase_wbc_required(step) and phase_wbc_state(state, step=step) is not None

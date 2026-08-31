@@ -1,6 +1,23 @@
-# NBF execution contract — Batch 2 Oracle gate blocked — direct Grok subscription — 2026-08-30
+# NBF execution contract — Batch 2 PASS checkpoint — 2026-08-31
 
-- State: `BLOCKED_GROK_BUILD_BALANCE` at the Batch-2 Oracle gate.
+- State: `BATCH_2_PASS_CHECKPOINT_COMMITTED`; the checkpoint transition is
+  `pending -> committed` in this commit.
+- Batch 2 accepted tasks: `NBF-02` and `NBF-03`.
+- Strict progress: `3/7 = 42.9%`; batches: `2/5 = 40%`; next: **Batch 3**.
+- Five independent Luna reviews converged: ambiguous `PASS`; contract `PASS`;
+  focused regression `PASS` (broader results unclassified); expanded review 4
+  `PASS` (439 passes, documented baselines only); review 5 `PASS_BATCH_2`.
+- The one controlling Sol ruling remains binding: no second Sol and no managed
+  second WBC authority. Batch 3/provider-policy/scheduler/journal/network and
+  taxonomy redesigns remain out of scope.
+- Gate4 is the custody-reconciled cumulative branch from `2297fb3…`; source
+  bytes are preserved and this checkpoint contains the reviewed cumulative
+  Batch 1 + Batch 2 state because the original Batch 1 checkpoint ancestry was
+  not imported.
+
+# Historical Batch-2 provider-credit block — preserved record — 2026-08-30
+
+- State at the time: `BLOCKED_GROK_BUILD_BALANCE` at the Batch-2 Oracle gate.
 - Current HEAD: `5f172e3588e740bacd6692ca9e4cc50ae01f6a6b`; candidate implementation
   parent remains `5da26ec5be4d13559948fe4256a114ad7626482b` (**not** validly
   Batch-2 passed).

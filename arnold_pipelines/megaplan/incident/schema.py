@@ -1064,17 +1064,27 @@ def validate_nbf_event(
             str(typ),
         )
     elif typ == "worker_terminal_outcome":
-        unknown = set(payload) - (fields | {"primary_spec", "configured_fallback_chain_identity"})
+        unknown = set(payload) - (fields | {
+            "primary_spec", "configured_fallback_chain_identity",
+            # Context fields were added after the first terminal ledger
+            # format.  They are accepted on new records while old records
+            # remain readable for replay/projection compatibility.
+            "provider", "route_liveness_kind", "route_liveness_identity",
+            "route_liveness_digest",
+        })
         missing = fields - set(payload)
         if unknown:
             raise ValueError(f"{typ} unknown fields: {sorted(unknown)}")
         if missing:
             raise ValueError(f"{typ} missing fields: {sorted(missing)}")
+        for n in ("provider", "route_liveness_kind", "route_liveness_identity", "route_liveness_digest"):
+            if n in payload and payload[n] is not None and not isinstance(payload[n], str):
+                raise ValueError(f"{typ}.{n} must be a string or null")
     elif typ == "controlled_adapter_state":
         _strict_record_fields_with_optional(
             payload,
             fields,
-            {"phase", "selected_spec", "primary_spec", "logical_dispatch_id", "worker_identity", "started_at", "finished_at"},
+            {"phase", "selected_spec", "primary_spec", "logical_dispatch_id", "worker_identity", "started_at", "finished_at", "operation_evidence", "physical_operation_evidence"},
             str(typ),
         )
     elif typ in {"provider_probe_started", "provider_probe_result"}:
@@ -1082,6 +1092,13 @@ def validate_nbf_event(
             payload,
             fields,
             {"parent_reservation_event_id", "phase", "route_identity"},
+            str(typ),
+        )
+    elif typ == "provider_route_child_reserved":
+        _strict_record_fields_with_optional(
+            payload,
+            fields,
+            {"execution_context_identity"},
             str(typ),
         )
     else:
@@ -1177,6 +1194,9 @@ def validate_nbf_event(
                 raise ValueError("provider probe result passed must be boolean")
             _sha256_identity(payload["evidence_digest"], f"{typ}.evidence_digest")
     if typ == "controlled_adapter_state":
+        # ``ambiguous`` is retained solely so pre-attempt-6 ledgers can be
+        # projected and reconciled as permanent holds. New controlled-door
+        # appends reject it in the ledger; it is not a lifecycle state.
         if payload.get("launch_state_identity") not in {"not_started", "entered", "accepted", "closed", "ambiguous"}:
             raise ValueError("controlled adapter state is invalid")
         _required(payload.get("reservation_event_id"), f"{typ}.reservation_event_id")
