@@ -1,0 +1,131 @@
+{
+  "schema_version": "arnold.workflow.completion_kernel_c1_proof_map.v1",
+  "proof_map_type": "completion-kernel-c1-proof-map",
+  "milestone": "native-c1-completion-contract",
+  "proof_entries": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "evidence_refs": [
+        "arnold/workflow/completion/hashing.py",
+        "tests/arnold/workflow/test_completion_import_boundary.py"
+      ],
+      "verification": "Canonical sha256-prefixed hashing and neutral import boundary verified by dependency receipt."
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "evidence_refs": [
+        "arnold/workflow/completion/spec.py",
+        "arnold/workflow/completion/source_declaration.py",
+        "tests/arnold/workflow/test_completion_spec.py"
+      ],
+      "verification": "Unified SubjectKind, deterministic spec serialization, obligation identity, and tombstoning verified by dependency receipt."
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "evidence_refs": [
+        "arnold/workflow/completion/binding.py",
+        "arnold/workflow/completion/outcomes.py",
+        "arnold/workflow/completion/terminals.py",
+        "arnold/workflow/completion/ledger.py",
+        "arnold/workflow/completion/shadow.py"
+      ],
+      "verification": "Binding, outcome, terminal, ledger, and abstract shadow contracts implemented; hash-chain and all SubjectKind coverage verified by dependency receipt."
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "evidence_refs": [
+        "arnold/workflow/completion/durability.py",
+        "tests/arnold/workflow/test_completion_durability.py"
+      ],
+      "verification": "Durable/helper classification, omission lint, and required hidden-effect negative fixture verified by dependency receipt."
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "evidence_refs": [
+        "arnold/workflow/completion/fixtures.py",
+        "arnold/workflow/completion/shadow.py",
+        "arnold/workflow/completion/s2f.py",
+        "arnold_pipelines/megaplan/completion/adapter.py",
+        "tests/arnold_pipelines/megaplan/completion/test_adapter.py"
+      ],
+      "verification": "False-done/REVIEW fixtures, S2F discovery gap behavior, adapter mapping, and synthetic integration verified; recorded evidence reports 32 adapter tests passed."
+    },
+    {
+      "task_id": "T6a",
+      "status": "done",
+      "evidence_refs": [
+        "completion-kernel-c1-manifest.json",
+        "tests/arnold/workflow/test_completion_spec.py",
+        "tests/arnold/workflow/test_completion_binding.py",
+        "tests/arnold/workflow/test_completion_outcomes.py",
+        "tests/arnold/workflow/test_completion_ledger.py"
+      ],
+      "verification": "Manifest and core contract tests emitted; dependency receipt reports 83 tests passed."
+    },
+    {
+      "task_id": "T6b",
+      "status": "done",
+      "evidence_refs": [
+        "tests/arnold/workflow/test_completion_durability.py",
+        "tests/arnold/workflow/test_completion_shadow.py",
+        "tests/arnold/workflow/test_completion_fixtures.py",
+        "tests/arnold/workflow/test_completion_structure.py",
+        "tests/arnold_pipelines/megaplan/completion/test_adapter.py"
+      ],
+      "verification": "Dependency receipt reports durability, shadow, fixture, and adapter tests passed; adapter selector was outside the admitted narrow-test selectors and was not rerun."
+    },
+    {
+      "task_id": "T6c",
+      "status": "done",
+      "evidence_refs": [
+        "completion-divergence-ledger.json",
+        "completion-kernel-c1-proof-map.json"
+      ],
+      "verification": "Initial empty divergence ledger and content-addressed C1 proof map emitted with gap-report qualification."
+    }
+  ],
+  "gap_reports": [
+    {
+      "report_type": "S2FMissingTemplateKinds",
+      "source_task": "T5",
+      "status": "incomplete_s2f",
+      "scan_dirs": [
+        ".megaplan/plans",
+        ".megaplan/plans/*",
+        "s2f_templates",
+        ".megaplan/s2f_templates",
+        "gates/s2f_templates"
+      ],
+      "discovered_files": [],
+      "gaps": [
+        "Partial execution-time S2F artifacts are qualified by S2FMissingTemplateKinds; no hard stop occurs when any recognized template is present."
+      ],
+      "tested_adapter_paths": [
+        "synthetic S2F discovery and malformed-entry gap handling",
+        "CompletionSubject kind mapping and shadow runner integration"
+      ],
+      "untested_adapter_paths": [
+        {
+          "path": "real GO-FORMAT receipt ingestion",
+          "reason": "not tested due to incomplete S2F"
+        },
+        {
+          "path": "real .pype identity template ingestion",
+          "reason": "not tested due to incomplete S2F"
+        },
+        {
+          "path": "real boundary-contract registry ingestion",
+          "reason": "not tested due to incomplete S2F"
+        }
+      ],
+      "note": "Execution-time discovery covers GO-FORMAT receipts, .pype identity templates, and boundary-registry entries; partial template availability remains diagnostic."
+    }
+  ],
+  "created_at": "2026-08-31T00:00:00Z",
+  "content_hash": "sha256:c0fd682163328f379872e572338aa1b3444f889fe4653161b3f16de6e264c5f2"
+}

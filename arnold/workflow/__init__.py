@@ -531,4 +531,21 @@ __all__ = [
     "WbcQueryStatus",
     "WbcSourceCursor",
     "WbcVerifiedResult",
+    # Completion kernel (shadow-only, experimental)
+    "completion",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy-import the ``completion`` subpackage on first access.
+
+    The completion kernel is shadow-only and non-authoritative in C1;
+    eager import would add measurable startup cost for a feature that
+    is not yet in the critical path.
+    """
+    if name == "completion":
+        import arnold.workflow.completion as completion  # noqa: F811
+
+        return completion
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

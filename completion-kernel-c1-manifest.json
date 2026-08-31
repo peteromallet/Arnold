@@ -1,0 +1,51 @@
+{
+  "schema_version": "arnold.completion.kernel.manifest.v1",
+  "manifest_type": "completion-kernel-c1",
+  "spec_schema_version": "arnold.workflow.completion_spec.v1",
+  "binding_schema_version": "arnold.workflow.completion_binding.v1",
+  "outcome_schema_version": "arnold.workflow.completion_outcome.v1",
+  "ledger_schema_version": "arnold.workflow.completion.divergence.v1",
+  "created_at": "2026-08-31T00:00:00Z",
+  "artifact_name": "completion-kernel-c1",
+  "description": "Completion kernel C1 — shadow-only completion infrastructure with specs, bindings, outcomes, ledger, terminals, fixtures, and S2F discovery adapter. Non-authoritative experimental package.",
+  "components": [
+    {"name": "hashing", "path": "arnold/workflow/completion/hashing.py", "status": "implemented"},
+    {"name": "spec", "path": "arnold/workflow/completion/spec.py", "status": "implemented"},
+    {"name": "binding", "path": "arnold/workflow/completion/binding.py", "status": "implemented"},
+    {"name": "outcomes", "path": "arnold/workflow/completion/outcomes.py", "status": "implemented"},
+    {"name": "terminals", "path": "arnold/workflow/completion/terminals.py", "status": "implemented"},
+    {"name": "ledger", "path": "arnold/workflow/completion/ledger.py", "status": "implemented"},
+    {"name": "shadow", "path": "arnold/workflow/completion/shadow.py", "status": "implemented"},
+    {"name": "s2f", "path": "arnold/workflow/completion/s2f.py", "status": "implemented"},
+    {"name": "source_declaration", "path": "arnold/workflow/completion/source_declaration.py", "status": "implemented"},
+    {"name": "durability", "path": "arnold/workflow/completion/durability.py", "status": "implemented"},
+    {"name": "fixtures", "path": "arnold/workflow/completion/fixtures.py", "status": "implemented"},
+    {"name": "adapter", "path": "arnold_pipelines/megaplan/completion/adapter.py", "status": "implemented"}
+  ],
+  "artifacts": {
+    "arnold/workflow/completion/hashing.py": "sha256:5f8b4219ca41cf8caeeb6d7f3fa52c483a76327ff0bd509033ff6fa26f1398c2",
+    "arnold/workflow/completion/spec.py": "sha256:a2333816d4ed0ddad9e21a903edb2a1c2cff1c0dbb4ad3db27ab26c4bcf3e38e",
+    "arnold/workflow/completion/binding.py": "sha256:fc1f79a946201bb28e318515d03496f0cc5f725bf9aab79101fbe341676f50cf",
+    "arnold/workflow/completion/outcomes.py": "sha256:3e872be2f0b4322cdf6b2e978d8f2b95a966839221498bdad4da886e60bc030d",
+    "arnold/workflow/completion/terminals.py": "sha256:7f86614a14deb2941960e43161be2f841032285c03ee59a524a78f4924f9fb26",
+    "arnold/workflow/completion/ledger.py": "sha256:7a7bd2787c5309b9e4c4252cc0d1d14e6e07a7c2c5b354541455528baf8849f1",
+    "arnold/workflow/completion/shadow.py": "sha256:9c5a2d6250c9ff93671d736ba0c6d19db0c3e917a6a43c324541d22983aba439",
+    "arnold/workflow/completion/s2f.py": "sha256:f3a73aa4827958ccac332afb7cc5f39cf03d2c7ea5eb62560a52c475c41f45b8",
+    "arnold/workflow/completion/source_declaration.py": "sha256:30e071bab2f9b24dae0bc1430f795a6918905826b92ebe163e06f432b35afb75",
+    "arnold/workflow/completion/durability.py": "sha256:9b4d5b24aea8363cbddea181fe11d392221753a02e21b4838534d492981064ff",
+    "arnold/workflow/completion/fixtures.py": "sha256:ed31af4a7d1be5b9c7e1edc813202e6ec1d75d60622ff950eac84b3d74c7cb9f",
+    "arnold_pipelines/megaplan/completion/adapter.py": "sha256:b0d0e5fcfddc1a978a4ec5fcd08dbd3db22a16f7866a525f8fb2f33e30aa1796"
+  },
+  "tests": [
+    {"name": "test_completion_import_boundary", "path": "tests/arnold/workflow/test_completion_import_boundary.py", "status": "implemented"},
+    {"name": "test_completion_spec", "path": "tests/arnold/workflow/test_completion_spec.py", "status": "implemented"},
+    {"name": "test_completion_binding", "path": "tests/arnold/workflow/test_completion_binding.py", "status": "implemented"},
+    {"name": "test_completion_outcomes", "path": "tests/arnold/workflow/test_completion_outcomes.py", "status": "implemented"},
+    {"name": "test_completion_ledger", "path": "tests/arnold/workflow/test_completion_ledger.py", "status": "implemented"},
+    {"name": "test_completion_structure", "path": "tests/arnold/workflow/test_completion_structure.py", "status": "implemented"}
+  ],
+  "imports": ["arnold.workflow.completion", "arnold_pipelines.megaplan.completion"],
+  "dependency_status": "self-contained — no transitive imports to product modules verified by import boundary test",
+  "authoritative_status": "non-authoritative — shadow-only; cannot satisfy completion; see S2R GO-0",
+  "content_hash": "sha256:9cd9670e8d2e7c3e860681b56c88d8f50e1579ac151f5d1a91bad6c73b4c73a7"
+}

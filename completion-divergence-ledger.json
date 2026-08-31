@@ -1,0 +1,7 @@
+{
+  "schema_version": "arnold.workflow.completion_divergence_ledger.v1",
+  "ledger_version": "1",
+  "entries": [],
+  "ledger_hash": "sha256:8ba11debb13a92744ef91b0ef2e89abfe022346452509392512141e8b01270ec",
+  "content_hash": "sha256:8d2785de2e3db76f7438e90c4ea5cc70d41d3e8df0146776618ec06a7e9493ff"
+}
