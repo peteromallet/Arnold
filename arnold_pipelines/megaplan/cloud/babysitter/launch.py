@@ -378,6 +378,51 @@ def _chain_drive_receipt_path(ctx: Mapping[str, Any]) -> Path:
     return Path(str(ctx["run_root"])) / CHAIN_DRIVE_RECEIPT_NAME
 
 
+def _chain_drive_receipt_paths(ctx: Mapping[str, Any]) -> list[Path]:
+    """Return the run-local path and the canonical project fallback."""
+    configured = os.environ.get(CHAIN_DRIVE_RECEIPT_ENV, "").strip()
+    if configured:
+        return [Path(configured)]
+    paths = [_chain_drive_receipt_path(ctx)]
+    workspace = str(ctx.get("workspace") or "").strip()
+    occurrence = str(ctx.get("occurrence") or "").strip()
+    if workspace and occurrence:
+        paths.append(
+            Path(workspace)
+            / ".megaplan"
+            / f"chain-drive-launch-receipt-{occurrence}.json"
+        )
+    return paths
+
+
+def _chain_drive_authority_error(receipt: Mapping[str, Any]) -> str | None:
+    """Check that the receipt points at AgentBox's persisted process resource."""
+    operation_id = receipt.get("operation_id")
+    resource_id = receipt.get("process_resource_id")
+    resource_type = receipt.get("process_resource_type")
+    if not isinstance(operation_id, str) or not operation_id:
+        return "chain drive receipt is missing the AgentBox operation id"
+    if not isinstance(resource_id, str) or not resource_id:
+        return "chain drive receipt is missing the process resource id"
+    if resource_type != "process_session":
+        return "chain drive receipt is not bound to a process-session resource"
+    try:
+        from agentbox.config import load_agentbox_config
+        from agentbox.operations import load_agentbox_operation, open_operation_store
+        from arnold.runtime.durable_ops import ResourceType
+
+        load_agentbox_operation(load_agentbox_config(), operation_id)
+        resources = open_operation_store(load_agentbox_config()).list_typed_resources(operation_id)
+    except Exception as exc:
+        return f"chain drive AgentBox authority is unavailable: {type(exc).__name__}"
+    for resource in resources:
+        if resource.id == resource_id:
+            if resource.resource_type is ResourceType.PROCESS_SESSION:
+                return None
+            return "chain drive authority resource has the wrong type"
+    return "chain drive process resource is not present in AgentBox authority"
+
+
 def _validate_chain_drive_receipt(
     ctx: Mapping[str, Any], receipt: object
 ) -> str | None:
@@ -425,15 +470,34 @@ def _chain_drive_custody_error(ctx: Mapping[str, Any]) -> str | None:
         return None
     if not str(ctx.get("plan") or "").strip() or not str(ctx.get("workspace") or "").strip():
         return "chain babysitter completion lacks plan/workspace custody identity"
-    path = _chain_drive_receipt_path(ctx)
-    try:
-        receipt = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return f"durable chain drive custody receipt is missing: {path}"
-    except (OSError, json.JSONDecodeError) as exc:
-        return f"durable chain drive custody receipt is unreadable: {path} ({exc})"
+    paths = _chain_drive_receipt_paths(ctx)
+    receipt = None
+    selected_path = paths[0]
+    for path in paths:
+        try:
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+            selected_path = path
+            break
+        except FileNotFoundError:
+            continue
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"durable chain drive custody receipt is unreadable: {path} ({exc})"
+    if receipt is None:
+        return f"durable chain drive custody receipt is missing: {selected_path}"
     error = _validate_chain_drive_receipt(ctx, receipt)
-    return f"durable chain drive custody proof rejected: {error}" if error else None
+    if error:
+        return f"durable chain drive custody proof rejected: {error}"
+    authority_error = _chain_drive_authority_error(receipt)
+    return (
+        f"durable chain drive custody authority rejected: {authority_error}"
+        if authority_error
+        else None
+    )
+
+
+def _terminal_returncode(returncode: int, terminal_status: str) -> int:
+    """Make a downgraded managed completion visible to the watchdog."""
+    return returncode if terminal_status == "completed" else (returncode or 1)
 
 
 def _dedup_already_running(ctx: dict[str, Any]) -> bool:
@@ -729,7 +793,7 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
                 false_success_reason=false_success_reason or None,
             ),
         )
-        return rc
+        return _terminal_returncode(rc, terminal_status)
     except SystemExit:
         raise
     except BaseException as exc:

@@ -1731,6 +1731,42 @@ def test_adopt_or_refuse_launch_identity_generation_advance() -> None:
     assert adopted["source_revision"] == live["source_revision"]
 
 
+def test_validate_seed_adopts_manifest_identity_into_stale_chain_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale same-root chain projection adopts the immutable seed identity.
+
+    The validation path must treat the seed/manifest as live authority.  This
+    guards the argument order at the second enforcement point, where reversing
+    the helper arguments silently persisted the stale chain revision.
+    """
+    seed, _paths = _release_seed(tmp_path, monkeypatch, manifest_generation=1)
+    seed_identity = dict(seed["chain_runtime_binding"]["runtime_identity"])
+    stale_identity = dict(seed_identity)
+    stale_identity["source_revision"] = "z" * 40
+    monkeypatch.setattr(
+        attestation,
+        "_chain_binding_runtime_identity",
+        lambda _path: stale_identity,
+    )
+    monkeypatch.setattr(attestation, "_live_manifest_generation", lambda _path: 1)
+    persisted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        attestation,
+        "_persist_adopted_chain_runtime_identity",
+        lambda **kwargs: persisted.append(kwargs),
+    )
+
+    result = attestation.validate_runtime_launch_seed(seed, component="worker")
+
+    assert result["status"] == "ready"
+    assert len(persisted) == 1
+    assert persisted[0]["bound_identity"]["source_revision"] == seed_identity[
+        "source_revision"
+    ]
+    assert persisted[0]["reason"] == "manifest_generation_adopt_validate"
+
 def test_production_worker_dispatch_requires_seed_when_manifest_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

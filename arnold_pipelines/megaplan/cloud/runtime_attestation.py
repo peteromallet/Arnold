@@ -2519,17 +2519,22 @@ def validate_runtime_launch_seed(
         or str(live_binding_runtime.get("source_revision") or "")
         != str(seed_binding_runtime.get("source_revision") or "")
     ):
+        # The immutable seed is the manifest-pinned live identity; the chain
+        # binding is the recorded snapshot that may legitimately lag. Keep
+        # the helper's ``recorded, live`` contract in that order so a
+        # generation advance is adopted into the chain instead of re-saving
+        # its stale identity.
         adopted = _adopt_or_refuse_launch_identity(
-            seed_binding_runtime,
             live_binding_runtime,
-            recorded_generation=seed.get("manifest_generation"),
-            live_generation=_live_manifest_generation(
+            seed_binding_runtime,
+            recorded_generation=_live_manifest_generation(
                 Path(str(paths.get("chain_spec") or ""))
             ),
+            live_generation=seed.get("manifest_generation"),
         )
         if (
             str((adopted.get("source_revision") or ""))
-            != str((seed_binding_runtime.get("source_revision") or ""))
+            != str((live_binding_runtime.get("source_revision") or ""))
         ):
             _persist_adopted_chain_runtime_identity(
                 chain_spec_path=Path(str(paths.get("chain_spec") or "")),

@@ -7,6 +7,7 @@ from pathlib import Path
 from arnold_pipelines.megaplan.cloud.babysitter.launch import (
     CHAIN_DRIVE_RECEIPT_SCHEMA,
     _chain_drive_custody_error,
+    _terminal_returncode,
     _validate_chain_drive_receipt,
 )
 
@@ -74,3 +75,9 @@ def test_non_chain_runs_do_not_require_chain_receipt(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     ctx["run_kind"] = "plan"
     assert _chain_drive_custody_error(ctx) is None
+
+
+def test_false_success_downgrade_returns_nonzero_to_watchdog() -> None:
+    assert _terminal_returncode(0, "failed") == 1
+    assert _terminal_returncode(7, "failed") == 7
+    assert _terminal_returncode(0, "completed") == 0
