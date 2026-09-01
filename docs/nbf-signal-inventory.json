@@ -550,7 +550,7 @@
       "signal_or_probe": "signal:kill_group",
       "site_id": "python:arnold_pipelines/megaplan/auto.py|kill_group|signal|neutral-process-group|_supervise_subprocess/if:body/1",
       "source_file": "arnold_pipelines/megaplan/auto.py",
-      "source_locator": "arnold_pipelines/megaplan/auto.py:844",
+      "source_locator": "arnold_pipelines/megaplan/auto.py:857",
       "subject_class": "neutral-process-group",
       "two_scan_owner": null,
       "two_scan_required": false,
@@ -584,7 +584,7 @@
       "signal_or_probe": "probe:os.kill",
       "site_id": "python:arnold_pipelines/megaplan/cloud/babysitter/launch.py|os.kill|probe|liveness-probe|_pid_live/try:body/1",
       "source_file": "arnold_pipelines/megaplan/cloud/babysitter/launch.py",
-      "source_locator": "arnold_pipelines/megaplan/cloud/babysitter/launch.py:108",
+      "source_locator": "arnold_pipelines/megaplan/cloud/babysitter/launch.py:112",
       "subject_class": "liveness-probe",
       "two_scan_owner": null,
       "two_scan_required": false,
@@ -2055,5 +2055,5 @@
   ],
   "generator_version": "nbf05-signal-inventory-v1",
   "schema_version": "nbf-signal-inventory-v1",
-  "source_inputs_sha256": "60d5d933e722d8f49905b534866e1a2bdb6d0c7766103f3176adacd7cd33a958"
+  "source_inputs_sha256": "e67b11e3f7c90872e25680e5403a87d293f0fa2c5646cabe96c6885c43ffb70a"
 }
