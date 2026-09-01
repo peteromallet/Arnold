@@ -11260,6 +11260,22 @@ def build_chain_parser(subparsers: Any) -> None:
             "runtime's interpreter. Requires --runtime-identity."
         ),
     )
+    runtime_rebind_parser.add_argument(
+        "--allow-optional-policy",
+        action="store_true",
+        help=(
+            "Allow metadata-only replacement on an optional-policy chain. "
+            "Requires an active durable pause, an independently verified "
+            "runtime identity/receipt, and --expected-chain-spec-sha256."
+        ),
+    )
+    runtime_rebind_parser.add_argument(
+        "--expected-chain-spec-sha256",
+        help=(
+            "Exact on-disk and persisted chain-spec SHA-256 CAS guard; "
+            "required with --allow-optional-policy."
+        ),
+    )
 
     runtime_cutover_parser = chain_sub.add_parser(
         "runtime-cutover",
@@ -11995,6 +12011,12 @@ def run_chain_cli(
                 reason=args.reason,
                 actor=args.actor,
                 verified_external_runtime_identity=external_identity,
+                allow_optional_policy=bool(
+                    getattr(args, "allow_optional_policy", False)
+                ),
+                expected_chain_spec_sha256=(
+                    getattr(args, "expected_chain_spec_sha256", None) or None
+                ),
             )
             after = chain_state.to_dict()
             for field in before:
@@ -12002,6 +12024,32 @@ def run_chain_cli(
                     raise CliError(
                         "chain_runtime_binding_drift",
                         f"chain runtime rebind refused: operational field {field!r} changed",
+                    )
+            if bool(getattr(args, "allow_optional_policy", False)):
+                before_metadata = before.get("metadata") or {}
+                after_metadata = after.get("metadata") or {}
+                expected_spec_sha = str(
+                    getattr(args, "expected_chain_spec_sha256", "") or ""
+                )
+                if (
+                    before_metadata.get("chain_spec_sha256") != expected_spec_sha
+                    or after_metadata.get("chain_spec_sha256") != expected_spec_sha
+                ):
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        "chain runtime rebind refused: chain spec SHA-256 changed",
+                    )
+                before_binding = before_metadata.get("execution_binding") or {}
+                after_binding = after_metadata.get("execution_binding") or {}
+                if (
+                    before_binding.get("launched_identity")
+                    != after_binding.get("launched_identity")
+                    or before_metadata.get("execution_environment")
+                    != after_metadata.get("execution_environment")
+                ):
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        "chain runtime rebind refused: launch or engine metadata changed",
                     )
             chain_spec.save_chain_state(spec_path, chain_state)
         except CliError as exc:

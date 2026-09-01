@@ -1699,6 +1699,8 @@ def rebind_runtime_identity(
     direction: str = "cutover",
     verified_external_runtime_identity: Mapping[str, Any] | None = None,
     update_engine_root: bool = False,
+    allow_optional_policy: bool = False,
+    expected_chain_spec_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Adopt or roll back an exact runtime without rewriting the spec binding.
 
@@ -1725,6 +1727,43 @@ def rebind_runtime_identity(
     ):
         raise CliError(RUNTIME_DRIFT_ERROR, "every runtime rebind guard is required")
 
+    policy = binding_policy(spec_path)
+    optional_policy = policy["mode"] == "optional"
+    if allow_optional_policy and not optional_policy:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: --allow-optional-policy is only valid "
+            "when driver.execution_binding is optional",
+        )
+    if allow_optional_policy:
+        if not expected_chain_spec_sha256 or not _FULL_SHA256.fullmatch(
+            str(expected_chain_spec_sha256)
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: --expected-chain-spec-sha256 is "
+                "required with --allow-optional-policy",
+            )
+        observed_spec_sha256 = _sha256_file(spec_path)
+        metadata_spec_sha256 = str(
+            (getattr(state, "metadata", {}) or {}).get("chain_spec_sha256") or ""
+        ).strip()
+        if not (
+            observed_spec_sha256 == str(expected_chain_spec_sha256)
+            and metadata_spec_sha256 == str(expected_chain_spec_sha256)
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: chain spec SHA-256 does not match "
+                "the supplied and persisted guard",
+            )
+    elif expected_chain_spec_sha256 is not None:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: --expected-chain-spec-sha256 requires "
+            "--allow-optional-policy",
+        )
+
     metadata = dict(getattr(state, "metadata", {}) or {})
     execution_binding = metadata.get("execution_binding")
     execution_binding = (
@@ -1746,6 +1785,35 @@ def rebind_runtime_identity(
         persisted_identity
     )
 
+    if allow_optional_policy:
+        # Optional chains normally have no runtime authority.  Replacement is
+        # deliberately narrower: an operator must first establish the same
+        # durable pause authority used by the chain control surface, and the
+        # caller must supply a freshly verified independent runtime receipt.
+        from arnold_pipelines.megaplan.chain.operator_pause import pause_record
+
+        pause = pause_record(state)
+        if pause is None or str(getattr(state, "last_state", "") or "") != "paused":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: optional-policy replacement requires "
+                "an active durable operator pause",
+            )
+        pause_plan = str(pause.get("plan") or "").strip()
+        current_plan = str(getattr(state, "current_plan_name", "") or "").strip()
+        if pause_plan and pause_plan != current_plan:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: pause authority does not match the "
+                "current plan",
+            )
+        if not isinstance(verified_external_runtime_identity, Mapping):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: optional-policy replacement requires "
+                "an independently verified external runtime identity",
+            )
+
     external_identity = (
         _normalized_runtime_identity(verified_external_runtime_identity)
         if isinstance(verified_external_runtime_identity, Mapping)
@@ -1762,7 +1830,10 @@ def rebind_runtime_identity(
             state,
             active_identity=externally_verified_active,
         )
-    if spec_report.get("status") not in {"match", "reconcile_required"}:
+    if (
+        spec_report.get("status") not in {"match", "reconcile_required"}
+        and not allow_optional_policy
+    ):
         # T-0301 worktree-first waiver (grok consult 2026-08-17): a bound
         # chain whose ONLY active error is editable_runtime_import_root_mismatch
         # (leftover candidate .venv editable metadata on a genuinely
@@ -1793,11 +1864,11 @@ def rebind_runtime_identity(
             state,
             active_identity=external_active,
         )
-    if not report.get("required"):
+    if not report.get("required") and not allow_optional_policy:
         raise CliError(
             RUNTIME_DRIFT_ERROR, "runtime rebind is not required by this chain"
         )
-    if report.get("status") != "drift":
+    if report.get("status") != "drift" and not allow_optional_policy:
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             f"runtime rebind refused: status is {report.get('status')!r}, not drift",
@@ -1815,6 +1886,8 @@ def rebind_runtime_identity(
         )
 
     labels = _identity_labels(spec_report.get("expected") or {})
+    if allow_optional_policy and not labels:
+        labels = _identity_labels(spec_report.get("active") or {})
     current_index = int(getattr(state, "current_milestone_index", -1))
     terminal_cursor = current_index == len(labels)
     if current_index < 0 or current_index > len(labels):
@@ -1872,6 +1945,17 @@ def rebind_runtime_identity(
             )
         if str(getattr(state, "current_plan_name", "") or "") != guarded_plan:
             raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
+        if allow_optional_policy:
+            completed_labels = _completed_labels(state)
+            if (
+                len(completed_labels) != current_index
+                or labels[:current_index] != completed_labels
+            ):
+                raise CliError(
+                    RUNTIME_DRIFT_ERROR,
+                    "runtime rebind refused: completed milestone prefix does not "
+                    "match the guarded cursor",
+                )
 
     rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     metadata = dict(getattr(state, "metadata", {}) or {})
@@ -1925,6 +2009,9 @@ def rebind_runtime_identity(
         "current_milestone": expected_current_milestone,
         "current_plan": guarded_plan,
     }
+    if allow_optional_policy:
+        event_core["optional_policy_override"] = True
+        event_core["chain_spec_sha256"] = str(expected_chain_spec_sha256)
     if update_engine_root:
         event_core["from_engine_root"] = from_engine_root
         event_core["to_engine_root"] = to_engine_root
@@ -1967,7 +2054,7 @@ def rebind_runtime_identity(
             state,
             active_identity=rebound_active,
         )
-    if rebound_runtime["status"] != "match":
+    if rebound_runtime["status"] != "match" and not allow_optional_policy:
         raise CliError(
             RUNTIME_DRIFT_ERROR, "rebound runtime did not verify as an exact match"
         )
