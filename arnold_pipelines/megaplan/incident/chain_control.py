@@ -706,6 +706,40 @@ def envelope_replay_tuple(envelope: Mapping[str, Any]) -> tuple[Any, Any, Any, A
     )
 
 
+REPLAYABLE_OPERATION_KINDS = frozenset(
+    {
+        "chain_control.committed",
+        "chain_control.rejected",
+        "chain_control.cas_conflict",
+        "chain_control.genesis_accepted",
+        "chain_control.suffix_rebound",
+    }
+)
+
+
+def _operation_statuses(replay: Mapping[str, Any], chain_id: str) -> dict[str, str]:
+    """Return the durable terminal-or-incomplete status for each chain operation."""
+    statuses: dict[str, str] = {}
+    for event in replay.get("accepted") or []:
+        if event.get("chain_id") != chain_id:
+            continue
+        operation_id = event.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id:
+            continue
+        event_kind = str(event.get("event_kind") or "")
+        if operation_id not in statuses or event_kind in REPLAYABLE_OPERATION_KINDS:
+            statuses[operation_id] = event_kind
+    return statuses
+
+
+def _incomplete_operation_statuses(replay: Mapping[str, Any], chain_id: str) -> dict[str, str]:
+    return {
+        operation_id: event_kind
+        for operation_id, event_kind in _operation_statuses(replay, chain_id).items()
+        if event_kind not in REPLAYABLE_OPERATION_KINDS
+    }
+
+
 def observed_repo_base_sha256(start: Path | None = None) -> str:
     cwd = Path.cwd() if start is None else Path(start)
     try:
@@ -1374,13 +1408,27 @@ class ChainControlJournal:
             intent_kind=intent_kind,
             expected_revision=expected_revision,
         )
-        existing = self.operation_result(operation_id)
+        replay = self.replay_strict()
+        existing = replay["operations"].get(operation_id)
         if existing is not None and envelope_replay_tuple(existing) != key:
             raise ChainControlHold(
                 "replay_key_mismatch",
                 "mutate replay key must match the frozen tuple "
                 "authority_mode, chain_id, operation_id, intent_kind, expected_revision",
                 details={"expected": list(key), "actual": list(envelope_replay_tuple(existing))},
+            )
+        if existing is not None:
+            existing_kind = str(existing.get("event_kind") or "")
+            if existing_kind not in REPLAYABLE_OPERATION_KINDS:
+                raise DurabilityUnknown(
+                    "operation has no durable terminal result; reconcile before retry",
+                    details={"operation_id": operation_id, "event_kind": existing_kind},
+                )
+        incomplete = _incomplete_operation_statuses(replay, chain_id)
+        if incomplete:
+            raise DurabilityUnknown(
+                "chain has an incomplete operation; reconcile before starting another operation",
+                details={"operations": incomplete},
             )
         if existing is not None:
             replay_event = None
@@ -1845,6 +1893,16 @@ def verify_bound_state_matches_journal(spec_path: Path, payload: Mapping[str, An
     if journal is None:
         return
     chain_id = chain_id_for_spec(spec_path)
+    replay = journal.replay_strict()
+    incomplete = _incomplete_operation_statuses(replay, chain_id)
+    active = active_transaction()
+    if active is not None and active.journal.ledger_id == journal.ledger_id:
+        incomplete.pop(active.operation_id, None)
+    if incomplete:
+        raise DurabilityUnknown(
+            "chain has an incomplete operation; state verification requires reconciliation",
+            details={"operations": incomplete, "chain_id": chain_id},
+        )
     expected = _committed_state_digest(journal, chain_id)
     if expected is None:
         return

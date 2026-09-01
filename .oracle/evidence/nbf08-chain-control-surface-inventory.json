@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "e0b30e7b12368a6e6cdba661963526f7bffaadc1",
+  "base_revision": "c9d8d7702856bb638a3327c0e79fd55655f8891f",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -2464,7 +2464,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "dea7575a4e24f6d859d9a0d721ce4568dcd3b24c0ef9b5a119ffb716041b2529",
-        "c933c92949e374e1482fdd82667fc72900cfbf226cfcb3c807fc56adfb9a1448",
+        "e92e1e403b361b92a52697d55bcdc9fd669d26bd23f40bb00bd39a723e8adbe6",
         "1bed5e7926827ee8d64e23bf8f235be77139ead06475331de5d38960074b823f",
         "a3cbc3bcfa468c1088752e438f10f5c2a78edcad4ccb3991bdeae7850cc27a99"
       ],
@@ -3866,7 +3866,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "dea7575a4e24f6d859d9a0d721ce4568dcd3b24c0ef9b5a119ffb716041b2529",
-        "c933c92949e374e1482fdd82667fc72900cfbf226cfcb3c807fc56adfb9a1448",
+        "e92e1e403b361b92a52697d55bcdc9fd669d26bd23f40bb00bd39a723e8adbe6",
         "1bed5e7926827ee8d64e23bf8f235be77139ead06475331de5d38960074b823f",
         "aed2ed197b4486097bca5e96addc9adbd943e64861051e6c803119825b66b886"
       ],
@@ -3934,7 +3934,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "1bed5e7926827ee8d64e23bf8f235be77139ead06475331de5d38960074b823f",
-        "121dca348317f27c1ee6f1da8b06a54bd0d7f3e9c5f88575ac6e0418bf287c4c"
+        "d1a2add5fb888dea81763dadad825f4b306168bfcf6cae23c37fb8e6c1ae87eb"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "8fe785e0024bc9724406f6abc5311aaa2393b7cd58dcb46deee21657a5959416"
+  "inventory_digest": "280703765ce80e4d855e2af6532924db4b61c023d424d21573fc898ceb605c7a"
 }

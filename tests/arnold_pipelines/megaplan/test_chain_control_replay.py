@@ -11,8 +11,10 @@ import pytest
 from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlHold,
     ChainControlJournal,
+    ChainStateAdapter,
     DurabilityUnknown,
     canonical_json,
+    chain_id_for_spec,
     compute_event_hash,
     empty_reservation,
     frame_bytes,
@@ -20,10 +22,12 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     observed_repo_base_sha256,
     physical_record_digest,
     reservation_digest_for,
+    verify_bound_state_matches_journal,
     u64be,
     write_reservation_locked,
 )
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.chain.spec import _state_path_for
 
 FIXTURE = Path(__file__).parent / "incident" / "fixtures" / "nbf08_s2_physical_record_v1.json"
 
@@ -432,6 +436,129 @@ def test_mutate_replay_key_rejects_tuple_mismatch(tmp_path: Path) -> None:
         effect=lambda _txn: {"pre_state_digest": "0" * 64, "post_state_digest": "3" * 64},
     )
     assert replayed["outcome"] == "replay"
+
+
+def test_incomplete_claimed_operation_is_durability_unknown_on_retry(tmp_path: Path) -> None:
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    operation_id = "op-crash-before-cas"
+
+    def crash(_txn: object) -> dict[str, object]:
+        raise KeyboardInterrupt("crash after claimed")
+
+    with pytest.raises(KeyboardInterrupt):
+        journal.mutate(
+            chain_id="chain-demo",
+            operation_id=operation_id,
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            effect=crash,
+        )
+    before_retry = journal.ledger.events_path.read_bytes()
+    calls = {"effect": 0}
+
+    def must_not_run(_txn: object) -> dict[str, object]:
+        calls["effect"] += 1
+        return {"pre_state_digest": "0" * 64, "post_state_digest": "1" * 64}
+
+    with pytest.raises(DurabilityUnknown):
+        journal.mutate(
+            chain_id="chain-demo",
+            operation_id=operation_id,
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            effect=must_not_run,
+        )
+    assert calls["effect"] == 0
+    assert journal.ledger.events_path.read_bytes() == before_retry
+    kinds = [event["event_kind"] for event in journal.replay_strict()["accepted"]]
+    assert kinds[-1] == "chain_control.claimed"
+    assert "chain_control.replay" not in kinds
+    assert "chain_control.committed" not in kinds
+
+
+def test_cas_before_commit_is_held_without_second_effect_and_verification(tmp_path: Path) -> None:
+    initiative = tmp_path / ".megaplan" / "initiatives" / "demo"
+    initiative.mkdir(parents=True)
+    (initiative / "brief.md").write_text("# brief\n", encoding="utf-8")
+    spec = initiative / "chain.yaml"
+    spec.write_text(
+        "anchors:\n  north_star: brief.md\nmilestones:\n  - label: M1\n    idea: brief.md\n",
+        encoding="utf-8",
+    )
+    chain_id = chain_id_for_spec(spec)
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id=chain_id, actor={"id": "t", "class": "test"})
+    state_path = _state_path_for(spec)
+    operation_id = "op-crash-after-cas"
+    payload = {"current_milestone_index": 0, "last_state": "renamed"}
+
+    def cas_then_crash(txn: object) -> dict[str, object]:
+        adapter = ChainStateAdapter(txn, state_path)  # type: ignore[arg-type]
+        adapter.cas_write(payload, expected_revision=None)
+        raise KeyboardInterrupt("crash after CAS")
+
+    with pytest.raises(KeyboardInterrupt):
+        journal.mutate(
+            chain_id=chain_id,
+            operation_id=operation_id,
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            state_paths=[state_path],
+            effect=cas_then_crash,
+        )
+    state_after_crash = state_path.read_bytes()
+    calls = {"effect": 0}
+
+    def must_not_run(_txn: object) -> dict[str, object]:
+        calls["effect"] += 1
+        return {"pre_state_digest": "0" * 64, "post_state_digest": "2" * 64}
+
+    with pytest.raises(DurabilityUnknown):
+        journal.mutate(
+            chain_id=chain_id,
+            operation_id=operation_id,
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            state_paths=[state_path],
+            effect=must_not_run,
+        )
+    assert calls["effect"] == 0
+    assert state_path.read_bytes() == state_after_crash
+    with pytest.raises(DurabilityUnknown):
+        verify_bound_state_matches_journal(spec)
+
+
+def test_incomplete_operation_blocks_different_operation_without_laundering(tmp_path: Path) -> None:
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+
+    with pytest.raises(KeyboardInterrupt):
+        journal.mutate(
+            chain_id="chain-demo",
+            operation_id="op-incomplete",
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            effect=lambda _txn: (_ for _ in ()).throw(KeyboardInterrupt("crash")),
+        )
+    before = journal.ledger.events_path.read_bytes()
+    calls = {"effect": 0}
+
+    def must_not_run(_txn: object) -> dict[str, object]:
+        calls["effect"] += 1
+        return {"pre_state_digest": "0" * 64, "post_state_digest": "3" * 64}
+
+    with pytest.raises(DurabilityUnknown):
+        journal.mutate(
+            chain_id="chain-demo",
+            operation_id="op-different",
+            intent_kind="rename",
+            actor={"id": "t", "class": "test"},
+            effect=must_not_run,
+        )
+    assert calls["effect"] == 0
+    assert journal.ledger.events_path.read_bytes() == before
+    assert "chain_control.replay" not in [event["event_kind"] for event in journal.replay_strict()["accepted"]]
 
 
 def test_rebind_suffix_drift_leaves_old_authority_and_cas_temp_files(tmp_path: Path) -> None:
