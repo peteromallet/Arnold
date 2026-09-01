@@ -294,9 +294,9 @@ def test_cross_family_advance_membership() -> None:
 
     assert is_cross_family_retryable_classification("availability")
     assert is_cross_family_retryable_classification("infrastructure")
-    # Non-transient billing exhaustion may advance to a different family.
-    assert is_cross_family_retryable_classification("quota")
-    # Transient rate limits deliberately do NOT advance cross-family.
+    # Typed billing/auth/rate-limit failures never authorize a configured
+    # target under frozen NBF06 v1.
+    assert not is_cross_family_retryable_classification("quota")
     assert not is_cross_family_retryable_classification("rate_limit")
     assert not is_cross_family_retryable_classification("auth")
     assert not is_cross_family_retryable_classification("unknown")

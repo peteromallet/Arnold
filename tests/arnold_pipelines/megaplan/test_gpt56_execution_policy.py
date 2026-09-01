@@ -92,7 +92,7 @@ def test_codex_xhigh_and_max_are_not_clamped(effort: str) -> None:
     ]
 
 
-@pytest.mark.parametrize("failure_class", ["availability", "rate_limit", "unsupported_model"])
+@pytest.mark.parametrize("failure_class", ["availability", "infrastructure"])
 def test_sequential_same_family_fallback_is_non_writing_and_operational_only(
     failure_class: str,
 ) -> None:
@@ -162,19 +162,15 @@ _CROSS_FAMILY_METADATA = {
 }
 
 
-def test_launch_time_quota_advances_non_read_only_plan() -> None:
-    advanced = _impl._advance_configured_spec_fallback(
+def test_launch_time_quota_does_not_advance_non_read_only_plan() -> None:
+    assert _impl._advance_configured_spec_fallback(
         _CROSS_FAMILY_METADATA,
         "quota",
         mode="persistent",
         step="plan",
         read_only=False,
         pre_tool=True,
-    )
-    assert advanced is not None
-    mode, next_metadata = advanced
-    assert "fireworks" in mode.model or "glm-5p2" in mode.model
-    assert next_metadata["attempt_index"] == 1
+    ) is None
 
 
 def test_launch_time_availability_advances_non_read_only_plan() -> None:
@@ -222,16 +218,15 @@ def test_execute_never_advances_even_when_pre_tool() -> None:
     ) is None
 
 
-def test_read_only_advance_does_not_require_pre_tool() -> None:
-    advanced = _impl._advance_configured_spec_fallback(
+def test_read_only_quota_does_not_advance_without_pre_tool() -> None:
+    assert _impl._advance_configured_spec_fallback(
         _CROSS_FAMILY_METADATA,
         "quota",
         mode="persistent",
         step="critique",
         read_only=True,
         pre_tool=False,
-    )
-    assert advanced is not None
+    ) is None
 
 
 def test_missing_attestation_defaults_fail_closed_for_non_read_only() -> None:

@@ -413,6 +413,23 @@ class TestErrorMatrix:
             _run_plan(client, tmp_path)
         assert client.prompt_calls == _OMP_MAX_ATTEMPTS
 
+    @pytest.mark.parametrize("step", ["execute"])
+    def test_execute_shaped_provider_5xx_never_retries_rpc(
+        self, tmp_path, monkeypatch, deepseek_env, step
+    ):
+        client = FakeRpcClient(
+            turn_factory=lambda: make_turn(
+                assistant_text="x",
+                error_message="HTTP 503 Service Unavailable",
+            )
+        )
+        _install_factory(monkeypatch, client)
+        with pytest.raises(ExecuteFallbackUnsafe):
+            _run_plan(client, tmp_path, step=step)
+        assert client.prompt_calls == 1
+        assert client.started == 1
+        assert client.stopped == 1
+
     def test_auth_failure_is_hard(self, tmp_path, monkeypatch, deepseek_env):
         client = FakeRpcClient(
             turn_factory=lambda: make_turn(
@@ -549,7 +566,7 @@ class TestRetrySemantics:
         assert calls["n"] == 1
         assert client.started == 1
 
-    def test_execute_retries_before_side_effects(
+    def test_execute_refuses_retry_before_side_effects(
         self, tmp_path, monkeypatch, deepseek_env
     ):
         plan_dir, state = _mock_state(tmp_path)
@@ -581,15 +598,20 @@ class TestRetrySemantics:
 
         client = FakeRpcClient(turn_factory=_fail_then_succeed)
         _install_factory(monkeypatch, client)
-        result = run_omp_step(
-            "execute",
-            state,
-            plan_dir,
-            root=tmp_path,
-            fresh=True,
-            model="omp:deepseek/deepseek-v4-pro",
-        )
-        assert result.attempt_index == 2
+        with pytest.raises(ExecuteFallbackUnsafe):
+            run_omp_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+                model="omp:deepseek/deepseek-v4-pro",
+            )
+        # Execute/loop_execute are single-attempt doors: no second RPC or
+        # client is permitted even when the first failure occurred pre-tool.
+        assert calls["n"] == 1
+        assert client.started == 1
+        assert client.stopped == 1
 
 
 class TestUsageAndCost:

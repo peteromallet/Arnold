@@ -24,9 +24,19 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     SchedulingCondition,
     phase_result_guard,
 )
+from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey
 from arnold_pipelines.megaplan.workers import _impl, omp
 from arnold_pipelines.megaplan.runtime import memory_headroom
 from tests.cloud.dispatch_test_helpers import native_proof
+
+
+def _failure_key(*, phase: str, spec: str, epoch: str = "epoch") -> str:
+    return ProviderFailureKey.derive(
+        phase=phase,
+        selected_spec=spec,
+        provider_failure_class="availability",
+        provider_epoch_identity=epoch,
+    ).value
 
 
 class _NoWbc:
@@ -104,7 +114,7 @@ def _worker(payload=None):
 
     return WorkerResult(
         payload or {}, "", 1, 0.0,
-        worker_identity={"host": "physical-door", "pid": 1, "boot_id": "test"},
+        worker_identity={"host": "physical-door", "pid": 1, "boot_id": "test", "process_start_identity": "physical-door-start"},
     )
 
 
@@ -235,7 +245,7 @@ def test_native_missing_worker_identity_is_unresolved_without_supervisor_fallbac
         (
             "ordinary_terminal_failure",
             {
-                "worker_identity": {"host": "native-terminal", "pid": 7, "boot_id": "b"},
+                "worker_identity": {"host": "native-terminal", "pid": 7, "boot_id": "b", "process_start_identity": "native-terminal-start"},
                 "terminal_failure": {"error": "ordinary"},
             },
             "ordinary_terminal_failure",
@@ -243,8 +253,8 @@ def test_native_missing_worker_identity_is_unresolved_without_supervisor_fallbac
         (
             "provider_exhausted",
             {
-                "worker_identity": {"host": "native-provider", "pid": 8, "boot_id": "b"},
-                "provider_failure_key": "a" * 64,
+                "worker_identity": {"host": "native-provider", "pid": 8, "boot_id": "b", "process_start_identity": "native-provider-start"},
+                "provider_failure_key": _failure_key(phase="plan", spec="codex:gpt-5.6"),
                 "provider_evidence": {
                     "observation_id": "observation",
                     "retryability_class": "availability",
@@ -252,7 +262,7 @@ def test_native_missing_worker_identity_is_unresolved_without_supervisor_fallbac
                     "terminal_provider_evidence_id": "evidence",
                     "precondition_identity": "precondition",
                     "provider_epoch_identity": "epoch",
-                    "provider_failure_key": "a" * 64,
+                    "provider_failure_key": _failure_key(phase="plan", spec="codex:gpt-5.6"),
                     "observed_at": "2026-08-31T00:00:00Z",
                 },
             },
@@ -270,12 +280,36 @@ def test_native_physical_door_terminal_outcomes_keep_legacy_tuple_and_context(
         raise CliError(code, "typed terminal", extra=extra)
 
     monkeypatch.setattr(_impl, "_run_step_with_worker_legacy", terminal)
+    kwargs = dict(
+        prompt_override=None, prompt_kwargs=None, read_only=False, output_path=None,
+        worker_options={}, wbc_dispatch=_Wbc(),
+    )
+    if expected_kind == "provider_exhausted":
+        with pytest.raises(CliError) as raised:
+            _impl._production_worker_dispatch(
+                "plan", {"meta": {"plan_id": "plan", "current_invocation_id": "invocation"}},
+                tmp_path, argparse.Namespace(), root=tmp_path,
+                resolved=AgentMode("codex", "fresh", True, "gpt-5.6", None, "gpt-5.6"),
+                **kwargs,
+            )
+        assert raised.value.code == "scheduling_condition"
+        assert raised.value.extra.get("reason") == "provider_degraded"
+        from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+        terminals = [
+            item["payload"] for item in IncidentLedger(tmp_path).read_nbf_events()
+            if item["payload"].get("event_type") == "worker_terminal_outcome"
+        ]
+        assert terminals
+        assert terminals[0]["outcome_kind"] == "provider_exhausted"
+        assert terminals[0]["provider"] == "codex"
+        assert terminals[0]["route_liveness_identity"] == proof["identity"]
+        assert terminals[0]["worker_identity"] == extra["worker_identity"]
+        return
     result = _impl._production_worker_dispatch(
         "plan", {"meta": {"plan_id": "plan", "current_invocation_id": "invocation"}},
         tmp_path, argparse.Namespace(), root=tmp_path,
         resolved=AgentMode("codex", "fresh", True, "gpt-5.6", None, "gpt-5.6"),
-        prompt_override=None, prompt_kwargs=None, read_only=False, output_path=None,
-        worker_options={}, wbc_dispatch=_Wbc(),
+        **kwargs,
     )
 
     assert isinstance(result, tuple) and len(result) == 4
@@ -366,7 +400,7 @@ def test_native_physical_door_terminal_append_failure_holds_unresolved_without_r
             "ordinary_terminal_failure",
             "typed terminal",
             extra={
-                "worker_identity": {"host": "native-terminal", "pid": 7, "boot_id": "b"},
+                "worker_identity": {"host": "native-terminal", "pid": 7, "boot_id": "b", "process_start_identity": "native-terminal-start"},
                 "terminal_failure": {"error": "ordinary"},
             },
         )
@@ -504,7 +538,7 @@ def test_real_handler_constructs_one_wbc_and_reaches_native_door_without_injecti
     def fake_final_provider(*args, **kwargs):
         provider_calls.append(1)
         result = original_mock(*args, **kwargs)
-        result.worker_identity = {"host": "native-test-worker", "pid": 17, "boot_id": "native-test-boot"}
+        result.worker_identity = {"host": "native-test-worker", "pid": 17, "boot_id": "native-test-boot", "process_start_identity": "native-test-start"}
         return result
 
     monkeypatch.setattr(_impl, "mock_worker_output", fake_final_provider)
@@ -516,7 +550,7 @@ def test_real_handler_constructs_one_wbc_and_reaches_native_door_without_injecti
     )
     assert isinstance(result, tuple) and len(result) == 4
     worker, _agent, _mode, _refreshed = result
-    assert worker.worker_identity == {"host": "native-test-worker", "pid": 17, "boot_id": "native-test-boot"}
+    assert worker.worker_identity == {"host": "native-test-worker", "pid": 17, "boot_id": "native-test-boot", "process_start_identity": "native-test-start"}
     assert provider_calls == [1]
     reservations = IncidentLedger(tmp_path).projection()["reservations"]
     assert len(reservations) == 1
@@ -554,7 +588,7 @@ def test_native_physical_door_invalid_backend_proof_has_zero_effects(
         # The digest is deliberately not repaired: the real gate must reject
         # this stale backend observation before it can reserve anything.
     else:
-        proof = _native_admission_proof("claude", "gpt-5.6")
+        proof = _native_admission_proof("claude", "sonnet")
     monkeypatch.setattr(worker_dispatch, "_default_native_liveness", lambda *_: proof)
     wbc = _NoWbc()
     with pytest.raises(CliError):

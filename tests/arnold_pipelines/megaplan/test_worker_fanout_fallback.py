@@ -294,7 +294,7 @@ def test_scatter_worker_unit_passes_subprocess_wbc_dispatch(monkeypatch, tmp_pat
     assert spec is not None
     assert spec.writer_id == "megaplan.worker_dispatch.subprocess"
     assert spec.expected_source_version.endswith(
-        ":subprocess:review:claude:claude-sonnet-4-6:high:1"
+        ":subprocess:review:claude:claude-sonnet-4-6:high:1:out.json"
     )
 
 
@@ -378,6 +378,33 @@ def test_scatter_worker_unit_advances_explicit_chain_for_retryable_cross_provide
     assert unit_result.fallback_trigger == "availability"
 
 
+def test_scatter_worker_unit_suppresses_ambient_fallback_for_scalar_route(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_step_with_worker(*args, **kwargs):
+        captured["worker_options"] = kwargs.get("worker_options")
+        return _worker_result(), "codex", "persistent", True
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.run_step_with_worker",
+        fake_run_step_with_worker,
+    )
+    scatter_worker_unit(
+        0,
+        _chain_unit(configured_specs=["codex:gpt-5.6-sol:high"]),
+        state={"name": "plan", "config": {"project_dir": "."}},
+        plan_dir=Path("."),
+        root=Path("."),
+        args=argparse.Namespace(phase_model=[]),
+    )
+
+    assert captured["worker_options"] == {
+        "_suppress_ambient_agent_fallback": True,
+    }
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -425,11 +452,9 @@ def test_scatter_worker_unit_does_not_advance_for_forbidden_failure_classes(
     "error",
     [
         CliError("worker_timeout", "timed out"),
-        CliError("rate_limit", "rate limit"),
-        CliError("unsupported_model", "unsupported model"),
     ],
 )
-def test_scatter_worker_unit_advances_same_family_for_read_only_operational_failure(
+def test_scatter_worker_unit_advances_same_family_for_read_only_outage(
     monkeypatch,
     error: CliError,
 ) -> None:
@@ -469,6 +494,49 @@ def test_scatter_worker_unit_advances_same_family_for_read_only_operational_fail
     assert calls == 2
     assert result[1].payload == {"attempt": "same-family"}
     assert result[1].attempt_index == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CliError("auth_error", "invalid api key"),
+        CliError("quota_exceeded", "quota exhausted"),
+        CliError("rate_limit", "rate limit"),
+    ],
+)
+def test_scatter_worker_unit_does_not_advance_same_family_typed_provider_failures(
+    monkeypatch,
+    error: CliError,
+) -> None:
+    calls = 0
+
+    def fake_run_step_with_worker(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise error
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.run_step_with_worker",
+        fake_run_step_with_worker,
+    )
+
+    with pytest.raises(CliError) as raised:
+        scatter_worker_unit(
+            0,
+            _chain_unit(
+                configured_specs=[
+                    "codex:gpt-5.6-sol:high",
+                    "codex:gpt-5.6-terra:high",
+                ]
+            ),
+            state={"name": "plan", "config": {"project_dir": "."}},
+            plan_dir=Path("."),
+            root=Path("."),
+            args=argparse.Namespace(phase_model=[]),
+        )
+
+    assert raised.value is error
+    assert calls == 1
 
 
 def test_scatter_worker_unit_keeps_writing_same_family_failure_fail_closed(monkeypatch) -> None:
@@ -539,6 +607,17 @@ def test_scatter_worker_unit_raises_unsafe_before_execute_chain_advances(
         "claude:claude-sonnet-4-6:high",
     )
     assert raised.value.attempted_index == 1
+
+
+def test_loop_execute_fallback_refusal_is_pre_resolution_and_side_effect_free(
+    monkeypatch,
+) -> None:
+    """Frozen A32 ordered-fanout node; delegate to the existing refusal assertion."""
+
+    test_scatter_worker_unit_raises_unsafe_before_execute_chain_advances(
+        monkeypatch,
+        "loop_execute",
+    )
 
 
 @pytest.mark.parametrize("step", ["execute", "loop_execute"])
@@ -617,8 +696,8 @@ def _hermes_mode(model: str) -> AgentMode:
     )
 
 
-def test_cross_family_quota_advances(monkeypatch) -> None:
-    """A quota/balance failure on a 429 must advance a DIFFERENT family."""
+def test_cross_family_quota_does_not_advance(monkeypatch) -> None:
+    """Quota/balance failure never authorizes a configured target in v1."""
     calls: list[dict[str, object]] = []
 
     def fake_run_step_with_worker(*args, **kwargs):
@@ -628,14 +707,7 @@ def test_cross_family_quota_advances(monkeypatch) -> None:
             assert resolved.agent == "hermes"
             assert resolved.model == "zhipu:glm-5.2"
             raise _zhipu_quota_error()
-        assert resolved.agent == "hermes"
-        assert resolved.model == "fireworks:accounts/fireworks/models/glm-5p2"
-        return (
-            _worker_result({"attempt": "fallback"}),
-            resolved.agent,
-            resolved.mode,
-            True,
-        )
+        raise AssertionError("quota must not dispatch configured fallback")
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.workers.run_step_with_worker",
@@ -652,25 +724,18 @@ def test_cross_family_quota_advances(monkeypatch) -> None:
         resolved=_hermes_mode("zhipu:glm-5.2"),
     )
 
-    result = scatter_worker_unit(
-        0,
-        unit,
-        state={"name": "plan", "config": {"project_dir": "."}},
-        plan_dir=Path("."),
-        root=Path("."),
-        args=argparse.Namespace(phase_model=[]),
-    )
+    with pytest.raises(CliError) as raised:
+        scatter_worker_unit(
+            0,
+            unit,
+            state={"name": "plan", "config": {"project_dir": "."}},
+            plan_dir=Path("."),
+            root=Path("."),
+            args=argparse.Namespace(phase_model=[]),
+        )
 
-    unit_result = result[1]
-    assert isinstance(unit_result, WorkerUnitResult)
-    assert unit_result.payload == {"attempt": "fallback"}
-    assert unit_result.attempt_index == 1
-    assert unit_result.attempted_specs == (
-        "omp:zai/glm-5.2",
-        "omp:fireworks/glm-5.2",
-    )
-    assert unit_result.failed_attempt_reasons == ("quota",)
-    assert unit_result.fallback_trigger == "quota"
+    assert raised.value.code == "worker_error"
+    assert len(calls) == 1
 
 
 def test_same_family_quota_does_not_advance(monkeypatch) -> None:

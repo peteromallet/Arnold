@@ -7699,11 +7699,6 @@ _CONFIGURED_SPEC_FALLBACK_CLASSES = frozenset(
     {
         "availability",
         "infrastructure",
-        "auth",
-        "quota",
-        "rate_limit",
-        "unsupported_model",
-        "context_window",
     }
 )
 
@@ -7786,11 +7781,11 @@ def _advance_configured_spec_fallback(
     # Never redispatch after a worker may have mutated the checkout. This is
     # stricter than the provider/model relationship and keeps mid-write
     # failures fail-closed for both explicit and profile-provided chains.
-    # A launch-time (pre-tool) provider failure on a non-execute phase may
-    # advance: no worker tool ran in THIS attempt, so nothing in the
-    # checkout can have been mutated by it. (quota/availability on a fresh
-    # plan worker is exactly this case; fallback_chains.py classifies quota
-    # as advance-eligible because it will not clear by waiting.)
+    # A launch-time (pre-tool) operational provider failure on a non-execute
+    # phase may advance: no worker tool ran in THIS attempt, so nothing in the
+    # checkout can have been mutated by it.  Auth, quota, rate-limit,
+    # unsupported-model, and context failures stay on their typed ordinary
+    # error path; they never authorize a target here.
     if step in _EXECUTE_STEPS:
         return None
     if not read_only and pre_tool is not True:
@@ -7915,6 +7910,7 @@ def _production_worker_dispatch(
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
+        production_provider_probe_executor,
     )
     from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
 
@@ -7931,6 +7927,11 @@ def _production_worker_dispatch(
     manifest_identity = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest() if manifest_path and Path(manifest_path).is_file() else ""
     logical_id = str((state.get("meta") or {}).get("current_invocation_id") or uuid.uuid4())
     options = worker_options or {}
+    fallback_meta = _initial_fallback_metadata(
+        step, args, agent=agent, model=model, effort=effort,
+        configured_specs=options.get("configured_fallback_specs"),
+    )
+    configured_specs = tuple(fallback_meta["configured_specs"])
     request = WorkerAdmissionRequest(
         plan_id=str((state.get("meta") or {}).get("plan_id") or state.get("plan_id") or plan_dir.name),
         phase=step,
@@ -7946,19 +7947,28 @@ def _production_worker_dispatch(
         dependency_interpreter_identity=str(Path(sys.executable).resolve()),
         prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or _digest_prompt_identity(prompt_override, prompt_kwargs, step)),
         configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
+        configured_fallback_specs=configured_specs,
         authorized_route_identity=selected_spec,
         projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
         timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
         production_intent=True,
         ledger_root=root,
+        admission_attempt=int(options.get("admission_attempt") or 1),
         # Production route liveness is backend-owned; caller options cannot
         # inject a substitute attestation.
     )
 
     transport_result: Any = None
 
-    def launch(_context: Any) -> Any:
+    def launch(context: Any) -> Any:
         nonlocal transport_result
+        admitted = getattr(context, "selected_spec", None) or selected_spec
+        parse_agent_spec(admitted)
+        child_am = (
+            am
+            if admitted == selected_spec
+            else _agent_mode_from_configured_spec(admitted, mode=mode, refreshed=True)
+        )
         if wbc_dispatch is not None:
             def _bound_dispatch(_start: Any) -> Any:
                 token = _WORKER_DISPATCH_BINDING.set(
@@ -7975,7 +7985,7 @@ def _production_worker_dispatch(
                 )
                 try:
                     return _run_step_with_worker_legacy(
-                        step, state, plan_dir, args, root=root, resolved=am,
+                        step, state, plan_dir, args, root=root, resolved=child_am,
                         prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
                         read_only=read_only, output_path=output_path,
                         worker_options=worker_options, record_routing=True,
@@ -7992,16 +8002,29 @@ def _production_worker_dispatch(
             except (TypeError, ValueError):
                 accepts_context = True
             dispatch_result = (
-                run(_bound_dispatch, context=_context)
+                run(_bound_dispatch, context=context)
                 if accepts_context
                 else run(_bound_dispatch)
             )
             result = dispatch_result.worker_result
             transport_result = result
             worker = result[0] if isinstance(result, tuple) and len(result) == 4 else result
-            return LaunchResult(True, result, worker_identity=worker.worker_identity)
+            identity = dict(getattr(worker, "worker_identity", None) or {})
+            if not identity.get("process_start_identity"):
+                pid = identity.get("pid")
+                if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+                    try:
+                        from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+                        start = read_process_start_identity(pid)
+                    except Exception:
+                        start = None
+                    if isinstance(start, str) and start:
+                        identity["process_start_identity"] = start
+                if hasattr(worker, "worker_identity"):
+                    worker.worker_identity = identity
+            return LaunchResult(True, result, worker_identity=identity or getattr(worker, "worker_identity", None))
         return _run_step_with_worker_legacy(
-            step, state, plan_dir, args, root=root, resolved=am,
+            step, state, plan_dir, args, root=root, resolved=child_am,
             prompt_override=prompt_override, prompt_kwargs=prompt_kwargs,
             read_only=read_only, output_path=output_path,
             worker_options=worker_options, record_routing=True,
@@ -8011,8 +8034,10 @@ def _production_worker_dispatch(
     # worker API still has a legacy tuple contract, so terminal outcomes are
     # projected back into that shape below after the ledger assigns the final
     # terminal event id.
+    probe_executor = production_provider_probe_executor()
     outcome = dispatch_with_admission(
         request, launch, gate=require_production_worker_dispatch_runtime, return_worker=False,
+        probe_executor=probe_executor, child_launch=launch,
     )
     if isinstance(outcome, AdmissionRefusal):
         raise CliError(outcome.code, outcome.reason, extra=outcome.to_dict())
@@ -8360,7 +8385,12 @@ def _run_step_with_worker_legacy(
             "failed_attempt_reasons": tuple(ledger_fields["failed_attempt_reasons"]),
             "fallback_trigger": ledger_fields["fallback_trigger"],
         }
+        # The ledger fields are supplied for every explicit route, including
+        # a scalar chain.  Presence—not chain length—is what suppresses the
+        # ambient provider fallback below.
+        configured_fallback_present = True
     else:
+        configured = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
         fallback_metadata = _initial_fallback_metadata(
             step,
             args,
@@ -8368,6 +8398,7 @@ def _run_step_with_worker_legacy(
             model=model,
             effort=effort,
         )
+        configured_fallback_present = configured is not None
     _zero_recovery_plan_iteration = int(state.get("iteration", 0) or 0)
     if step in {"plan", "revise"}:
         _zero_recovery_plan_iteration += 1
@@ -8667,6 +8698,7 @@ def _run_step_with_worker_legacy(
                 os.getenv("MEGAPLAN_ZERO_RECOVERY_CANARY") == "1"
                 or
                 explicit_agent
+                or configured_fallback_present
                 or suppress_ambient_fallback
                 or error.code not in {"auth_error", "connection_error"}
             ):

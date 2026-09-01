@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 import pytest
 
 from arnold_pipelines.megaplan.cloud import worker_dispatch
+from arnold_pipelines.megaplan.fallback_chains import provider_family
+from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey
 from arnold_pipelines.megaplan.cloud.babysitter.launch import (
     ManagedLaunchUnresolved,
     _admit_managed_launch,
@@ -35,7 +37,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
 
 MODEL = "gpt-5.6-luna"
 ROUTE = f"codex:{MODEL}"
-IDENTITY = {"host": "managed-host", "pid": 321, "boot_id": "managed-boot"}
+IDENTITY = {"host": "managed-host", "pid": 321, "boot_id": "managed-boot", "process_start_identity": "managed-start"}
 
 
 def _digest(value: object) -> str:
@@ -69,7 +71,10 @@ def _native_observation(*, observed_at: str | None = None, model: str = MODEL) -
         "registry_generation": "test-generation",
         "proof": proof,
         "proof_generation": "test-proof-generation",
-        "family": "gpt",
+        # The mismatch fixture intentionally uses a non-catalog model; its
+        # upstream family remains the canonical codex family even though the
+        # full spec is not parseable by the live model grammar.
+        "family": provider_family("codex:gpt-5.6"),
     }
     identity = _digest(content)
     return {
@@ -218,6 +223,12 @@ def _typed_exception(
     if code == "ordinary_terminal_failure":
         exc.extra = {"worker_identity": identity, "terminal_failure": {"error": "ordinary"}}  # type: ignore[attr-defined]
     elif code == "provider_exhausted":
+        key = ProviderFailureKey.derive(
+            phase="babysitter",
+            selected_spec=ROUTE,
+            provider_failure_class="availability",
+            provider_epoch_identity="epoch",
+        ).value
         evidence = {
             "observation_id": "obs",
             "retryability_class": "availability",
@@ -225,10 +236,10 @@ def _typed_exception(
             "terminal_provider_evidence_id": "provider-evidence",
             "precondition_identity": "precondition",
             "provider_epoch_identity": "epoch",
-            "provider_failure_key": "a" * 64,
+            "provider_failure_key": key,
             "observed_at": "2026-08-31T00:00:00+00:00",
         }
-        exc.extra = {"worker_identity": identity, "provider_evidence": evidence, "provider_failure_key": "a" * 64}  # type: ignore[attr-defined]
+        exc.extra = {"worker_identity": identity, "provider_evidence": evidence, "provider_failure_key": key}  # type: ignore[attr-defined]
     else:
         exc.extra = {"worker_identity": identity, "disposition_id": disposition_id}  # type: ignore[attr-defined]
     return exc
@@ -246,6 +257,17 @@ def test_typed_managed_terminal_preserves_integer_api_and_context(
         lambda _spec: (_ for _ in ()).throw(_typed_exception(code)),
     )
     ctx = _context(tmp_path, run_id=code)
+    if code == "provider_exhausted":
+        with pytest.raises(RuntimeError, match="provider_degraded"):
+            _admit_managed_launch(ctx, _spec(tmp_path, identity=code))
+        terminals = [item for item in _events(tmp_path) if item.get("event_type") == "worker_terminal_outcome"]
+        assert terminals
+        assert terminals[0]["outcome_kind"] == code
+        assert terminals[0]["provider"] == "codex"
+        assert terminals[0]["route_liveness_kind"] == "native_backend"
+        assert len(str(terminals[0]["route_liveness_identity"])) == 64
+        assert terminals[0]["route_liveness_digest"]
+        return
     result = _admit_managed_launch(ctx, _spec(tmp_path, identity=code))
 
     assert isinstance(result, int)

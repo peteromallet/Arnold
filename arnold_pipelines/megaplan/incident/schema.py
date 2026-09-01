@@ -1132,6 +1132,18 @@ def validate_nbf_event(
         )
     elif typ == "spawn_cleanup_handoff":
         _strict_record_fields_with_optional(payload, fields, {"hold_metadata"}, str(typ))
+    elif typ == "provider_observation":
+        _strict_record_fields_with_optional(
+            payload,
+            fields,
+            {
+                "terminal_outcome_event_id",
+                "reservation_event_id",
+                "admission_receipt_id",
+                "logical_dispatch_id",
+            },
+            str(typ),
+        )
     elif typ in {"provider_probe_started", "provider_probe_result"}:
         _strict_record_fields_with_optional(
             payload,
@@ -1150,7 +1162,19 @@ def validate_nbf_event(
         _strict_record_fields_with_optional(
             payload,
             fields,
-            {"execution_context_identity"},
+            {"execution_context_identity", "primary_spec"},
+            str(typ),
+        )
+    elif typ == "provider_observation":
+        _strict_record_fields_with_optional(
+            payload,
+            fields,
+            {
+                "terminal_outcome_event_id",
+                "reservation_event_id",
+                "admission_receipt_id",
+                "logical_dispatch_id",
+            },
             str(typ),
         )
     else:
@@ -1171,8 +1195,10 @@ def validate_nbf_event(
             if not isinstance(payload.get("expected_projection_version"), int) or payload["expected_projection_version"] < 0:
                 raise ValueError("admission_reserved expected_projection_version must be non-negative")
         elif typ == "provider_route_child_reserved":
-            for n in ("reservation_key", "transition_kind", "from_spec", "to_spec", "parent_logical_dispatch_id", "parent_terminal_event_id", "authorizing_event_id", "configured_fallback_chain_identity", "precondition_identity", "child_dispatch_family_id", "child_logical_dispatch_id", "child_physical_door_id", "child_route_liveness_identity", "receipt_derivation_version"):
+            for n in ("reservation_key", "transition_kind", "from_spec", "to_spec", "parent_logical_dispatch_id", "parent_terminal_event_id", "authorizing_event_id", "precondition_identity", "child_dispatch_family_id", "child_logical_dispatch_id", "child_physical_door_id", "child_route_liveness_identity", "receipt_derivation_version"):
                 _required(payload.get(n), f"{typ}.{n}")
+            if not isinstance(payload.get("configured_fallback_chain_identity"), str):
+                raise ValueError(f"{typ}.configured_fallback_chain_identity must be a string")
             if not isinstance(payload.get("expected_projection_version"), int) or payload["expected_projection_version"] < 0:
                 raise ValueError("provider_route_child_reserved expected_projection_version must be non-negative")
     if typ == "spawn_cleanup_handoff":
@@ -1259,6 +1285,18 @@ def validate_nbf_event(
             raise ValueError(f"{typ}.ladder_stage is invalid")
         if payload.get("ladder_stage") is not None and not payload.get("signal_identity"):
             raise ValueError(f"{typ}.signal_identity is required for ladder proof")
+    if typ == "provider_observation":
+        _sha256_identity(payload["provider_failure_key"], f"{typ}.provider_failure_key")
+        for n in ("observation_id", "selected_spec", "phase", "provider_failure_class", "provider_epoch_identity"):
+            _required(payload.get(n), f"{typ}.{n}")
+        for n in (
+            "terminal_outcome_event_id",
+            "reservation_event_id",
+            "admission_receipt_id",
+            "logical_dispatch_id",
+        ):
+            if n in payload and payload[n] is not None:
+                _required(payload.get(n), f"{typ}.{n}")
     if typ == "provider_route_child_reserved" and "child_admission_receipt_id" in payload:
         raise ValueError("composite reservation cannot contain child receipt ID")
     if typ in {"provider_probe_started", "provider_probe_result"}:

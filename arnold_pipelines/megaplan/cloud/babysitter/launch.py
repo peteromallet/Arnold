@@ -51,6 +51,7 @@ import runpy
 import sys
 import socket
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -695,6 +696,7 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
+        production_provider_probe_executor,
     )
     from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
     from arnold_pipelines.megaplan.types import parse_agent_spec
@@ -719,6 +721,7 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         seed_identity = ""
         manifest_identity = ""
     provenance = runtime_provenance()
+    configured_specs = tuple(ctx.get("configured_fallback_specs") or (model,))
     request = WorkerAdmissionRequest(
         plan_id=plan,
         phase="babysitter",
@@ -733,25 +736,48 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         seed_identity=seed_identity,
         dependency_interpreter_identity=str(Path(sys.executable).resolve()),
         prompt_or_phase_input_identity=str(ctx.get("goal_path") or ctx["run_id"]),
-        configured_fallback_chain_identity="",
+        configured_fallback_chain_identity=str(ctx.get("configured_fallback_chain_identity") or ""),
+        configured_fallback_specs=configured_specs,
         authorized_route_identity=model,
         projection_key=f"babysitter:{ctx['session']}",
         timeout_budget_s=float(os.environ.get("ARNOLD_BABYSITTER_TIMEOUT_S", "3600")),
         production_intent=True,
         ledger_root=Path(ctx["run_root"]),
+        admission_attempt=int(ctx.get("admission_attempt") or 1),
     )
-    result = dispatch_with_admission(
-        request, lambda _context: LaunchResult(
+
+    def launch(context: Any) -> LaunchResult:
+        admitted = getattr(context, "selected_spec", None) or model
+        parse_agent_spec(admitted)
+        child_spec = spec if admitted == spec.model else replace(spec, model=admitted)
+        pid = os.getpid()
+        try:
+            from arnold_pipelines.megaplan.watchdog.worker_identity import read_process_start_identity
+            start_identity = read_process_start_identity(pid) or f"managed-supervisor:{pid}"
+        except Exception:
+            start_identity = f"managed-supervisor:{pid}"
+        identity_payload = {
+            "host": socket.gethostname(),
+            "pid": pid,
+            "boot_id": "managed-supervisor",
+            "process_start_identity": start_identity,
+        }
+        return LaunchResult(
             True,
             ManagedCommandResult(
-                run_managed_command(spec),
-                worker_identity={"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "managed-supervisor"},
+                run_managed_command(child_spec),
+                worker_identity=identity_payload,
             ),
-            worker_identity={"host": socket.gethostname(), "pid": os.getpid(), "boot_id": "managed-supervisor"},
-        ),
+            worker_identity=identity_payload,
+        )
+
+    result = dispatch_with_admission(
+        request, launch,
         # Keep the canonical typed outcome at the managed-door boundary.  The
         # integer API is restored below after the outcome is published on ctx.
         gate=require_production_worker_dispatch_runtime,
+        probe_executor=production_provider_probe_executor(),
+        child_launch=launch,
     )
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")

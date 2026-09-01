@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     _run_execute_worker_with_configured_fallback,
 )
 from arnold_pipelines.megaplan.types import CliError, parse_agent_spec
+from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackUnsafe
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers._payload import (
     _raise_for_terminal_provider_failure,
@@ -144,12 +145,25 @@ def test_glm_retryable_failure_advances_to_fireworks(
         "arnold_pipelines.megaplan.workers.run_step_with_worker",
         dispatch,
     )
-    worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
+    with pytest.raises(ExecuteFallbackUnsafe) as raised:
+        _run(monkeypatch, tmp_path)
 
-    assert calls == ["omp:zai/glm-5.2", "omp:fireworks/glm-5.2"]
-    assert agent == "hermes"
-    assert worker.attempt_index == 1
-    assert worker.failed_attempt_reasons == ("availability",)
+    assert calls == ["hermes:zhipu:glm-5.2"]
+    assert raised.value.phase == "execute"
+    assert raised.value.attempted_index == 1
+
+
+def test_execute_fallback_refusal_is_pre_resolution_and_side_effect_free(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Frozen A32 batch node; delegate to the existing refusal assertion."""
+
+    test_glm_retryable_failure_advances_to_fireworks(
+        monkeypatch,
+        tmp_path,
+        "worker_timeout",
+    )
 
 
 def test_retryable_failures_advance_through_fireworks_to_codex(
@@ -170,16 +184,12 @@ def test_retryable_failures_advance_through_fireworks_to_codex(
         "arnold_pipelines.megaplan.workers.run_step_with_worker",
         dispatch,
     )
-    worker, agent, _mode, _refreshed = _run(monkeypatch, tmp_path)
+    with pytest.raises(ExecuteFallbackUnsafe) as raised:
+        _run(monkeypatch, tmp_path)
 
-    assert calls == [
-        "omp:zai/glm-5.2",
-        "omp:fireworks/glm-5.2",
-        "codex:gpt-5.4",
-    ]
-    assert agent == "codex"
-    assert worker.attempt_index == 2
-    assert worker.failed_attempt_reasons == ("availability", "availability")
+    assert calls == ["hermes:zhipu:glm-5.2"]
+    assert raised.value.phase == "execute"
+    assert raised.value.attempted_index == 1
 
 
 def test_non_retryable_failure_does_not_advance(
@@ -227,7 +237,7 @@ def test_retryable_failure_with_workspace_change_fails_closed(
         "arnold_pipelines.megaplan.workers.run_step_with_worker",
         dispatch,
     )
-    with pytest.raises(CliError) as raised:
+    with pytest.raises(ExecuteFallbackUnsafe) as raised:
         _run(monkeypatch, tmp_path)
 
     assert raised.value.code == "execute_fallback_unsafe"

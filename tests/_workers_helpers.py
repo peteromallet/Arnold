@@ -60,6 +60,9 @@ def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:
                 "preflight_results": {},
                 "unresolved_flags": [],
                 "override_forced": False,
+                "flag_resolutions": [],
+                "accepted_tradeoffs": [],
+                "north_star_actions": [],
             }
         ),
         encoding="utf-8",

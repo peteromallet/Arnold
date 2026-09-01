@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.worker_dispatch import WorkerAdmissionRequest, _digest
+from arnold_pipelines.megaplan.fallback_chains import provider_family
 
 
 def native_proof(
@@ -23,7 +24,10 @@ def native_proof(
         "registry_generation": "registry-v1",
         "proof": {"constructable": True, "registry": registry, "preparation": {"ok": True, "backend": backend, "provider": provider, "model": model, "route": route, "operation": "test constructor"}},
         "proof_generation": "proof-v1",
-        "family": "gpt" if backend == "codex" else "claude",
+        # Keep test proofs aligned with the canonical upstream family
+        # vocabulary used by worker admission (codex, claude, omp upstream,
+        # ...); the legacy gpt alias is no longer accepted.
+        "family": provider_family(route),
     }
     identity = _digest(content)
     return {
@@ -66,7 +70,7 @@ def request(tmp_path: Path, **changes: object) -> WorkerAdmissionRequest:
             "proof": "test-native-proof",
             "route": "codex:gpt-5.5",
             "observed_at": "2026-01-01T00:00:00+00:00",
-            "family": "gpt",
+            "family": provider_family("codex:gpt-5.5"),
         },
         "memory_headroom_reader": lambda _spec: {"ok": True, "available_bytes": 10},
         "source_runtime_validator": lambda _request: {

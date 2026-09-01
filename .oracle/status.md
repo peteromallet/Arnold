@@ -1,4 +1,23 @@
-# NBF execution contract — Batch 3 accepted / NBF08 suffix authorized — 2026-08-31
+# NBF execution contract — Batch 4 accepted / NBF06 complete / NBF08 suffix authorized — 2026-09-01
+
+- State: `BATCH_4_ACCEPTED_NBF06`; NBF06 is accepted at the Batch 4
+  implementation checkpoint with the Grok 4.6 `FINAL PASS` verdict.
+- Accepted tasks: `NBF-01`, `NBF-02`, `NBF-03`, `NBF-04`, `NBF-05`, and `NBF-06`.
+- Strict progress: `6/8 = 75%`; batches: `4/6 = 66.7%`; Batch 4 is complete;
+  next is **Batch 5 / NBF-08**.
+- NBF06 implementation gate evidence: acceptance `54/54` passed; exact A32
+  batch/fanout/loop nodes `1/1` each passed; A38 checker
+  `ALLOWLIST PASS; forbidden=0; negative_fixtures=PASS`; bounded
+  production-door/ledger superset `163/163` passed; owned-module compile
+  passed; scoped source/test staged `git diff --check` passed. The full staged
+  diff reports only five imported Markdown hard-break whitespace findings in
+  frozen planning/adjudication artifacts and exits nonzero; these bytes remain
+  unchanged for custody.
+- Planning packet vectors, hashes, seals, and other planning-only artifacts
+  are contract/provenance evidence and do not count as implementation
+  progress. The progress number above credits only the accepted NBF06 source,
+  tests, checker/fixtures, and this checkpoint.
+- Checkpoint receipt: `.oracle/rework/batch-4-nbf06-acceptance.md`.
 
 - State: `BATCH_3_ACCEPTED_NBF04_NBF05`; NBF04 and NBF05 are accepted at the
   Batch 3 attempt-5 metadata checkpoint.

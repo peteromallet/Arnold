@@ -676,6 +676,7 @@ On PASS: commit Batch 3. NBF-06 remains blocked until this checkpoint and every 
 
 - **Classification:** Normal
 - **Executor:** GPT-5.6 Luna
+- **Status:** `ACCEPTED` — Batch 4 checkpoint; Grok 4.6 `FINAL PASS`.
 - **User-selection rationale:** Provider observation, keyed worker-outcome streaks, probe authorization, fallback, scalar hold, return, crash, and race behavior have frozen schemas and deterministic fixtures.
 - **Dependencies:** NBF-01, NBF-02, NBF-03, NBF-04, NBF-05
 - **Hard synchronization barrier:** Do not begin until Batches 1–3 have passed their Sol gates and been committed.
@@ -783,9 +784,9 @@ pytest -q \
 - **North Star principle:** recovery consumes typed killer/failure evidence before retrying the same fingerprint.
 - **Anti-pattern prevented:** redispatch after unchanged provider failure, probe-driven streak reset, stderr-driven policy, duplicated rotators, double-recorded exhaustion, disposition misclassification, and scheduling conditions treated as failures.
 
-## Batch 4 checkpoint — Sol T8 gate
+## Batch 4 checkpoint — Grok 4.6 T8 gate
 
-**PASS only if all are true:**
+**PASS — ACCEPTED (Grok 4.6 `FINAL PASS`) only if all are true:**
 
 - Every NBF-06 focused test passes.
 - NBF-06 began only after NBF-01 through NBF-05 passed.
@@ -806,6 +807,25 @@ pytest -q \
 - Execute/loop-execute fallback remains prohibited.
 - Crash, replay, cache-loss, torn-write, probe-lease, keyed-streak, observation, disposition-interleaving, and child-reservation races pass.
 - No second scheduler, provider projection, rotator, journal, terminal writer, or policy copy exists.
+
+### Checkpoint evidence
+
+- NBF06 acceptance node: `54/54` passed from
+  `tests/arnold_pipelines/megaplan/test_provider_scheduling_conditions.py`.
+- A32 exact standalone nodes: `test_a32_batch_no_second_attempt`,
+  `test_a32_fanout_no_second_attempt`, and
+  `test_a32_loop_execute_no_second_attempt`; each `1/1` passed.
+- A38 checker: `ALLOWLIST PASS; forbidden=0; negative_fixtures=PASS`.
+- Bounded production-door/ledger validation: `163/163` passed across the
+  managed, dispatch, physical-door, OMP, and incident-ledger modules; this is
+  a documented superset of the 152-test gate.
+- Owned-module `py_compile`: passed; scoped source/test staged
+  `git diff --check`: passed. The full staged diff reports only the retained
+  hard-break whitespace in two imported frozen planning/adjudication files;
+  their bytes are unchanged for custody.
+- Planning packet vectors, hashes, seals, and planning-only artifacts are
+  evidence of the contract and provenance only; they are not implementation
+  progress or acceptance counts.
 
 **Oracle evidence paths:**
 

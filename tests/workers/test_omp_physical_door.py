@@ -22,7 +22,7 @@ import pytest
 from arnold_pipelines.megaplan.cloud import runtime_attestation, runtime_provenance
 from arnold_pipelines.megaplan.cloud import worker_dispatch
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
-from arnold_pipelines.megaplan.incident.schema import WorkerDisposition
+from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey, WorkerDisposition
 from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import omp
@@ -46,6 +46,7 @@ class _Wbc:
                 "host": "omp-test-worker",
                 "pid": 42,
                 "boot_id": "omp-test-boot",
+                "process_start_identity": "omp-test-start",
             }
         return SimpleNamespace(worker_result=value)
 
@@ -81,24 +82,37 @@ class _TypedWbc(_Wbc):
                 terminal=terminal,
                 diagnostics={"writer_id": "test", "surface_name": "test"},
             )
+        ledger = IncidentLedger(self.root)
         admission = next(
             item["payload"]
-            for item in reversed(IncidentLedger(self.root).read_nbf_events())
-            if item["payload"].get("event_type") == "admission_reserved"
+            for item in reversed(ledger.read_nbf_events())
+            if item["payload"].get("event_type") in {"admission_reserved", "provider_route_child_reserved"}
         )
-        identity = {"host": "omp", "pid": 42, "boot_id": "omp-boot"}
+        identity = {"host": "omp", "pid": 42, "boot_id": "omp-boot", "process_start_identity": "omp-start"}
         if self.forged_identity:
-            identity = {"host": "forged", "pid": 99, "boot_id": "forged-boot"}
+            identity = {"host": "forged", "pid": 99, "boot_id": "forged-boot", "process_start_identity": "forged-start"}
+        if admission.get("event_type") == "provider_route_child_reserved":
+            logical_dispatch_id = admission["child_logical_dispatch_id"]
+            dispatch_family_id = admission["child_dispatch_family_id"]
+            selected_spec = admission["to_spec"]
+            fingerprint = admission["child_semantic_dispatch_fingerprint"]
+            receipt_id = ledger.derive_receipt(admission)
+        else:
+            logical_dispatch_id = admission["logical_dispatch_id"]
+            dispatch_family_id = admission["dispatch_family_id"]
+            selected_spec = admission["selected_spec"]
+            fingerprint = admission["semantic_dispatch_fingerprint"]
+            receipt_id = admission["admission_receipt_id"]
         common: dict[str, Any] = {
             "kind": self.kind,
             "launch_state": "accepted",
             "plan_id": admission["plan_id"],
             "phase": admission["phase"],
-            "dispatch_family_id": admission["dispatch_family_id"],
-            "logical_dispatch_id": admission["logical_dispatch_id"],
-            "admission_receipt_id": admission["admission_receipt_id"],
-            "semantic_dispatch_fingerprint": admission["semantic_dispatch_fingerprint"],
-            "selected_spec": admission["selected_spec"],
+            "dispatch_family_id": dispatch_family_id,
+            "logical_dispatch_id": logical_dispatch_id,
+            "admission_receipt_id": receipt_id,
+            "semantic_dispatch_fingerprint": fingerprint,
+            "selected_spec": selected_spec,
             "worker_identity": identity,
             "started_at": "2026-08-31T00:00:00+00:00",
             "finished_at": "2026-08-31T00:00:01+00:00",
@@ -106,7 +120,12 @@ class _TypedWbc(_Wbc):
         if self.kind == "ordinary_terminal_failure":
             common["terminal_failure"] = {"code": "provider_bad_payload"}
         elif self.kind == "provider_exhausted":
-            key = "a" * 64
+            key = ProviderFailureKey.derive(
+                phase=str(admission["phase"]),
+                selected_spec=str(selected_spec),
+                provider_failure_class="availability",
+                provider_epoch_identity="epoch",
+            ).value
             common["provider_failure_key"] = key
             common["provider_evidence"] = {
                 "observation_id": "obs",
@@ -286,6 +305,25 @@ def test_omp_door_transports_typed_terminal_and_provider_route_context(
     client = _rpc_factory(monkeypatch)
     wbc = _TypedWbc(root, kind)
     plan_dir, state = _mock_state(root)
+    if kind == "provider_exhausted":
+        with pytest.raises(CliError) as raised:
+            omp.run_omp_step(
+                "plan", state, plan_dir, root=root, model="omp:deepseek/deepseek-v4-pro",
+                worker_options={"production_intent": True}, wbc_dispatch=wbc,
+            )
+        assert raised.value.code == "scheduling_condition"
+        assert raised.value.extra.get("reason") == "provider_degraded"
+        terminals = [
+            item["payload"] for item in IncidentLedger(root).read_nbf_events()
+            if item["payload"].get("event_type") == "worker_terminal_outcome"
+        ]
+        assert terminals
+        assert terminals[0]["outcome_kind"] == "provider_exhausted"
+        assert terminals[0]["provider"] == "deepseek"
+        assert terminals[0]["route_liveness_kind"] == "omp_membership"
+        assert terminals[0]["route_liveness_identity"] == "deepseek/deepseek-v4-pro"
+        assert wbc.calls >= 1
+        return
     result = omp.run_omp_step(
         "plan", state, plan_dir, root=root, model="omp:deepseek/deepseek-v4-pro",
         worker_options={"production_intent": True}, wbc_dispatch=wbc,
@@ -296,7 +334,7 @@ def test_omp_door_transports_typed_terminal_and_provider_route_context(
     assert result.route_liveness_kind == "omp_membership"
     assert result.route_liveness_identity == "deepseek/deepseek-v4-pro"
     assert result.route_liveness_digest
-    assert result.worker_identity == {"host": "omp", "pid": 42, "boot_id": "omp-boot"}
+    assert result.worker_identity == {"host": "omp", "pid": 42, "boot_id": "omp-boot", "process_start_identity": "omp-start"}
     if kind == "worker_disposition":
         assert result.disposition_id == "disposition-1"
     assert wbc.calls == client.prompt_calls == 1
@@ -341,11 +379,7 @@ def test_omp_typed_terminal_survives_higher_level_worker_routes(
     wbc_dispatch = wbc
     worker_options = {"production_intent": True}
     args = argparse.Namespace(production_intent=False)
-    result = _impl.run_step_with_worker(
-        "plan",
-        state,
-        plan_dir,
-        args,
+    call = dict(
         root=root,
         resolved=AgentMode(
             "omp", "fresh", True, "deepseek/deepseek-v4-pro", None,
@@ -353,6 +387,26 @@ def test_omp_typed_terminal_survives_higher_level_worker_routes(
         ),
         worker_options=worker_options,
         wbc_dispatch=wbc_dispatch,
+    )
+    if kind == "provider_exhausted":
+        with pytest.raises(CliError) as raised:
+            _impl.run_step_with_worker("plan", state, plan_dir, args, **call)
+        assert raised.value.code == "scheduling_condition"
+        assert raised.value.extra.get("reason") == "provider_degraded"
+        terminals = [
+            item["payload"] for item in IncidentLedger(root).read_nbf_events()
+            if item["payload"].get("event_type") == "worker_terminal_outcome"
+        ]
+        assert terminals
+        assert terminals[0]["outcome_kind"] == "provider_exhausted"
+        assert terminals[0]["provider"] == "deepseek"
+        return
+    result = _impl.run_step_with_worker(
+        "plan",
+        state,
+        plan_dir,
+        args,
+        **call,
     )
     assert isinstance(result, tuple) and len(result) == 4
     worker, _agent, _mode, _refreshed = result
@@ -362,7 +416,7 @@ def test_omp_typed_terminal_survives_higher_level_worker_routes(
     assert outcome["provider"] == "deepseek"
     assert outcome["route_liveness_kind"] == "omp_membership"
     assert outcome["route_liveness_identity"] == "deepseek/deepseek-v4-pro"
-    assert outcome["worker_identity"] == {"host": "omp", "pid": 42, "boot_id": "omp-boot"}
+    assert outcome["worker_identity"] == {"host": "omp", "pid": 42, "boot_id": "omp-boot", "process_start_identity": "omp-start"}
     assert worker.worker_identity == outcome["worker_identity"]
     assert wbc.calls == client.prompt_calls == 1
 
@@ -418,7 +472,7 @@ def test_omp_door_preserves_explicit_typed_identity_without_relaunch(
         worker_options={"production_intent": True}, wbc_dispatch=wbc,
     )
     assert isinstance(result, DispatchOutcome)
-    assert result.worker_identity == {"host": "forged", "pid": 99, "boot_id": "forged-boot"}
+    assert result.worker_identity == {"host": "forged", "pid": 99, "boot_id": "forged-boot", "process_start_identity": "forged-start"}
     assert wbc.calls == client.prompt_calls == 1
 
 

@@ -606,8 +606,10 @@ def _dispatch_worker_unit_attempt(
     worker_options: dict[str, Any] | None,
 ) -> Any:
     options = dict(worker_options or {})
-    if len(unit.configured_specs) > 1:
-        options["_suppress_ambient_agent_fallback"] = True
+    # WorkerUnit always carries the normalized configured route, including a
+    # one-spec scalar.  Suppress ambient provider fallback for either shape so
+    # the configured route remains the sole routing authority.
+    options["_suppress_ambient_agent_fallback"] = True
     dispatch_key = str(
         unit.extra.get("wbc_dispatch_key")
         or unit.extra.get("ledger_step_label")

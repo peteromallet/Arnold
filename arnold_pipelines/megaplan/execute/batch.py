@@ -16,10 +16,10 @@ from typing import Any, Callable, Iterable, Mapping
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
 from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackUnsafe,
     classify_retryability,
     configured_fallback_chain_for_phase,
-    fallback_observability_fields,
-    is_retryable_classification,
+    is_cross_family_retryable_classification,
     normalize_fallback_spec_list,
     provider_family,
     select_fallback_spec,
@@ -1357,7 +1357,14 @@ def _run_execute_worker_with_configured_fallback(
     batch_number: int,
     wbc_dispatch: Any = None,
 ) -> tuple[WorkerResult, str, str, bool]:
-    """Advance execute only after a retryable, side-effect-free provider outage."""
+    """Dispatch execute once; never replay a configured fallback in v1.
+
+    Execute and loop-execute are mutating phases.  A configured chain remains
+    observable in routing metadata, but a failure on its first spec cannot
+    trigger a second resolution, dispatch, client, or RPC attempt.  A typed
+    operational outage that would have selected a different provider is
+    surfaced as ``ExecuteFallbackUnsafe`` before any fallback resolution.
+    """
 
     attempted_specs: list[str] = [configured_specs[0]]
     failed_reasons: list[str] = []
@@ -1369,125 +1376,69 @@ def _run_execute_worker_with_configured_fallback(
     current_effort = effort
     current_resolved_model = resolved_model
 
-    for attempt_index, selected_spec in enumerate(configured_specs):
-        if attempt_index:
-            current_agent, current_mode, current_model = _resolve_tier_spec(
-                args,
-                selected_spec,
-            )
-            current_effort = parse_agent_spec(selected_spec).effort
-            current_resolved_model = current_model
-            current_refreshed = True
-
-        before = _capture_execute_workspace_fingerprint(root)
-        rendered_prompt = _render_execute_prompt_for_dispatch(
-            agent=current_agent,
-            state=state,
-            plan_dir=plan_dir,
+    selected_spec = configured_specs[0]
+    rendered_prompt = _render_execute_prompt_for_dispatch(
+        agent=current_agent,
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+        model=current_model,
+        resolved_model=current_resolved_model,
+        prompt_override=prompt_override,
+    )
+    resolved = AgentMode(
+        agent=current_agent,
+        mode=current_mode,
+        refreshed=current_refreshed,
+        model=current_model,
+        effort=current_effort,
+        resolved_model=current_resolved_model,
+    )
+    try:
+        return worker_module.run_step_with_worker(
+            "execute",
+            state,
+            plan_dir,
+            args,
             root=root,
-            model=current_model,
-            resolved_model=current_resolved_model,
-            prompt_override=prompt_override,
+            resolved=resolved,
+            prompt_override=rendered_prompt,
+            wbc_dispatch=wbc_dispatch,
+            # A scalar is still an explicit configured route.  Keep ambient
+            # provider fallback disabled even when there is no second spec.
+            worker_options={"_suppress_ambient_agent_fallback": True},
+            ledger_step_label=f"batch_{batch_number}",
+            ledger_selected_spec=selected_spec,
+            ledger_configured_specs=configured_specs,
+            ledger_attempt_index=0,
+            ledger_attempted_specs=attempted_specs,
+            ledger_failed_attempt_reasons=failed_reasons,
+            ledger_fallback_trigger=fallback_trigger,
         )
-        resolved = AgentMode(
-            agent=current_agent,
-            mode=current_mode,
-            refreshed=current_refreshed,
-            model=current_model,
-            effort=current_effort,
-            resolved_model=current_resolved_model,
+    except CliError as error:
+        classification = classify_retryability(
+            {
+                "code": error.code,
+                "message": str(error),
+                "status_code": error.extra.get("status_code"),
+                "retryable": error.extra.get("retryable"),
+            }
         )
-        try:
-            return worker_module.run_step_with_worker(
-                "execute",
-                state,
-                plan_dir,
-                args,
-                root=root,
-                resolved=resolved,
-                prompt_override=rendered_prompt,
-                wbc_dispatch=wbc_dispatch,
-                worker_options={"_suppress_ambient_agent_fallback": True},
-                ledger_step_label=f"batch_{batch_number}",
-                ledger_selected_spec=selected_spec,
-                ledger_configured_specs=configured_specs,
-                ledger_attempt_index=attempt_index,
-                ledger_attempted_specs=attempted_specs,
-                ledger_failed_attempt_reasons=failed_reasons,
-                ledger_fallback_trigger=fallback_trigger,
-            )
-        except CliError as error:
-            classification = classify_retryability(
-                {
-                    "code": error.code,
-                    "message": str(error),
-                    "status_code": error.extra.get("status_code"),
-                    "retryable": error.extra.get("retryable"),
-                }
-            )
-            next_index = attempt_index + 1
-            if (
-                next_index >= len(configured_specs)
-                or not is_retryable_classification(classification)
-                or provider_family(configured_specs[next_index])
-                == provider_family(selected_spec)
-            ):
-                raise
-            after = _capture_execute_workspace_fingerprint(root)
-            if before.error or after.error or before != after:
-                raise CliError(
-                    "execute_fallback_unsafe",
-                    "Retryable execute provider failure could not be handed off "
-                    "because the workspace was changed or could not be proven unchanged.",
-                    extra={
-                        "failed_spec": selected_spec,
-                        "next_spec": configured_specs[next_index],
-                        "failure_class": classification,
-                        "before_error": before.error,
-                        "after_error": after.error,
-                    },
-                ) from error
-            failed_reasons.append(classification)
-            fallback_trigger = classification
-            attempted_specs.append(configured_specs[next_index])
-            next_agent, next_mode, next_model = _resolve_tier_spec(
-                args,
-                configured_specs[next_index],
-            )
-            from arnold_pipelines.megaplan.workers._impl import (
-                _patch_active_step_fallback_metadata,
-            )
-
-            _patch_active_step_fallback_metadata(
-                plan_dir,
-                state,
-                {
-                    "configured_specs": configured_specs,
-                    "attempt_index": next_index,
-                    "attempted_specs": tuple(attempted_specs),
-                    "failed_attempt_reasons": tuple(failed_reasons),
-                    "fallback_trigger": fallback_trigger,
-                },
-                agent=next_agent,
-                mode=next_mode,
-                model=next_model,
-            )
-            active_step = state.get("active_step")
-            if isinstance(active_step, dict):
-                active_step.update(
-                    fallback_observability_fields(
-                        configured_specs,
-                        attempt_index=next_index,
-                        attempted_specs=attempted_specs,
-                        failed_attempt_reasons=failed_reasons,
-                        fallback_trigger=fallback_trigger,
-                    )
-                )
-                active_step.update(
-                    {"agent": next_agent, "mode": next_mode, "model": next_model}
-                )
-
-    raise AssertionError("configured execute fallback loop exhausted unexpectedly")
+        next_index = 1
+        if (
+            next_index < len(configured_specs)
+            and is_cross_family_retryable_classification(classification)
+            and provider_family(configured_specs[next_index])
+            != provider_family(selected_spec)
+        ):
+            # The first attempt's terminal failure is the only permitted
+            # execute side effect.  Do not resolve or dispatch the next spec.
+            raise ExecuteFallbackUnsafe(
+                phase="execute",
+                configured_specs=configured_specs,
+                attempted_index=next_index,
+            ) from error
+        raise
 
 
 def _task_to_global_batch_number_map(

@@ -548,6 +548,17 @@ class IncidentLedger:
         changes: dict[str, dict[str, Any]] = {}
         confirmations: dict[str, dict[str, Any]] = {}
         provider_streams: dict[str, dict[str, Any]] = {}
+        # NBF06 provider-resilience state is projected from the same journal
+        # as reservations and terminals.  Probe leases/results deliberately
+        # remain ordinary NBF records; the extra maps are read-only views used
+        # by the policy seam and do not introduce a second store.
+        provider_observations: dict[str, dict[str, Any]] = {}
+        provider_probe_leases: dict[str, dict[str, Any]] = {}
+        provider_probe_results: dict[str, dict[str, Any]] = {}
+        provider_probe_closures: dict[str, dict[str, Any]] = {}
+        provider_recovery_proofs: dict[str, dict[str, Any]] = {}
+        provider_holds: dict[str, dict[str, Any]] = {}
+        provider_successes: dict[str, dict[str, Any]] = {}
         latest_stream_key: str | None = None
         active_provider_key: str | None = None
         active_base: tuple[Any, ...] | None = None
@@ -626,8 +637,107 @@ class IncidentLedger:
                 # transition makes the ordering explicit and deterministic.
                 if key in reservations:
                     reservations[key]["closed"] = True
+            elif typ == "provider_observation":
+                # Observation records are linked to a terminal by the
+                # deterministic observation identity where possible.  The
+                # terminal projection remains the sole streak authority;
+                # replaying an observation can therefore never increment a
+                # stream a second time.
+                observation_id = p.get("observation_id") or p.get("event_id")
+                if observation_id:
+                    linked_terminal = next(
+                        (
+                            terminal
+                            for terminal in terminals.values()
+                            if terminal.get("provider_failure_key") == p.get("provider_failure_key")
+                            and terminal.get("phase") == p.get("phase")
+                            and terminal.get("selected_spec") == p.get("selected_spec")
+                        ),
+                        None,
+                    )
+                    linked = linked_terminal or {}
+                    provider_observations[observation_id] = {
+                        **p,
+                        "event_id": p.get("event_id"),
+                        "terminal_outcome_event_id": p.get("terminal_outcome_event_id") or linked.get("terminal_outcome_id"),
+                        "reservation_event_id": p.get("reservation_event_id") or linked.get("reservation_event_id"),
+                        "admission_receipt_id": p.get("admission_receipt_id") or linked.get("admission_receipt_id"),
+                        "logical_dispatch_id": p.get("logical_dispatch_id") or linked.get("logical_dispatch_id"),
+                    }
+            elif typ == "provider_probe_started":
+                # A close marker uses the existing, schema-closed
+                # provider_probe_started shape.  Its route identity is a
+                # reserved internal value, while the lease id still points
+                # at the original lease.  This keeps closure durable without
+                # creating another writer or an unvalidated event family.
+                route_identity = p.get("route_identity")
+                if isinstance(route_identity, str) and route_identity.startswith("__NBF06_PROBE_CLOSED__:"):
+                    marker = route_identity.split(":", 2)
+                    closure = {
+                        **p,
+                        "event_id": p.get("event_id"),
+                        "probe_lease_id": p.get("probe_lease_id"),
+                        "close_reason": marker[1] if len(marker) > 1 else "closed",
+                        "retry_not_before_ns": int(marker[2]) if len(marker) > 2 and marker[2].isdigit() else 0,
+                    }
+                    provider_probe_closures[p.get("probe_lease_id")] = closure
+                    lease = provider_probe_leases.get(p.get("probe_lease_id"))
+                    if lease is not None:
+                        lease["closed"] = True
+                        lease["status"] = (
+                            "passed_closed"
+                            if provider_probe_results.get(lease.get("result_event_id"), {}).get("passed") is True
+                            and closure.get("close_reason") == "passed"
+                            else "failed"
+                        )
+                else:
+                    lease_id = p.get("probe_lease_id")
+                    monotonic_clock = str(p.get("actor", "")).endswith("::nbf06-monotonic")
+                    lease = {
+                        **p,
+                        "event_id": p.get("event_id"),
+                        "probe_lease_id": lease_id,
+                        "closed": False,
+                        "status": "leased",
+                        "result_event_id": None,
+                        "clock_mode": "monotonic_ns" if monotonic_clock else "wall_seconds",
+                    }
+                    provider_probe_leases[lease_id] = lease
+                    # If a result was replayed before a projection consumer
+                    # saw the lease (possible only in hand-built fixtures),
+                    # fold it in deterministically below.
+                    for result in provider_probe_results.values():
+                        if result.get("probe_lease_id") == lease_id:
+                            lease["result_event_id"] = result.get("event_id")
+                            lease["status"] = "passed" if result.get("passed") is True else "failed"
+                            break
+                    closure = provider_probe_closures.get(lease_id)
+                    if closure is not None:
+                        lease["closed"] = True
+                        lease["status"] = (
+                            "passed_closed"
+                            if lease.get("status") == "passed" and closure.get("close_reason") == "passed"
+                            else "failed"
+                        )
+            elif typ == "provider_probe_result":
+                result = {**p, "event_id": p.get("event_id")}
+                provider_probe_results[p.get("event_id")] = result
+                lease = provider_probe_leases.get(p.get("probe_lease_id"))
+                if lease is not None:
+                    lease["result_event_id"] = p.get("event_id")
+                    lease["status"] = "passed" if p.get("passed") is True else "failed"
+                    closure = provider_probe_closures.get(p.get("probe_lease_id"))
+                    if closure is not None:
+                        lease["closed"] = True
+                        lease["status"] = (
+                            "passed_closed"
+                            if p.get("passed") is True and closure.get("close_reason") == "passed"
+                            else "failed"
+                        )
             elif typ == "changed_precondition":
                 changes[p["event_id"]] = {**p, "consumed": False}
+                if p.get("reason") == "provider_recovery_verified":
+                    provider_recovery_proofs[p["event_id"]] = changes[p["event_id"]]
                 before, after = p.get("provider_failure_key_before"), p.get("provider_failure_key_after")
                 if before and after and before != after:
                     matching = [s for s in provider_streams.values() if s.get("provider_failure_key") == before]
@@ -667,7 +777,40 @@ class IncidentLedger:
             elif typ == "spawn_cleanup_handoff":
                 cleanup_handoffs[p["handoff_id"]] = dict(p)
         latest = provider_streams.get(latest_stream_key, {"provider_failure_key": None, "observation_streak": 0})
-        return {"projection_version": len(records), "reservations": reservations, "terminals": terminals, "dispositions": dispositions, "changed_preconditions": changes, "confirmations": confirmations, "cleanup_handoffs": cleanup_handoffs, "active_provider_failure_key": active_provider_key, "observation_streak": latest.get("observation_streak", 0), "provider_streaks": provider_streams}
+        # ``probe_status`` is intentionally a small finite projection.  A
+        # passed result remains visibly open (``passed`` plus ``closed=False``
+        # on its lease) until the explicit close CAS appends its marker.
+        probe_status = "none"
+        for lease in provider_probe_leases.values():
+            status = lease.get("status")
+            if status == "leased":
+                probe_status = "leased"
+            elif status == "passed" and probe_status not in {"leased"}:
+                probe_status = "passed"
+            elif status == "passed_closed" and probe_status not in {"leased", "passed"}:
+                probe_status = "passed"
+            elif status == "failed" and probe_status == "none":
+                probe_status = "failed"
+        return {
+            "projection_version": len(records),
+            "reservations": reservations,
+            "terminals": terminals,
+            "dispositions": dispositions,
+            "changed_preconditions": changes,
+            "confirmations": confirmations,
+            "cleanup_handoffs": cleanup_handoffs,
+            "active_provider_failure_key": active_provider_key,
+            "observation_streak": latest.get("observation_streak", 0),
+            "provider_streaks": provider_streams,
+            "provider_observations": provider_observations,
+            "provider_probe_leases": provider_probe_leases,
+            "provider_probe_results": provider_probe_results,
+            "provider_probe_closures": provider_probe_closures,
+            "provider_recovery_proofs": provider_recovery_proofs,
+            "provider_holds": provider_holds,
+            "provider_successes": provider_successes,
+            "probe_status": probe_status,
+        }
 
     def projection(self) -> dict[str, Any]:
         return self._project_records(self.read_nbf_events())
@@ -1049,6 +1192,7 @@ class IncidentLedger:
         obj = event if isinstance(event, ChangedPrecondition) else ChangedPrecondition.from_dict(event)
         _validate_producer_binding(obj)
         with self._locked() as (fd, records):
+            projected = self._project_records(records)
             # Evidence identity is bound to a committed ledger event.  A
             # caller cannot mint a valid-looking change from an arbitrary
             # digest and then consume it as an authorization.
@@ -1067,10 +1211,57 @@ class IncidentLedger:
                 key = cited.get("provider_failure_key")
                 if obj.provider_failure_key_before != key or obj.provider_failure_key_after != key:
                     raise ValueError("provider recovery key is not bound to the probe")
+                probe_lease_id = cited.get("probe_lease_id")
+                lease = projected.get("provider_probe_leases", {}).get(probe_lease_id)
+                closure = projected.get("provider_probe_closures", {}).get(probe_lease_id)
+                # New NBF06 monotonic leases require an explicit close CAS;
+                # legacy wall-clock leases are accepted as already-closed so
+                # old durable fixtures remain readable and replayable.
+                if lease and lease.get("clock_mode") == "monotonic_ns":
+                    if closure is None or closure.get("close_reason") != "passed":
+                        raise ValueError("provider recovery requires a passed, closed canonical probe")
             return self._append_nbf_locked(fd, obj.to_dict(), records, _changed_precondition=obj)
 
     def reserve_provider_route_child(self, *, plan_id: str, phase: str, projection_key: str, expected_projection_version: int, transition_kind: str, from_spec: str, to_spec: str, parent_logical_dispatch_id: str, parent_terminal_event_id: str, authorizing_event_id: str, configured_fallback_chain_identity: str, precondition_identity: str, child_dispatch_family_id: str, child_logical_dispatch_id: str, child_physical_door_id: str, child_semantic_dispatch_fingerprint: str, child_route_liveness_identity: str, consumed_changed_precondition_event_id: str | None = None, receipt_derivation_version: str = "1", execution_context_identity: str = "", actor: str = "megaplan") -> dict[str, Any]:
         with self._locked() as (fd, records):
+            event_id = _stable_id("provider_route_child_reserved", plan_id, phase, child_logical_dispatch_id, child_semantic_dispatch_fingerprint)
+            # Replaying the exact linked-child request is a read of the
+            # already committed admission, not a second reservation.  Do
+            # this before the caller's stale projection compare: a worker can
+            # safely retry after losing the response race.
+            prior_child = self._provider_raw_record(records, event_id)
+            if prior_child is not None:
+                prior_payload = prior_child.get("payload", {})
+                expected_payload = {
+                    "schema_version": 1,
+                    "event_type": "provider_route_child_reserved",
+                    "event_id": event_id,
+                    "plan_id": plan_id,
+                    "phase": phase,
+                    "projection_key": projection_key,
+                    "reservation_key": reservation_key(projection_key, child_semantic_dispatch_fingerprint),
+                    "expected_projection_version": expected_projection_version,
+                    "transition_kind": transition_kind,
+                    "from_spec": from_spec,
+                    "to_spec": to_spec,
+                    "parent_logical_dispatch_id": parent_logical_dispatch_id,
+                    "parent_terminal_event_id": parent_terminal_event_id,
+                    "authorizing_event_id": authorizing_event_id,
+                    "configured_fallback_chain_identity": configured_fallback_chain_identity,
+                    "precondition_identity": precondition_identity,
+                    "child_dispatch_family_id": child_dispatch_family_id,
+                    "child_logical_dispatch_id": child_logical_dispatch_id,
+                    "child_physical_door_id": child_physical_door_id,
+                    "child_semantic_dispatch_fingerprint": child_semantic_dispatch_fingerprint,
+                    "child_route_liveness_identity": child_route_liveness_identity,
+                    "consumed_changed_precondition_event_id": consumed_changed_precondition_event_id or authorizing_event_id,
+                    "receipt_derivation_version": receipt_derivation_version,
+                    "execution_context_identity": execution_context_identity,
+                    "primary_spec": to_spec,
+                }
+                if self._provider_payload_equivalent(prior_payload, expected_payload):
+                    return prior_child
+                raise ValueError("conflicting provider child replay")
             p = self._project_records(records)
             if expected_projection_version != p["projection_version"]:
                 raise ValueError("route child projection version mismatch")
@@ -1079,7 +1270,12 @@ class IncidentLedger:
                 raise ValueError("provider child requires a canonical provider terminal parent")
             if parent.get("plan_id") != plan_id or parent.get("phase") != phase or parent.get("projection_key") != projection_key or parent.get("logical_dispatch_id") != parent_logical_dispatch_id:
                 raise ValueError("provider child parent context mismatch")
-            if parent.get("selected_spec") != from_spec:
+            if transition_kind in {"return", "return_primary"}:
+                if from_spec == to_spec:
+                    raise ValueError("return-primary target cannot be the source spec")
+                if parent.get("selected_spec") not in {from_spec, to_spec}:
+                    raise ValueError("return-primary is not bound to the parent source spec")
+            elif parent.get("selected_spec") != from_spec:
                 raise ValueError("provider child source route mismatch")
             authorizing = next((r.get("payload", {}) for r in records if (r.get("payload", {}).get("event_id") == authorizing_event_id or r.get("payload", {}).get("disposition_id") == authorizing_event_id)), None)
             if not authorizing or authorizing.get("event_type") not in {"provider_recovery_verified", "changed_precondition"}:
@@ -1096,9 +1292,7 @@ class IncidentLedger:
             probe = next((r.get("payload", {}) for r in records
                           if r.get("payload", {}).get("event_type") == "provider_probe_result"
                           and r.get("payload", {}).get("event_id") == authorizing.get("evidence_event_id")), None)
-            lease = next((r.get("payload", {}) for r in records
-                          if r.get("payload", {}).get("event_type") == "provider_probe_started"
-                          and r.get("payload", {}).get("probe_lease_id") == (probe or {}).get("probe_lease_id")), None)
+            lease = p.get("provider_probe_leases", {}).get((probe or {}).get("probe_lease_id"))
             expected_route = f"{from_spec}->{to_spec}"
             if not probe or probe.get("passed") is not True or probe.get("provider_failure_key") != provider_key:
                 raise ValueError("provider child requires a passed canonical probe result")
@@ -1106,6 +1300,10 @@ class IncidentLedger:
                 raise ValueError("provider probe lease is not bound to parent context")
             if lease.get("route_identity") not in (None, expected_route):
                 raise ValueError("provider probe route context mismatch")
+            if lease.get("clock_mode") == "monotonic_ns":
+                closure = p.get("provider_probe_closures", {}).get(lease.get("probe_lease_id"))
+                if closure is None or closure.get("close_reason") != "passed":
+                    raise ValueError("provider child requires a passed, closed canonical probe")
             if authorizing.get("evidence_snapshot") is not None:
                 # The changed-precondition append path already proves this is
                 # the exact committed probe payload; retain the explicit
@@ -1122,9 +1320,25 @@ class IncidentLedger:
                 change = p["changed_preconditions"].get(consumed_id)
                 if not change or change.get("consumed"):
                     raise ValueError("child changed precondition is missing or already consumed")
-            event_id = _stable_id("provider_route_child_reserved", plan_id, phase, child_logical_dispatch_id, child_semantic_dispatch_fingerprint)
-            payload = {"schema_version": 1, "event_type": "provider_route_child_reserved", "event_id": event_id, "plan_id": plan_id, "phase": phase, "projection_key": projection_key, "reservation_key": child_key, "expected_projection_version": expected_projection_version, "transition_kind": transition_kind, "from_spec": from_spec, "to_spec": to_spec, "parent_logical_dispatch_id": parent_logical_dispatch_id, "parent_terminal_event_id": parent_terminal_event_id, "authorizing_event_id": authorizing_event_id, "configured_fallback_chain_identity": configured_fallback_chain_identity, "precondition_identity": precondition_identity, "child_dispatch_family_id": child_dispatch_family_id, "child_logical_dispatch_id": child_logical_dispatch_id, "child_physical_door_id": child_physical_door_id, "child_semantic_dispatch_fingerprint": child_semantic_dispatch_fingerprint, "child_route_liveness_identity": child_route_liveness_identity, "consumed_changed_precondition_event_id": consumed_id, "receipt_derivation_version": receipt_derivation_version, "execution_context_identity": execution_context_identity, "recorded_at": _now(), "actor": actor}
-            return self._append_nbf_locked(fd, payload, records)
+            payload = {"schema_version": 1, "event_type": "provider_route_child_reserved", "event_id": event_id, "plan_id": plan_id, "phase": phase, "projection_key": projection_key, "reservation_key": child_key, "expected_projection_version": expected_projection_version, "transition_kind": transition_kind, "from_spec": from_spec, "to_spec": to_spec, "parent_logical_dispatch_id": parent_logical_dispatch_id, "parent_terminal_event_id": parent_terminal_event_id, "authorizing_event_id": authorizing_event_id, "configured_fallback_chain_identity": configured_fallback_chain_identity, "precondition_identity": precondition_identity, "child_dispatch_family_id": child_dispatch_family_id, "child_logical_dispatch_id": child_logical_dispatch_id, "child_physical_door_id": child_physical_door_id, "child_semantic_dispatch_fingerprint": child_semantic_dispatch_fingerprint, "child_route_liveness_identity": child_route_liveness_identity, "consumed_changed_precondition_event_id": consumed_id, "receipt_derivation_version": receipt_derivation_version, "execution_context_identity": execution_context_identity, "primary_spec": to_spec, "recorded_at": _now(), "actor": actor}
+            child = self._append_nbf_locked(fd, payload, records)
+            # Consumption is part of the same locked CAS as linked-child
+            # admission.  A crash/replay therefore cannot leave an
+            # authorizer reusable after a child was durably admitted.
+            if consumed_id:
+                records_after_child = [*records, child]
+                consumed_event_id = _stable_id("consume", consumed_id)
+                consumed_payload = {
+                    "schema_version": 1,
+                    "event_type": "changed_precondition_consumed",
+                    "event_id": consumed_event_id,
+                    "changed_precondition_event_id": consumed_id,
+                    "recorded_at": _now(),
+                    "actor": actor,
+                }
+                if self._provider_raw_record(records_after_child, consumed_event_id) is None:
+                    self._append_nbf_locked(fd, consumed_payload, records_after_child)
+            return child
 
     def derive_receipt(self, event: dict[str, Any]) -> str:
         p = event.get("payload", event)
@@ -1323,28 +1537,849 @@ class IncidentLedger:
             payload = {"schema_version": 1, "event_type": "supervision_confirmation_expired", "event_id": _stable_id("confirmation-expired", confirmation_id), "confirmation_id": confirmation_id, "prior_confirmation_event_id": prior.get("event_id"), "site_id": prior.get("site_id"), "replacement_reason": "expired", "second_observed_at": observed_at or _now(), "second_evidence_digest": prior.get("evidence_digest"), "victim_pid": prior.get("victim_pid"), "victim_process_start_identity": prior.get("victim_process_start_identity"), "relevant_progress_identity": prior.get("relevant_progress_identity"), "supervisor_incarnation_identity": prior.get("supervisor_incarnation_identity"), "cause_kind": prior.get("cause_kind"), "disposition_id": None, "recorded_at": _now(), "actor": actor}
             return self._append_nbf_locked(fd, payload, records)
 
-    def append_provider_observation(self, *, observation_id: str, provider_failure_key: str, selected_spec: str, phase: str, provider_failure_class: str, provider_epoch_identity: str, actor: str = "megaplan") -> dict[str, Any]:
-        return self._append_nbf({"schema_version": 1, "event_type": "provider_observation", "event_id": observation_id, "observation_id": observation_id, "provider_failure_key": provider_failure_key, "selected_spec": selected_spec, "phase": phase, "provider_failure_class": provider_failure_class, "provider_epoch_identity": provider_epoch_identity, "recorded_at": _now(), "actor": actor})
+    # NBF06 provider lifecycle -------------------------------------------------
+    #
+    # The methods below intentionally reuse ``_locked`` and ``_append_nbf``.
+    # They are named ``*_locked`` because the policy seam treats each call as
+    # one lock/CAS door; the public wrappers acquire the existing sequence
+    # lock, perform all identity checks, and append before releasing it.  No
+    # provider-specific journal or cache is introduced.
 
-    def append_probe_result(self, *, probe_lease_id: str, provider_failure_key: str, passed: bool, evidence_digest: str, parent_reservation_event_id: str | None = None, phase: str | None = None, route_identity: str | None = None, actor: str = "megaplan") -> dict[str, Any]:
-        event_id = _stable_id("provider_probe_result", probe_lease_id, provider_failure_key, str(passed), evidence_digest)
-        payload = {"schema_version": 1, "event_type": "provider_probe_result", "event_id": event_id, "probe_lease_id": probe_lease_id, "provider_failure_key": provider_failure_key, "passed": bool(passed), "evidence_digest": evidence_digest, "recorded_at": _now(), "actor": actor}
-        if parent_reservation_event_id is not None:
-            payload.update({"parent_reservation_event_id": parent_reservation_event_id, "phase": phase, "route_identity": route_identity})
+    @staticmethod
+    def _provider_now_ns(value: int | None) -> int:
+        if value is None:
+            return int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("provider monotonic time must be a non-negative integer")
+        return value
+
+    @staticmethod
+    def _provider_is_close_marker(payload: Mapping[str, Any]) -> bool:
+        route = payload.get("route_identity")
+        return isinstance(route, str) and route.startswith("__NBF06_PROBE_CLOSED__:")
+
+    @staticmethod
+    def _provider_close_reason(payload: Mapping[str, Any]) -> str:
+        route = payload.get("route_identity")
+        if isinstance(route, str) and route.startswith("__NBF06_PROBE_CLOSED__:"):
+            bits = route.split(":", 2)
+            if len(bits) > 1 and bits[1]:
+                return bits[1]
+        return "closed"
+
+    @staticmethod
+    def _provider_raw_record(records: list[dict[str, Any]], event_id: str) -> dict[str, Any] | None:
+        return next((record for record in records if record.get("payload", {}).get("event_id") == event_id), None)
+
+    @staticmethod
+    def _provider_payload_equivalent(left: Mapping[str, Any], right: Mapping[str, Any], *, ignored: tuple[str, ...] = ("recorded_at", "actor")) -> bool:
+        a = {key: value for key, value in left.items() if key not in ignored}
+        b = {key: value for key, value in right.items() if key not in ignored}
+        return a == b
+
+    def _provider_find_terminal(
+        self,
+        projection: Mapping[str, Any],
+        *,
+        terminal_outcome_event_id: str | None = None,
+        reservation_event_id: str | None = None,
+        admission_receipt_id: str | None = None,
+        logical_dispatch_id: str | None = None,
+        phase: str | None = None,
+        provider_failure_key: str | None = None,
+    ) -> dict[str, Any] | None:
+        candidates = list(projection.get("terminals", {}).values())
+        for terminal in candidates:
+            if terminal_outcome_event_id and terminal.get("terminal_outcome_id") != terminal_outcome_event_id:
+                continue
+            if reservation_event_id and terminal.get("reservation_event_id") != reservation_event_id:
+                continue
+            if admission_receipt_id and terminal.get("admission_receipt_id") != admission_receipt_id:
+                continue
+            if logical_dispatch_id and terminal.get("logical_dispatch_id") != logical_dispatch_id:
+                continue
+            if phase and terminal.get("phase") != phase:
+                continue
+            if provider_failure_key and terminal.get("provider_failure_key") != provider_failure_key:
+                continue
+            return terminal
+        return None
+
+    def _provider_find_lease(self, projection: Mapping[str, Any], lease_id: str) -> dict[str, Any] | None:
+        lease = projection.get("provider_probe_leases", {}).get(lease_id)
+        if lease and not self._provider_is_close_marker(lease):
+            return lease
+        return None
+
+    def _provider_find_result(self, projection: Mapping[str, Any], lease_id: str) -> dict[str, Any] | None:
+        return next(
+            (
+                result
+                for result in projection.get("provider_probe_results", {}).values()
+                if result.get("probe_lease_id") == lease_id
+            ),
+            None,
+        )
+
+    def append_provider_observation(
+        self,
+        *,
+        observation_id: str,
+        provider_failure_key: str,
+        selected_spec: str,
+        phase: str,
+        provider_failure_class: str,
+        provider_epoch_identity: str,
+        terminal_outcome_event_id: str | None = None,
+        terminal_event_id: str | None = None,
+        reservation_event_id: str | None = None,
+        admission_receipt_id: str | None = None,
+        logical_dispatch_id: str | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Append one terminal-linked provider observation, idempotently.
+
+        The legacy call shape remains valid for old ledgers.  When terminal
+        context is supplied (or can be resolved from the receipt), the
+        observation identity is derived from the canonical terminal and key;
+        this prevents an observation from becoming a second streak increment.
+        """
+        terminal_outcome_event_id = terminal_outcome_event_id or terminal_event_id
+        terminal_context_requested = any(
+            value is not None
+            for value in (
+                terminal_outcome_event_id,
+                reservation_event_id,
+                admission_receipt_id,
+                logical_dispatch_id,
+            )
+        )
         with self._locked() as (fd, records):
-            lease = next((r.get("payload", {}) for r in records if r.get("payload", {}).get("event_type") == "provider_probe_started" and r.get("payload", {}).get("probe_lease_id") == probe_lease_id), None)
-            if lease is None:
-                raise ValueError("provider probe result requires a persisted lease")
-            if float(lease.get("expires_at", 0)) <= datetime.now(timezone.utc).timestamp():
-                raise ValueError("provider probe lease is expired")
-            if lease.get("provider_failure_key") != provider_failure_key:
-                raise ValueError("provider probe lease key mismatch")
-            for name, value in (("parent_reservation_event_id", parent_reservation_event_id), ("phase", phase), ("route_identity", route_identity)):
-                if lease.get(name) != value:
-                    raise ValueError(f"provider probe lease context mismatch: {name}")
-            if any(r.get("payload", {}).get("event_type") == "provider_probe_result" and r.get("payload", {}).get("probe_lease_id") == probe_lease_id for r in records):
-                raise ValueError("provider probe lease has already been consumed")
+            projection = self._project_records(records)
+            terminal = self._provider_find_terminal(
+                projection,
+                terminal_outcome_event_id=terminal_outcome_event_id,
+                reservation_event_id=reservation_event_id,
+                admission_receipt_id=admission_receipt_id,
+                logical_dispatch_id=logical_dispatch_id,
+                phase=phase,
+                provider_failure_key=provider_failure_key,
+            ) if terminal_context_requested else None
+            # A receipt/phase/key is enough to recover the terminal id when a
+            # DispatchOutcome was created before the ledger assigned its
+            # deterministic terminal id.
+            if terminal_context_requested and terminal is None and terminal_outcome_event_id is None:
+                terminal = self._provider_find_terminal(
+                    projection,
+                    admission_receipt_id=admission_receipt_id,
+                    logical_dispatch_id=logical_dispatch_id,
+                    phase=phase,
+                    provider_failure_key=provider_failure_key,
+                )
+            if terminal_outcome_event_id is None and terminal is not None:
+                terminal_outcome_event_id = terminal.get("terminal_outcome_id")
+            if terminal is not None:
+                if terminal.get("outcome_kind") != "provider_exhausted":
+                    raise ValueError("provider observation must cite a provider terminal")
+                evidence = terminal.get("provider_evidence") or {}
+                if terminal.get("provider_failure_key") != provider_failure_key or evidence.get("provider_failure_key") != provider_failure_key:
+                    raise ValueError("provider observation key is not terminal-bound")
+                if terminal.get("selected_spec") != selected_spec or terminal.get("phase") != phase:
+                    raise ValueError("provider observation route context mismatch")
+                if evidence.get("provider_epoch_identity") != provider_epoch_identity:
+                    raise ValueError("provider observation epoch mismatch")
+                expected_id = _stable_id("provider-observation", terminal_outcome_event_id, provider_failure_key)
+                if observation_id != expected_id:
+                    raise ValueError("provider observation id is not terminal-derived")
+            payload = {
+                "schema_version": 1,
+                "event_type": "provider_observation",
+                "event_id": observation_id,
+                "observation_id": observation_id,
+                "provider_failure_key": provider_failure_key,
+                "selected_spec": selected_spec,
+                "phase": phase,
+                "provider_failure_class": provider_failure_class,
+                "provider_epoch_identity": provider_epoch_identity,
+                "recorded_at": _now(),
+                "actor": actor,
+            }
+            linkage = {
+                "terminal_outcome_event_id": terminal_outcome_event_id or (terminal or {}).get("terminal_outcome_id"),
+                "reservation_event_id": reservation_event_id or (terminal or {}).get("reservation_event_id"),
+                "admission_receipt_id": admission_receipt_id or (terminal or {}).get("admission_receipt_id"),
+                "logical_dispatch_id": logical_dispatch_id or (terminal or {}).get("logical_dispatch_id"),
+            }
+            payload.update({name: value for name, value in linkage.items() if value})
+            prior = self._provider_raw_record(records, observation_id)
+            if prior is not None:
+                if self._provider_payload_equivalent(prior.get("payload", {}), payload):
+                    return prior
+                raise ValueError("conflicting provider observation replay")
             return self._append_nbf_locked(fd, payload, records)
+
+    # Explicit name used by the worker seam and acceptance fixtures.
+    append_provider_observation_link = append_provider_observation
+
+    def _start_provider_probe_locked(
+        self,
+        fd: int,
+        records: list[dict[str, Any]],
+        *,
+        provider_failure_key: str,
+        provider_epoch_identity: str | None,
+        observation_id: str | None,
+        parent_reservation_event_id: str | None,
+        parent_terminal_event_id: str | None,
+        phase: str | None,
+        route_identity: str | None,
+        route_liveness_identity: str | None,
+        retry_not_before_ns: int,
+        deadline_ns: int,
+        attempt: int,
+        now_ns: int | None,
+        previous_now_ns: int | None,
+        actor: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(provider_failure_key, str) or not provider_failure_key:
+            raise ValueError("provider probe requires provider_failure_key")
+        if provider_epoch_identity is not None and not isinstance(provider_epoch_identity, str):
+            raise ValueError("provider probe epoch identity must be text")
+        if isinstance(retry_not_before_ns, bool) or not isinstance(retry_not_before_ns, int) or retry_not_before_ns < 0:
+            raise ValueError("provider probe retry_not_before_ns must be non-negative")
+        if isinstance(deadline_ns, bool) or not isinstance(deadline_ns, int) or deadline_ns < 0:
+            raise ValueError("provider probe deadline_ns must be non-negative")
+        if deadline_ns < retry_not_before_ns:
+            raise ValueError("provider probe deadline precedes retry eligibility")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise ValueError("provider probe attempt must be positive")
+        now = self._provider_now_ns(now_ns)
+        if previous_now_ns is not None and now < self._provider_now_ns(previous_now_ns):
+            # A rolled-back monotonic clock cannot authorize a lease.
+            return None
+        if now < retry_not_before_ns:
+            return None
+        projection = self._project_records(records)
+        parent = self._provider_find_terminal(
+            projection,
+            terminal_outcome_event_id=parent_terminal_event_id,
+            reservation_event_id=parent_reservation_event_id,
+            phase=phase,
+            provider_failure_key=provider_failure_key,
+        ) if (parent_terminal_event_id or parent_reservation_event_id) else None
+        if parent_terminal_event_id and parent is None:
+            raise ValueError("provider probe parent terminal is not persisted")
+        if parent is not None:
+            if parent.get("outcome_kind") != "provider_exhausted":
+                raise ValueError("provider probe parent is not a provider terminal")
+            if parent_reservation_event_id and parent.get("reservation_event_id") != parent_reservation_event_id:
+                raise ValueError("provider probe parent reservation mismatch")
+            parent_reservation_event_id = parent.get("reservation_event_id")
+            parent_terminal_event_id = parent.get("terminal_outcome_id")
+            if phase is not None and parent.get("phase") != phase:
+                raise ValueError("provider probe parent phase mismatch")
+        # Exactly one active lease may exist for a parent/key/epoch/route.
+        for lease in projection.get("provider_probe_leases", {}).values():
+            if lease.get("status") not in {"leased", "passed"}:
+                continue
+            if (
+                lease.get("provider_failure_key") == provider_failure_key
+                and lease.get("parent_reservation_event_id") == parent_reservation_event_id
+                and lease.get("phase") == phase
+                and lease.get("route_identity") == route_identity
+            ):
+                if lease.get("expires_at") == deadline_ns:
+                    return self._provider_raw_record(records, lease.get("event_id")) or {"payload": lease}
+                raise ValueError("provider probe active lease context conflicts")
+        lease_id = _stable_id(
+            "provider-probe-start",
+            provider_failure_key,
+            str(parent_reservation_event_id),
+            str(parent_terminal_event_id),
+            str(phase),
+            str(route_identity),
+            str(attempt),
+        )
+        payload = {
+            "schema_version": 1,
+            "event_type": "provider_probe_started",
+            "event_id": lease_id,
+            "probe_lease_id": lease_id,
+            "provider_failure_key": provider_failure_key,
+            "expires_at": deadline_ns,
+            "recorded_at": _now(),
+            # The actor suffix is an additive, schema-closed clock-mode bit;
+            # projection strips it into ``clock_mode`` for policy consumers.
+            "actor": f"{actor}::nbf06-monotonic",
+        }
+        if any(value is not None for value in (parent_reservation_event_id, phase, route_identity)):
+            payload.update({
+                "parent_reservation_event_id": parent_reservation_event_id,
+                "phase": phase,
+                "route_identity": route_identity,
+            })
+        prior = self._provider_raw_record(records, lease_id)
+        if prior is not None:
+            if self._provider_payload_equivalent(prior.get("payload", {}), payload):
+                return prior
+            raise ValueError("conflicting provider probe lease replay")
+        return self._append_nbf_locked(fd, payload, records)
+
+    def start_provider_probe_locked(
+        self,
+        *,
+        provider_failure_key: str | None = None,
+        provider_epoch_identity: str | None = None,
+        observation_id: str | None = None,
+        parent_reservation_event_id: str | None = None,
+        parent_terminal_event_id: str | None = None,
+        phase: str | None = None,
+        route_identity: str | None = None,
+        route_liveness_identity: str | None = None,
+        retry_not_before_ns: int = 0,
+        deadline_ns: int | None = None,
+        attempt: int = 1,
+        now_ns: int | None = None,
+        previous_now_ns: int | None = None,
+        probe_request: Any = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any] | None:
+        """Acquire one deadline-gated provider probe lease under the CAS door."""
+        if probe_request is not None:
+            source = probe_request if isinstance(probe_request, Mapping) else vars(probe_request)
+            for name in (
+                "provider_failure_key", "provider_epoch_identity", "observation_id",
+                "parent_reservation_event_id", "parent_terminal_event_id", "phase",
+                "route_identity", "route_liveness_identity", "retry_not_before_ns",
+                "deadline_ns", "attempt",
+            ):
+                value = source.get(name)
+                if value is not None or name in {"retry_not_before_ns", "deadline_ns", "attempt"}:
+                    if name == "provider_failure_key": provider_failure_key = value
+                    elif name == "provider_epoch_identity": provider_epoch_identity = value
+                    elif name == "observation_id": observation_id = value
+                    elif name == "parent_reservation_event_id": parent_reservation_event_id = value
+                    elif name == "parent_terminal_event_id": parent_terminal_event_id = value
+                    elif name == "phase": phase = value
+                    elif name == "route_identity": route_identity = value
+                    elif name == "route_liveness_identity": route_liveness_identity = value
+                    elif name == "retry_not_before_ns": retry_not_before_ns = value
+                    elif name == "deadline_ns": deadline_ns = value
+                    elif name == "attempt": attempt = value
+        if deadline_ns is None:
+            raise ValueError("provider probe requires deadline_ns")
+        with self._locked() as (fd, records):
+            return self._start_provider_probe_locked(
+                fd,
+                records,
+                provider_failure_key=provider_failure_key or "",
+                provider_epoch_identity=provider_epoch_identity,
+                observation_id=observation_id,
+                parent_reservation_event_id=parent_reservation_event_id,
+                parent_terminal_event_id=parent_terminal_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                route_liveness_identity=route_liveness_identity,
+                retry_not_before_ns=retry_not_before_ns,
+                deadline_ns=deadline_ns,
+                attempt=attempt,
+                now_ns=now_ns,
+                previous_now_ns=previous_now_ns,
+                actor=actor,
+            )
+
+    def _record_provider_probe_result_locked(
+        self,
+        fd: int,
+        records: list[dict[str, Any]],
+        *,
+        probe_lease_id: str,
+        provider_failure_key: str,
+        passed: bool,
+        evidence_digest: str,
+        parent_reservation_event_id: str | None,
+        phase: str | None,
+        route_identity: str | None,
+        now_ns: int | None,
+        idempotent: bool,
+        actor: str,
+    ) -> dict[str, Any]:
+        projection = self._project_records(records)
+        lease = self._provider_find_lease(projection, probe_lease_id)
+        if lease is None:
+            raise ValueError("provider probe result requires a persisted lease")
+        if lease.get("closed") or lease.get("status") not in {"leased"}:
+            raise ValueError("provider probe lease is stale or already resolved")
+        if lease.get("provider_failure_key") != provider_failure_key:
+            raise ValueError("provider probe lease key mismatch")
+        expected_parent = lease.get("parent_reservation_event_id")
+        expected_phase = lease.get("phase")
+        expected_route = lease.get("route_identity")
+        for name, expected, actual in (
+            ("parent_reservation_event_id", expected_parent, parent_reservation_event_id),
+            ("phase", expected_phase, phase),
+            ("route_identity", expected_route, route_identity),
+        ):
+            if expected != actual:
+                raise ValueError(f"provider probe lease context mismatch: {name}")
+        # New leases use monotonic nanoseconds.  Legacy leases retain their
+        # wall-clock seconds behavior for replay compatibility.
+        expiry = lease.get("expires_at", 0)
+        if lease.get("clock_mode") == "monotonic_ns" or now_ns is not None:
+            if self._provider_now_ns(now_ns) >= int(expiry):
+                raise ValueError("provider probe lease is expired")
+        elif float(expiry) <= datetime.now(timezone.utc).timestamp():
+            raise ValueError("provider probe lease is expired")
+        event_id = _stable_id("provider_probe_result", probe_lease_id, provider_failure_key, str(bool(passed)), evidence_digest)
+        payload = {
+            "schema_version": 1,
+            "event_type": "provider_probe_result",
+            "event_id": event_id,
+            "probe_lease_id": probe_lease_id,
+            "provider_failure_key": provider_failure_key,
+            "passed": bool(passed),
+            "evidence_digest": evidence_digest,
+            "recorded_at": _now(),
+            "actor": actor,
+        }
+        if any(value is not None for value in (parent_reservation_event_id, phase, route_identity)):
+            payload.update({
+                "parent_reservation_event_id": parent_reservation_event_id,
+                "phase": phase,
+                "route_identity": route_identity,
+            })
+        prior = self._provider_raw_record(records, event_id)
+        if prior is not None:
+            if self._provider_payload_equivalent(prior.get("payload", {}), payload):
+                if idempotent:
+                    return prior
+                raise ValueError("provider probe lease has already been consumed")
+            raise ValueError("conflicting provider probe result replay")
+        prior_for_lease = self._provider_find_result(projection, probe_lease_id)
+        if prior_for_lease is not None:
+            if (
+                prior_for_lease.get("provider_failure_key") == provider_failure_key
+                and prior_for_lease.get("passed") is bool(passed)
+                and prior_for_lease.get("evidence_digest") == evidence_digest
+            ):
+                if idempotent:
+                    return self._provider_raw_record(records, prior_for_lease.get("event_id")) or {"payload": prior_for_lease}
+            raise ValueError("provider probe lease has already been consumed")
+        return self._append_nbf_locked(fd, payload, records)
+
+    def record_provider_probe_result_locked(
+        self,
+        result: Any = None,
+        *,
+        probe_lease_id: str | None = None,
+        provider_failure_key: str | None = None,
+        result_kind: str | None = None,
+        passed: bool | None = None,
+        evidence_digest: str | None = None,
+        parent_reservation_event_id: str | None = None,
+        phase: str | None = None,
+        route_identity: str | None = None,
+        now_ns: int | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Fence and persist a probe result after execution outside the lock."""
+        if result is not None:
+            source = result if isinstance(result, Mapping) else vars(result)
+            probe_lease_id = source.get("probe_lease_id", probe_lease_id)
+            provider_failure_key = source.get("provider_failure_key", provider_failure_key)
+            result_kind = source.get("result", source.get("result_kind", result_kind))
+            passed = source.get("passed", passed)
+            evidence_digest = source.get("evidence_digest", evidence_digest)
+            parent_reservation_event_id = source.get("parent_reservation_event_id", parent_reservation_event_id)
+            phase = source.get("phase", phase)
+            route_identity = source.get("route_identity", route_identity)
+        if result_kind is not None:
+            if result_kind not in {"passed", "failed", "unknown"}:
+                raise ValueError("provider probe result kind is invalid")
+            passed = result_kind == "passed"
+        if passed is None:
+            raise ValueError("provider probe result requires passed/result")
+        if not isinstance(passed, bool):
+            raise ValueError("provider probe result passed must be boolean")
+        if not probe_lease_id or not provider_failure_key or not evidence_digest:
+            raise ValueError("provider probe result requires lease, key, and evidence")
+        with self._locked() as (fd, records):
+            return self._record_provider_probe_result_locked(
+                fd,
+                records,
+                probe_lease_id=probe_lease_id,
+                provider_failure_key=provider_failure_key,
+                passed=passed,
+                evidence_digest=evidence_digest,
+                parent_reservation_event_id=parent_reservation_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                now_ns=now_ns,
+                idempotent=True,
+                actor=actor,
+            )
+
+    def append_provider_probe_result(self, **kwargs: Any) -> dict[str, Any]:
+        return self.record_provider_probe_result_locked(**kwargs)
+
+    def _close_provider_probe_locked(
+        self,
+        fd: int,
+        records: list[dict[str, Any]],
+        *,
+        probe_lease_id: str,
+        provider_failure_key: str | None,
+        parent_reservation_event_id: str | None,
+        phase: str | None,
+        route_identity: str | None,
+        now_ns: int | None,
+        close_reason: str | None,
+        retry_not_before_ns: int,
+        actor: str,
+    ) -> dict[str, Any]:
+        projection = self._project_records(records)
+        lease = self._provider_find_lease(projection, probe_lease_id)
+        if lease is None:
+            raise ValueError("provider probe closure requires a persisted lease")
+        key = provider_failure_key or lease.get("provider_failure_key")
+        if key != lease.get("provider_failure_key"):
+            raise ValueError("provider probe closure key mismatch")
+        for name, expected, actual in (
+            ("parent_reservation_event_id", lease.get("parent_reservation_event_id"), parent_reservation_event_id),
+            ("phase", lease.get("phase"), phase),
+            ("route_identity", lease.get("route_identity"), route_identity),
+        ):
+            if expected != actual:
+                raise ValueError(f"provider probe closure context mismatch: {name}")
+        prior_closure = projection.get("provider_probe_closures", {}).get(probe_lease_id)
+        if prior_closure is not None:
+            prior_reason = prior_closure.get("close_reason") or self._provider_close_reason(prior_closure)
+            if close_reason is not None and close_reason != prior_reason:
+                raise ValueError("conflicting provider probe closure replay")
+            return self._provider_raw_record(records, prior_closure.get("event_id")) or {"payload": prior_closure}
+        result = self._provider_find_result(projection, probe_lease_id)
+        now = self._provider_now_ns(now_ns) if (lease.get("clock_mode") == "monotonic_ns" or now_ns is not None) else int(datetime.now(timezone.utc).timestamp())
+        expiry = int(lease.get("expires_at", 0)) if lease.get("clock_mode") == "monotonic_ns" or now_ns is not None else float(lease.get("expires_at", 0))
+        if result is None:
+            if now < expiry:
+                raise ValueError("provider probe cannot close before a result or deadline")
+            reason = "expired"
+            result_id = ""
+        elif now >= expiry:
+            reason = "expired"
+            result_id = result.get("event_id", "")
+        elif result.get("passed") is True:
+            reason = close_reason or "passed"
+            if reason != "passed":
+                raise ValueError("passed provider probe requires passed closure")
+            result_id = result.get("event_id", "")
+        else:
+            reason = close_reason or "failed"
+            if reason not in {"failed", "unknown", "expired"}:
+                raise ValueError("failed provider probe closure is invalid")
+            result_id = result.get("event_id", "")
+        if isinstance(retry_not_before_ns, bool) or not isinstance(retry_not_before_ns, int) or retry_not_before_ns < 0:
+            raise ValueError("provider probe retry_not_before_ns must be non-negative")
+        marker_id = _stable_id("provider_probe_closed", probe_lease_id, result_id, reason, str(retry_not_before_ns))
+        payload = {
+            "schema_version": 1,
+            "event_type": "provider_probe_started",
+            "event_id": marker_id,
+            "probe_lease_id": probe_lease_id,
+            "provider_failure_key": key,
+            "expires_at": lease.get("expires_at"),
+            "recorded_at": _now(),
+            "actor": actor,
+            "route_identity": f"__NBF06_PROBE_CLOSED__:{reason}:{retry_not_before_ns}",
+        }
+        if lease.get("parent_reservation_event_id") is not None or lease.get("phase") is not None:
+            payload.update({
+                "parent_reservation_event_id": lease.get("parent_reservation_event_id"),
+                "phase": lease.get("phase"),
+            })
+        prior = self._provider_raw_record(records, marker_id)
+        if prior is not None:
+            if self._provider_payload_equivalent(prior.get("payload", {}), payload):
+                return prior
+            raise ValueError("conflicting provider probe closure replay")
+        return self._append_nbf_locked(fd, payload, records)
+
+    def close_provider_probe_locked(
+        self,
+        *,
+        probe_lease_id: str,
+        provider_failure_key: str | None = None,
+        parent_reservation_event_id: str | None = None,
+        phase: str | None = None,
+        route_identity: str | None = None,
+        now_ns: int | None = None,
+        close_reason: str | None = None,
+        retry_not_before_ns: int = 0,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        with self._locked() as (fd, records):
+            return self._close_provider_probe_locked(
+                fd,
+                records,
+                probe_lease_id=probe_lease_id,
+                provider_failure_key=provider_failure_key,
+                parent_reservation_event_id=parent_reservation_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                now_ns=now_ns,
+                close_reason=close_reason,
+                retry_not_before_ns=retry_not_before_ns,
+                actor=actor,
+            )
+
+    append_provider_probe_closed = close_provider_probe_locked
+
+    def reconcile_provider_probe_locked(
+        self,
+        *,
+        probe_lease_id: str,
+        provider_failure_key: str | None = None,
+        parent_reservation_event_id: str | None = None,
+        phase: str | None = None,
+        route_identity: str | None = None,
+        now_ns: int | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Close an expired/failed result through the same fenced CAS door."""
+        with self._locked() as (fd, records):
+            projection = self._project_records(records)
+            lease = self._provider_find_lease(projection, probe_lease_id)
+            if lease is None:
+                raise ValueError("provider probe reconciliation requires a persisted lease")
+            result = self._provider_find_result(projection, probe_lease_id)
+            reason = "failed" if result is not None and result.get("passed") is not True else None
+            return self._close_provider_probe_locked(
+                fd,
+                records,
+                probe_lease_id=probe_lease_id,
+                provider_failure_key=provider_failure_key,
+                parent_reservation_event_id=parent_reservation_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                now_ns=now_ns,
+                close_reason=reason,
+                retry_not_before_ns=0,
+                actor=actor,
+            )
+
+    def record_provider_recovery_verified_locked(
+        self,
+        *,
+        plan_id: str,
+        phase: str,
+        probe_lease_id: str,
+        provider_failure_key: str | None = None,
+        parent_reservation_event_id: str | None = None,
+        parent_terminal_event_id: str | None = None,
+        route_identity: str | None = None,
+        authoritative_subject: str = "provider_probe",
+        before: Any = None,
+        after: Any = None,
+        logical_dispatch_id: str | None = None,
+        dispatch_family_id: str | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Mint one producer-bound ChangedPrecondition after a closed pass.
+
+        This is intentionally a ledger CAS adapter, not a second recovery
+        writer.  The existing typed ``produce_provider_recovery_verified``
+        producer remains responsible for source identities; this method only
+        supplies a probe-derived source when the caller does not provide one.
+        """
+        from arnold_pipelines.megaplan.incident.schema import (
+            ProviderRecoverySource,
+            _digest,
+            _validate_producer_binding,
+            produce_provider_recovery_verified,
+        )
+
+        with self._locked() as (fd, records):
+            projection = self._project_records(records)
+            lease = self._provider_find_lease(projection, probe_lease_id)
+            if lease is None:
+                raise ValueError("provider recovery requires a persisted probe lease")
+            if lease.get("provider_failure_key") != provider_failure_key and provider_failure_key is not None:
+                raise ValueError("provider recovery probe key mismatch")
+            key = provider_failure_key or lease.get("provider_failure_key")
+            if lease.get("parent_reservation_event_id") != parent_reservation_event_id and parent_reservation_event_id is not None:
+                raise ValueError("provider recovery parent reservation mismatch")
+            if lease.get("phase") != phase:
+                raise ValueError("provider recovery phase mismatch")
+            if lease.get("route_identity") != route_identity and route_identity is not None:
+                raise ValueError("provider recovery route mismatch")
+            closure = projection.get("provider_probe_closures", {}).get(probe_lease_id)
+            if lease.get("clock_mode") == "monotonic_ns" and (closure is None or closure.get("close_reason") != "passed"):
+                raise ValueError("provider recovery requires a passed, closed probe")
+            result = self._provider_find_result(projection, probe_lease_id)
+            if result is None or result.get("passed") is not True:
+                raise ValueError("provider recovery requires a passed canonical probe")
+            if parent_terminal_event_id is not None:
+                terminal = self._provider_find_terminal(
+                    projection,
+                    terminal_outcome_event_id=parent_terminal_event_id,
+                    reservation_event_id=parent_reservation_event_id,
+                    phase=phase,
+                    provider_failure_key=key,
+                )
+                if terminal is None:
+                    raise ValueError("provider recovery parent terminal is not persisted")
+            if before is None:
+                before = ProviderRecoverySource(
+                    "provider-probe-v1",
+                    authoritative_subject,
+                    f"{probe_lease_id}:before",
+                    {"provider_failure_key": key, "probe_status": "failed"},
+                    key,
+                )
+            if after is None:
+                after = ProviderRecoverySource(
+                    "provider-probe-v1",
+                    authoritative_subject,
+                    f"{probe_lease_id}:after",
+                    {"provider_failure_key": key, "probe_status": "passed"},
+                    key,
+                )
+            proof = produce_provider_recovery_verified(
+                plan_id=plan_id,
+                phase=phase,
+                authoritative_subject=authoritative_subject,
+                before=before,
+                after=after,
+                evidence_event_id=result.get("event_id"),
+                evidence=result,
+                actor=actor,
+                dispatch_family_id=dispatch_family_id,
+                logical_dispatch_id=logical_dispatch_id,
+                route_identity=route_identity,
+            )
+            existing = projection.get("changed_preconditions", {}).get(proof.event_id)
+            if existing is not None:
+                return self._provider_raw_record(records, proof.event_id) or {"payload": existing}
+            _validate_producer_binding(proof)
+            cited = result
+            if _digest(cited) != proof.evidence_digest or proof.evidence_snapshot != cited:
+                raise ValueError("provider recovery evidence is not the cited probe")
+            return self._append_nbf_locked(fd, proof.to_dict(), records, _changed_precondition=proof)
+
+    def record_provider_hold_locked(
+        self,
+        *,
+        provider_failure_key: str,
+        phase: str,
+        reason: str = "provider_observation_wait",
+        terminal_outcome_event_id: str | None = None,
+        retry_not_before_ns: int | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Return a projected hold proof without creating a second store."""
+        with self._locked() as (_fd, records):
+            projection = self._project_records(records)
+            return {
+                "status": "held",
+                "reason": reason,
+                "provider_failure_key": provider_failure_key,
+                "phase": phase,
+                "terminal_outcome_event_id": terminal_outcome_event_id,
+                "retry_not_before_ns": retry_not_before_ns,
+                "projection_version": projection["projection_version"],
+                "actor": actor,
+            }
+
+    def record_provider_success_locked(
+        self,
+        *,
+        provider_failure_key: str | None = None,
+        phase: str | None = None,
+        terminal_outcome_event_id: str | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Read the terminal-derived success reset through the ledger door."""
+        with self._locked() as (_fd, records):
+            projection = self._project_records(records)
+            stream = next(
+                (
+                    value for value in projection.get("provider_streaks", {}).values()
+                    if (provider_failure_key is None or value.get("provider_failure_key") == provider_failure_key)
+                    and (phase is None or value.get("phase") == phase)
+                ),
+                None,
+            )
+            return {
+                "status": "success",
+                "provider_failure_key": provider_failure_key,
+                "phase": phase,
+                "terminal_outcome_event_id": terminal_outcome_event_id,
+                "observation_streak": (stream or {}).get("observation_streak", 0),
+                "actor": actor,
+            }
+
+    def reconcile_provider_observation_locked(
+        self,
+        *,
+        observation_id: str,
+        provider_failure_key: str | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        with self._locked() as (_fd, records):
+            projection = self._project_records(records)
+            observation = projection.get("provider_observations", {}).get(observation_id)
+            if observation is None:
+                raise ValueError("provider observation is not persisted")
+            if provider_failure_key is not None and observation.get("provider_failure_key") != provider_failure_key:
+                raise ValueError("provider observation key mismatch")
+            return {**observation, "status": "observed", "actor": actor}
+
+    def reconcile_provider_durability_unknown_locked(
+        self,
+        *,
+        provider_failure_key: str,
+        phase: str,
+        reason: str = "provider_durability_unknown",
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        return self.record_provider_hold_locked(
+            provider_failure_key=provider_failure_key,
+            phase=phase,
+            reason=reason,
+            actor=actor,
+        )
+
+    def append_probe_result(
+        self,
+        *,
+        probe_lease_id: str,
+        provider_failure_key: str,
+        passed: bool,
+        evidence_digest: str,
+        parent_reservation_event_id: str | None = None,
+        phase: str | None = None,
+        route_identity: str | None = None,
+        now_ns: int | None = None,
+        actor: str = "megaplan",
+    ) -> dict[str, Any]:
+        """Legacy result door retaining its historical duplicate rejection."""
+        if not probe_lease_id or not provider_failure_key or not evidence_digest:
+            raise ValueError("provider probe result requires lease, key, and evidence")
+        with self._locked() as (fd, records):
+            return self._record_provider_probe_result_locked(
+                fd,
+                records,
+                probe_lease_id=probe_lease_id,
+                provider_failure_key=provider_failure_key,
+                passed=passed,
+                evidence_digest=evidence_digest,
+                parent_reservation_event_id=parent_reservation_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                now_ns=now_ns,
+                idempotent=False,
+                actor=actor,
+            )
 
     def consume_changed_precondition(self, event: Any, *, actor: str = "megaplan") -> dict[str, Any]:
         from arnold_pipelines.megaplan.incident.schema import ChangedPrecondition, _validate_producer_binding
@@ -1359,9 +2394,25 @@ class IncidentLedger:
                 raise ValueError("changed precondition already consumed")
             return self._append_nbf_locked(fd, {"schema_version": 1, "event_type": "changed_precondition_consumed", "event_id": _stable_id("consume", obj.event_id), "changed_precondition_event_id": obj.event_id, "recorded_at": _now(), "actor": actor}, records)
 
-    def create_probe_lease(self, *, provider_failure_key: str, expires_at: float, parent_reservation_event_id: str | None = None, phase: str | None = None, route_identity: str | None = None, actor: str = "megaplan") -> dict[str, Any]:
+    def create_probe_lease(self, *, provider_failure_key: str, expires_at: float, parent_reservation_event_id: str | None = None, phase: str | None = None, route_identity: str | None = None, retry_not_before_ns: int | None = None, deadline_ns: int | None = None, now_ns: int | None = None, parent_terminal_event_id: str | None = None, provider_epoch_identity: str | None = None, attempt: int = 1, actor: str = "megaplan") -> dict[str, Any] | None:
+        # New callers use the explicit monotonic contract.  Keep the original
+        # wall-clock API below so old persisted fixtures remain byte-stable.
+        if deadline_ns is not None or retry_not_before_ns is not None or now_ns is not None or parent_terminal_event_id is not None or provider_epoch_identity is not None:
+            return self.start_provider_probe_locked(
+                provider_failure_key=provider_failure_key,
+                provider_epoch_identity=provider_epoch_identity,
+                parent_reservation_event_id=parent_reservation_event_id,
+                parent_terminal_event_id=parent_terminal_event_id,
+                phase=phase,
+                route_identity=route_identity,
+                retry_not_before_ns=retry_not_before_ns or 0,
+                deadline_ns=deadline_ns if deadline_ns is not None else int(expires_at),
+                now_ns=now_ns,
+                attempt=attempt,
+                actor=actor,
+            )
         with self._locked() as (fd, records):
-            if any(r.get("payload", {}).get("event_type") == "provider_probe_started" and r.get("payload", {}).get("provider_failure_key") == provider_failure_key for r in records):
+            if any(r.get("payload", {}).get("event_type") == "provider_probe_started" and not self._provider_is_close_marker(r.get("payload", {})) and r.get("payload", {}).get("provider_failure_key") == provider_failure_key for r in records):
                 raise ValueError("provider probe lease already exists")
             projection = self._project_records(records)
             lease_id = _stable_id("probe", provider_failure_key, str(projection["projection_version"]))

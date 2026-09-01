@@ -322,7 +322,11 @@ def fallback_observability_fields(
 def provider_family(spec: str) -> str:
     """Return the provider-family boundary used for fallback independence."""
     parsed = parse_agent_spec(spec)
-    if parsed.agent == "omp" and isinstance(parsed.model, str) and parsed.model:
+    if parsed.agent == "omp":
+        if not isinstance(parsed.model, str) or not parsed.model:
+            raise ValueError(
+                "OMP provider family requires an explicit upstream provider/model"
+            )
         # omp routes carry the upstream provider as the first path segment
         # (``omp:deepseek/...`` → ``deepseek``, ``omp:zai/...`` → ``zai``).
         # The provider family is the upstream provider; transport identity
@@ -334,7 +338,8 @@ def provider_family(spec: str) -> str:
         return omp_alias_map.get(provider, provider) or "omp"
     if parsed.agent == "premium":
         return "premium"
-    return parsed.agent.lower()
+    direct_alias_map = {"openai-codex": "codex", "grok": "xai"}
+    return direct_alias_map.get(parsed.agent.lower(), parsed.agent.lower())
 
 
 def _object_field(value: object, name: str) -> Any:
@@ -497,21 +502,27 @@ def is_cross_family_retryable_classification(classification: RetryabilityClass) 
     """Return whether a failure may advance to a DIFFERENT provider family.
 
     ``availability``/``infrastructure`` are transient operational failures.
-    ``quota`` is non-transient billing exhaustion — retrying the same provider
-    cannot succeed, so an explicitly configured different-family fallback is
-    the only way forward.  ``rate_limit`` intentionally stays excluded: a
-    transient rate limit should cool down on the same provider rather than
-    burn a different provider's quota.
+    Provider credentials, quota, rate-limit, model, and request failures are
+    deliberately excluded.  They are typed provider evidence, but changing
+    the configured target for one of those classes would turn an ordinary
+    provider error into an unbounded routing side effect.  NBF-06 only
+    authorizes an alternate target for a positively typed operational outage.
     """
-    return classification in {"availability", "infrastructure", "quota"}
+    return classification in {"availability", "infrastructure"}
 
 
 def is_same_family_operational_classification(
     classification: RetryabilityClass,
 ) -> bool:
-    """Return whether a non-writing same-family model fallback may advance."""
+    """Return whether a non-writing same-family model fallback may advance.
 
-    return classification in {"availability", "rate_limit", "unsupported_model"}
+    NBF-06 keeps the same fail-closed boundary for same-family and
+    cross-family choices: only a typed operational outage can authorize a
+    configured target.  Rate limits and model/configuration errors remain
+    ordinary outcomes and are never silently rerouted.
+    """
+
+    return classification in {"availability", "infrastructure"}
 
 
 def is_retryable_failure(value: object | None) -> bool:

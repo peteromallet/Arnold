@@ -1201,7 +1201,9 @@ def _run_omp_with_admission(
         SchedulingCondition,
         WorkerAdmissionRequest,
         dispatch_with_admission,
+        production_provider_probe_executor,
     )
+    from arnold_pipelines.megaplan.types import parse_agent_spec
 
     options = worker_options or {}
     raw_spec = model or ""
@@ -1213,6 +1215,7 @@ def _run_omp_with_admission(
     seed_identity = hashlib.sha256(seed_path.read_bytes()).hexdigest() if seed_path and seed_path.is_file() else ""
     manifest_identity = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest() if manifest_path and Path(manifest_path).is_file() else ""
     logical_id = str((state.get("meta") or {}).get("current_invocation_id") or uuid.uuid4())
+    configured_specs = tuple(options.get("configured_fallback_specs") or (selected_spec,))
     request = WorkerAdmissionRequest(
         plan_id=plan_dir.name,
         phase=step,
@@ -1228,20 +1231,25 @@ def _run_omp_with_admission(
         dependency_interpreter_identity=str(Path(os.sys.executable).resolve()),
         prompt_or_phase_input_identity=str(options.get("prompt_or_phase_input_identity") or hashlib.sha256(f"{step}:{prompt_override or ''}".encode()).hexdigest()),
         configured_fallback_chain_identity=str(options.get("configured_fallback_chain_identity") or ""),
+        configured_fallback_specs=configured_specs,
         authorized_route_identity=selected_spec,
         projection_key=str(options.get("projection_key") or f"{plan_dir.name}:{step}"),
         timeout_budget_s=float(options.get("timeout_budget_s") or 3600.0),
         production_intent=True,
         ledger_root=root,
+        admission_attempt=int(options.get("admission_attempt") or 1),
     )
     token = _OMP_ADMISSION_ACTIVE.set(True)
     transport_worker: WorkerResult | None = None
     try:
-        def launch(_context: Any) -> WorkerResult:
+        def launch(context: Any) -> WorkerResult:
             nonlocal transport_worker
+            admitted = getattr(context, "selected_spec", None) or selected_spec
+            parse_agent_spec(admitted)
+            parse_omp_spec(admitted)
             def final_launch(_start: Any = None) -> WorkerResult:
                 return run_omp_step(
-                    step, state, plan_dir, root=root, fresh=fresh, model=selected_spec,
+                    step, state, plan_dir, root=root, fresh=fresh, model=admitted,
                     effort=effort, prompt_override=prompt_override, output_path=output_path,
                     worker_options=worker_options, read_only=read_only,
                     prompt_kwargs=prompt_kwargs,
@@ -1253,9 +1261,11 @@ def _run_omp_with_admission(
                 transport_worker = result
             return result
 
+        probe_executor = production_provider_probe_executor()
         result = dispatch_with_admission(
             request, launch, gate=require_production_worker_dispatch_runtime,
             return_worker=False,
+            probe_executor=probe_executor, child_launch=launch,
         )
     finally:
         _OMP_ADMISSION_ACTIVE.reset(token)
@@ -1468,7 +1478,11 @@ def run_omp_step(
     attempted_specs: list[str] = []
     failed_attempt_reasons: list[str] = []
     last_error: CliError | None = None
-    max_attempts = max(1, _OMP_MAX_ATTEMPTS)
+    # Execute-shaped phases are mutating and v1 forbids replay: a provider
+    # outage must return to the authoritative outer door, which raises the
+    # typed ExecuteFallbackUnsafe before any second client/RPC attempt.  Keep
+    # bounded retries for read-only phases only.
+    max_attempts = 1 if step in _EXECUTE_STEPS else max(1, _OMP_MAX_ATTEMPTS)
 
     while True:
         attempt_index += 1
@@ -1715,6 +1729,20 @@ def run_omp_step(
             last_error = error
             retryable = error.code in _OMP_RETRYABLE_CODES
             if not retryable or attempt_index >= max_attempts:
+                if step in _EXECUTE_STEPS and retryable:
+                    from arnold_pipelines.megaplan.fallback_chains import (
+                        ExecuteFallbackUnsafe,
+                    )
+
+                    # Execute-shaped phases are single-attempt doors.  A
+                    # retryable outage that would otherwise advance the
+                    # local OMP loop is surfaced as the typed refusal
+                    # before another RPC/client/worker side effect.
+                    raise ExecuteFallbackUnsafe(
+                        phase=step,
+                        configured_specs=attempted_specs,
+                        attempted_index=0,
+                    ) from error
                 raise
             # Execute replay guard: if the failed attempt landed any file
             # changes, a retry would replay side effects — fail hard instead.
@@ -1756,6 +1784,21 @@ def run_omp_step(
             )
             retryable = code in _OMP_RETRYABLE_CODES
             if not retryable or attempt_index >= max_attempts:
+                if step in _EXECUTE_STEPS and retryable:
+                    from arnold_pipelines.megaplan.fallback_chains import (
+                        ExecuteFallbackUnsafe,
+                    )
+
+                    # Keep exception classification identical for native
+                    # RPC exceptions and typed CliError responses: an
+                    # execute retry is unsafe even when no mutation was
+                    # observed, because a second provider call is itself
+                    # an unowned side effect.
+                    raise ExecuteFallbackUnsafe(
+                        phase=step,
+                        configured_specs=attempted_specs,
+                        attempted_index=0,
+                    ) from last_error
                 raise last_error
             if step in _EXECUTE_STEPS and mutation_before is not None:
                 mutation_after = _worktree_mutation_fingerprint(work_dir)

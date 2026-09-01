@@ -14,7 +14,8 @@ from arnold_pipelines.megaplan.cloud.worker_dispatch import (
     require_production_worker_dispatch_runtime,
 )
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
-from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome
+from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey
+from arnold_pipelines.megaplan.orchestration.phase_result import DispatchOutcome, SchedulingCondition
 from tests.cloud.dispatch_test_helpers import native_proof, request
 
 
@@ -76,6 +77,12 @@ def _typed_terminal(receipt: WorkerAdmissionReceipt, kind: str) -> DispatchOutco
     elif kind == "ordinary_terminal_failure":
         common["terminal_failure"] = {"error": "ordinary"}
     elif kind == "provider_exhausted":
+        provider_failure_key = ProviderFailureKey.derive(
+            phase=receipt.phase,
+            selected_spec=receipt.normalized_spec,
+            provider_failure_class="availability",
+            provider_epoch_identity="epoch",
+        ).value
         common["provider_evidence"] = {
             "observation_id": "observation",
             "retryability_class": "availability",
@@ -83,10 +90,10 @@ def _typed_terminal(receipt: WorkerAdmissionReceipt, kind: str) -> DispatchOutco
             "terminal_provider_evidence_id": "provider-evidence",
             "precondition_identity": "precondition",
             "provider_epoch_identity": "epoch",
-            "provider_failure_key": "a" * 64,
+            "provider_failure_key": provider_failure_key,
             "observed_at": "2026-08-30T00:00:00+00:00",
         }
-        common["provider_failure_key"] = "a" * 64
+        common["provider_failure_key"] = provider_failure_key
     else:
         common["disposition_id"] = "disposition"
     return DispatchOutcome(**common)
@@ -108,8 +115,14 @@ def test_physical_door_transports_typed_terminal_categories(tmp_path: Path, door
             ledger=ledger,
             gate=lambda _request, receipt=receipt: receipt,
         )
-        assert isinstance(result, DispatchOutcome)
-        assert result.kind == kind
+        if kind == "provider_exhausted":
+            # T8 consumes the accepted terminal at the shared seam and
+            # transports the first keyed observation as a scheduling hold.
+            assert isinstance(result, SchedulingCondition)
+            assert result.reason == "provider_observation_wait"
+        else:
+            assert isinstance(result, DispatchOutcome)
+            assert result.kind == kind
         if kind == "worker_disposition":
             ledger.append_terminal_outcome = original  # type: ignore[method-assign]
 

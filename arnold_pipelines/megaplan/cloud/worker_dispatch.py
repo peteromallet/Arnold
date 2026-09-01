@@ -20,6 +20,15 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 from arnold_pipelines.megaplan.incident.schema import ReservationReconciled, semantic_dispatch_fingerprint
+from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackUnsafe, provider_family
+from arnold_pipelines.megaplan.orchestration.provider_resilience import (
+    ProviderLedgerView,
+    apply_provider_route_decision_locked,
+    execute_provider_probe,
+    provider_scheduling_condition,
+    select_provider_probe,
+    select_provider_route,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     DispatchOutcome,
     SchedulingCondition,
@@ -163,6 +172,10 @@ class WorkerAdmissionRequest:
     production_intent: bool = True
     ledger_root: Path | None = None
     changed_precondition_event_id: str | None = None
+    # The normalized chain is supplied by the configured-fallback authority.
+    # It is transport metadata only; target selection still happens at the
+    # post-terminal provider seam below.
+    configured_fallback_specs: tuple[str, ...] = ()
     route_liveness_resolver: Callable[[str, str, str], Mapping[str, Any]] | None = field(default=None, compare=False, repr=False)
     native_construction_seam: Callable[[str, str, str], Mapping[str, Any]] | None = field(default=None, compare=False, repr=False)
     source_runtime_validator: Callable[["WorkerAdmissionRequest"], Any] | None = field(default=None, compare=False, repr=False)
@@ -385,20 +398,13 @@ def _outcome_from_terminal_exception(
 
 
 def _family(provider: str, model: str, selected_spec: str) -> str:
-    lowered = f"{provider}/{model}/{selected_spec}".lower()
-    if "deepseek" in lowered:
-        return "deepseek"
-    if "kimi" in lowered:
-        return "kimi"
-    if "glm" in lowered:
-        return "glm"
-    if "gpt" in lowered or provider in {"openai", "openai-codex"}:
-        return "gpt"
-    if "claude" in lowered or provider == "anthropic":
-        return "claude"
-    if "grok" in lowered or provider in {"xai", "grok"}:
-        return "grok"
-    return provider or "unknown"
+    """Return the canonical fallback family for an admitted route.
+
+    ``provider_family`` owns aliases and OMP upstream-provider identity.  Keep
+    this compatibility shim because a few admission helpers call ``_family``
+    directly, but do not maintain a second family heuristic here.
+    """
+    return provider_family(selected_spec)
 
 
 def _extract_omp_models(value: Any) -> set[str]:
@@ -1175,13 +1181,14 @@ def build_authorized_linked_child_request(
         raise ValueError("linked child must use a fresh logical dispatch id")
     if not authorizing_event_id:
         raise ValueError("linked child requires durable authorizing event")
+    parent_source_spec = changes.pop("parent_source_spec", parent.selected_spec)
     return replace(
         parent,
         logical_dispatch_id=logical_dispatch_id,
         parent_logical_dispatch_id=parent.logical_dispatch_id,
         authorizing_event_id=authorizing_event_id,
         parent_terminal_event_id=parent_terminal,
-        parent_source_spec=parent.selected_spec,
+        parent_source_spec=parent_source_spec,
         transition_kind=changes.pop("transition_kind", "provider_recovery"),
         precondition_identity=changes.pop("precondition_identity", authorizing_event_id),
         physical_door_id=physical_door_id or parent.physical_door_id,
@@ -1301,7 +1308,431 @@ def reconcile_no_launch(
     )
 
 
-def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any], launch: Callable[[WorkerExecutionContextRef], Any], *, gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any] = require_production_worker_dispatch_runtime, ledger: IncidentLedger | None = None, clock: Callable[[], float] = time.monotonic, sleeper: Callable[[float], None] = time.sleep, deadline_s: float | None = None, return_worker: bool = False) -> Any:
+_EXECUTE_PHASES = frozenset({"execute", "loop_execute"})
+
+
+def _clock_ns(clock: Callable[[], float]) -> int:
+    value = clock()
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError("provider dispatch clock must be a non-negative number")
+    return int(value * 1_000_000_000)
+
+
+def _probe_target_spec(probe_request: Any) -> str:
+    """Return the admitted child spec a production probe must attest."""
+    route = str(getattr(probe_request, "route_identity", "") or "")
+    if "->" in route and not route.startswith("__NBF06_PROBE_CLOSED__"):
+        _source, target = route.split("->", 1)
+        if target and not target.startswith("__NBF06_PROBE_CLOSED__"):
+            return target
+    selected = getattr(probe_request, "selected_spec", None)
+    return str(selected or "")
+
+
+def production_provider_probe_executor() -> Callable[[Any], Mapping[str, Any]]:
+    """Attest the admitted target spec without WBC, client, RPC, or worker launch."""
+
+    def run(probe_request: Any) -> dict[str, Any]:
+        spec = _probe_target_spec(probe_request)
+        payload: dict[str, Any] = {
+            "provider_failure_key": getattr(probe_request, "provider_failure_key", ""),
+            "parent_reservation_event_id": getattr(probe_request, "parent_reservation_event_id", None),
+            "parent_terminal_event_id": getattr(probe_request, "parent_terminal_event_id", None),
+            "phase": getattr(probe_request, "phase", None),
+            "route_identity": getattr(probe_request, "route_identity", None),
+            "route_liveness_identity": getattr(probe_request, "route_liveness_identity", None),
+            "selected_spec": spec,
+        }
+        if not spec:
+            payload.update({"result": "unknown", "passed": False, "evidence_digest": _digest(payload)})
+            return payload
+        try:
+            parsed = parse_agent_spec(spec)
+            if parsed.agent == "omp":
+                model = parsed.model or ""
+                provider, model_id = model.split("/", 1) if "/" in model else ("", "")
+                if not provider or not model_id:
+                    raise ValueError("OMP probe spec lacks provider/model")
+                proof = resolve_omp_live_membership(provider, model_id)
+            else:
+                proof = _default_native_liveness(parsed.agent, parsed.model or spec)
+            if not isinstance(proof, Mapping) or not proof.get("identity") or not proof.get("digest"):
+                raise ValueError("provider probe liveness is not positive")
+            payload["result"] = "passed"
+            payload["passed"] = True
+            payload["evidence_digest"] = _digest(
+                {"identity": proof.get("identity"), "digest": proof.get("digest"), "spec": spec}
+            )
+            return payload
+        except (CliError, ValueError, OSError, TypeError):
+            payload["result"] = "failed"
+            payload["passed"] = False
+            payload["evidence_digest"] = _digest({"spec": spec, "result": "failed"})
+            return payload
+
+    return run
+
+
+def _rebuild_provider_lifecycle(
+    probe_executor: Callable[[Any], Any] | Any | None,
+    child_launch: Callable[[WorkerExecutionContextRef], Any] | None,
+    launch: Callable[[WorkerExecutionContextRef], Any],
+) -> tuple[Any, Callable[[WorkerExecutionContextRef], Any]]:
+    """Preserve or rebuild probe/child wiring; never hard-code None recursively."""
+    return (
+        production_provider_probe_executor() if probe_executor is None else probe_executor,
+        launch if child_launch is None else child_launch,
+    )
+
+
+def _committed_terminal(ledger: IncidentLedger | None, receipt: WorkerAdmissionReceipt) -> Mapping[str, Any] | None:
+    if ledger is None:
+        return None
+    for terminal in ledger.projection().get("terminals", {}).values():
+        if (
+            terminal.get("reservation_event_id") == receipt.reservation_event_id
+            and terminal.get("admission_receipt_id") == receipt.admission_receipt_id
+            and terminal.get("logical_dispatch_id") == receipt.logical_dispatch_id
+        ):
+            return terminal
+    return None
+
+
+def _outcome_from_committed_terminal(terminal: Mapping[str, Any], receipt: WorkerAdmissionReceipt) -> DispatchOutcome:
+    return DispatchOutcome(
+        kind=str(terminal.get("outcome_kind")),
+        launch_state=str(terminal.get("launch_state") or "accepted"),
+        plan_id=str(terminal.get("plan_id") or receipt.plan_id),
+        phase=str(terminal.get("phase") or receipt.phase),
+        dispatch_family_id=str(terminal.get("dispatch_family_id") or receipt.dispatch_family_id),
+        logical_dispatch_id=str(terminal.get("logical_dispatch_id") or receipt.logical_dispatch_id),
+        admission_receipt_id=terminal.get("admission_receipt_id") or receipt.admission_receipt_id,
+        semantic_dispatch_fingerprint=terminal.get("semantic_dispatch_fingerprint") or receipt.semantic_dispatch_fingerprint,
+        selected_spec=str(terminal.get("selected_spec") or receipt.normalized_spec),
+        worker_identity=terminal.get("worker_identity"),
+        started_at=terminal.get("started_at"),
+        finished_at=terminal.get("finished_at"),
+        success_payload=terminal.get("success_payload"),
+        terminal_failure=terminal.get("terminal_failure"),
+        provider_evidence=terminal.get("provider_evidence"),
+        provider_failure_key=terminal.get("provider_failure_key"),
+        disposition_id=terminal.get("disposition_id"),
+        terminal_outcome_event_id=terminal.get("terminal_outcome_id"),
+        provider=terminal.get("provider") or receipt.provider,
+        route_liveness_kind=terminal.get("route_liveness_kind") or receipt.route_liveness_kind,
+        route_liveness_identity=terminal.get("route_liveness_identity") or receipt.route_liveness_identity,
+        route_liveness_digest=terminal.get("route_liveness_digest") or receipt.route_liveness_digest,
+    )
+
+
+def _validate_provider_child_target(
+    request: WorkerAdmissionRequest,
+    *,
+    from_spec: str,
+    to_spec: str,
+    transition_kind: str,
+) -> None:
+    """Reject a fallback/return target before WBC, client, or RPC resolution."""
+    if not isinstance(to_spec, str) or not to_spec:
+        raise ValueError("provider child target spec is required")
+    parse_agent_spec(from_spec)
+    parse_agent_spec(to_spec)
+    from_family = provider_family(from_spec)
+    to_family = provider_family(to_spec)
+    specs = tuple(request.configured_fallback_specs or ())
+    if transition_kind in {"fallback", "configured_fallback"} and from_spec != to_spec:
+        if request.phase in _EXECUTE_PHASES:
+            raise ExecuteFallbackUnsafe(
+                phase=request.phase,
+                configured_specs=specs or (from_spec, to_spec),
+                attempted_index=1,
+            )
+        if specs and to_spec not in specs:
+            raise ValueError("fallback target is not in the configured chain")
+        if from_family == to_family:
+            raise ValueError("fallback target must cross provider family")
+    if transition_kind in {"return", "return_primary"}:
+        primary = specs[0] if specs else request.configured_spec
+        if to_spec != primary:
+            raise ValueError("return-primary target is not the configured primary")
+        if to_spec == from_spec:
+            raise ValueError("return-primary target cannot be the source spec")
+        if from_family == to_family:
+            raise ValueError("return-primary target must not inherit source family identity")
+
+
+def _select_provider_child_target(
+    request: WorkerAdmissionRequest,
+    terminal: DispatchOutcome,
+    child_launch: Callable[[WorkerExecutionContextRef], Any] | None,
+) -> tuple[str, str]:
+    selector = getattr(child_launch, "select_target", None)
+    if callable(selector):
+        chosen = selector(request, terminal)
+        if isinstance(chosen, tuple) and len(chosen) == 2:
+            return str(chosen[0]), str(chosen[1])
+        if isinstance(chosen, str) and chosen:
+            transition = "fallback" if chosen != request.selected_spec else "provider_recovery"
+            return chosen, transition
+        raise ValueError("provider child target callback returned an unsupported target")
+    specs = tuple(request.configured_fallback_specs or ())
+    if (
+        len(specs) > 1
+        and request.selected_spec == specs[0]
+        and request.phase not in _EXECUTE_PHASES
+    ):
+        return specs[1], "fallback"
+    return request.selected_spec, "provider_recovery"
+
+
+def _provider_condition(
+    reason: str,
+    *,
+    receipt: WorkerAdmissionReceipt,
+    terminal: DispatchOutcome,
+    retry_after_s: float = 0.0,
+    evidence: Mapping[str, Any] | None = None,
+) -> SchedulingCondition:
+    return SchedulingCondition(
+        condition_id=_digest((reason, terminal.terminal_outcome_event_id, terminal.provider_failure_key, terminal.logical_dispatch_id)),
+        reason=reason,
+        plan_id=receipt.plan_id,
+        phase=receipt.phase,
+        spec=receipt.normalized_spec,
+        dispatch_family_id=receipt.dispatch_family_id,
+        logical_dispatch_id=receipt.logical_dispatch_id,
+        admission_attempt=receipt.admission_attempt,
+        retry_after_s=retry_after_s,
+        observed_at=_now(),
+        cause_event_id=terminal.terminal_outcome_event_id,
+        evidence=dict(evidence or {}),
+    )
+
+
+def _authorized_linked_child(
+    request: WorkerAdmissionRequest,
+    receipt: WorkerAdmissionReceipt,
+    terminal: DispatchOutcome,
+    *,
+    from_spec: str,
+    to_spec: str,
+    transition: str,
+    logical_suffix: str,
+    launch: Callable[[WorkerExecutionContextRef], Any],
+    child_launch: Callable[[WorkerExecutionContextRef], Any] | None,
+    probe_executor: Callable[[Any], Any] | Any,
+    ledger: IncidentLedger,
+    clock: Callable[[], float],
+    sleeper: Callable[[float], None],
+    deadline: float,
+    return_worker: bool,
+    retry_after_s: float,
+) -> Any:
+    """Probe outside the lock, then reserve/admit/launch one composite child."""
+    _validate_provider_child_target(request, from_spec=from_spec, to_spec=to_spec, transition_kind=transition)
+    effective_probe, effective_child = _rebuild_provider_lifecycle(probe_executor, child_launch, launch)
+    skip_child = getattr(child_launch, "skip_admission", False) is True
+    now_ns = _clock_ns(clock)
+    remain_ns = max(1, int(max(deadline - clock(), 0.000001) * 1_000_000_000))
+    deadline_ns = now_ns + remain_ns
+    retry_ns = int(max(0.0, retry_after_s) * 1_000_000_000)
+    route_identity = f"{from_spec}->{to_spec}"
+    probe_request = select_provider_probe(
+        {
+            "outcome": terminal,
+            "parent_reservation_event_id": receipt.reservation_event_id,
+            "parent_terminal_event_id": terminal.terminal_outcome_event_id,
+            "reservation_event_id": receipt.reservation_event_id,
+            "retry_not_before_ns": retry_ns,
+            "deadline_ns": deadline_ns,
+            "route_identity": route_identity,
+            "route_liveness_identity": receipt.route_liveness_identity,
+            "logical_dispatch_id": terminal.logical_dispatch_id,
+            "selected_spec": from_spec,
+            "attempt": 1,
+        },
+        ProviderLedgerView.from_ledger(ledger),
+        now_ns=now_ns,
+    )
+    probed = None
+    if probe_request is not None:
+        try:
+            probed = execute_provider_probe(ledger, probe_request, effective_probe, now_ns=now_ns, actor="dispatch-with-admission")
+        except ValueError:
+            probed = None
+    lease_payload = ((probed or {}).get("lease") or {}).get("payload") or (probed or {}).get("lease") or {}
+    result_payload = ((probed or {}).get("result") or {}).get("payload") or (probed or {}).get("result") or {}
+    if not lease_payload.get("probe_lease_id"):
+        existing = next(
+            (
+                lease
+                for lease in ProviderLedgerView.from_ledger(ledger).provider_probe_leases.values()
+                if lease.get("parent_reservation_event_id") == receipt.reservation_event_id
+                and lease.get("provider_failure_key") == terminal.provider_failure_key
+                and lease.get("route_identity") == route_identity
+            ),
+            None,
+        )
+        if existing is None:
+            if now_ns < retry_ns:
+                return _provider_condition("provider_observation_wait", receipt=receipt, terminal=terminal, retry_after_s=retry_after_s)
+            return _provider_condition("provider_probe_wait", receipt=receipt, terminal=terminal)
+        lease_payload = existing
+        result_payload = {"passed": existing.get("status") in {"passed", "passed_closed"}}
+    result_kind = str(result_payload.get("result") or lease_payload.get("status") or "")
+    passed = result_payload.get("passed") is True or lease_payload.get("status") in {"passed", "passed_closed"}
+    if not passed:
+        reason = "provider_probe_failed"
+        if result_kind in {"unknown", "failed"} or result_payload.get("passed") is not True:
+            reason = "provider_probe_failed"
+        return _provider_condition(reason, receipt=receipt, terminal=terminal, evidence={"passed": False, "result": result_kind or "failed"})
+    proof = ledger.record_provider_recovery_verified_locked(
+        plan_id=receipt.plan_id,
+        phase=receipt.phase,
+        probe_lease_id=str(lease_payload.get("probe_lease_id")),
+        provider_failure_key=terminal.provider_failure_key,
+        parent_reservation_event_id=receipt.reservation_event_id,
+        parent_terminal_event_id=terminal.terminal_outcome_event_id,
+        route_identity=route_identity,
+        logical_dispatch_id=terminal.logical_dispatch_id,
+        dispatch_family_id=receipt.dispatch_family_id,
+        actor="dispatch-with-admission",
+    )
+    if skip_child:
+        return terminal
+    proof_payload = proof.get("payload", proof)
+    proof_id = str(proof_payload.get("event_id"))
+    child_request = build_authorized_linked_child_request(
+        request,
+        selected_spec=to_spec,
+        logical_dispatch_id=f"{request.logical_dispatch_id}:{logical_suffix}",
+        authorizing_event_id=proof_id,
+        dispatch_family_id=provider_family(to_spec),
+        parent_terminal_event_id=terminal.terminal_outcome_event_id,
+        parent_source_spec=from_spec,
+        authorized_route_identity=to_spec,
+        configured_spec=to_spec,
+        configured_fallback_specs=request.configured_fallback_specs,
+        configured_fallback_chain_identity=request.configured_fallback_chain_identity,
+        transition_kind=transition,
+        precondition_identity=proof_id,
+        changed_precondition_event_id=proof_id,
+        expected_projection_version=ledger.projection()["projection_version"],
+    )
+    return dispatch_with_admission(
+        child_request,
+        effective_child,
+        gate=require_production_worker_dispatch_runtime,
+        ledger=ledger,
+        clock=clock,
+        sleeper=sleeper,
+        deadline_s=max(deadline - clock(), 0.001),
+        return_worker=return_worker,
+        probe_executor=effective_probe,
+        child_launch=effective_child,
+    )
+
+
+def _provider_post_terminal(
+    request: WorkerAdmissionRequest,
+    receipt: WorkerAdmissionReceipt,
+    terminal: DispatchOutcome,
+    *,
+    launch: Callable[[WorkerExecutionContextRef], Any],
+    gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any],
+    ledger: IncidentLedger,
+    clock: Callable[[], float],
+    sleeper: Callable[[float], None],
+    deadline: float,
+    return_worker: bool,
+    probe_executor: Callable[[Any], Any] | Any | None,
+    child_launch: Callable[[WorkerExecutionContextRef], Any] | None,
+) -> Any:
+    """Continue T8 after the sole parent terminal append, without a second parent launch."""
+    view = ProviderLedgerView.from_ledger(ledger)
+    decision = select_provider_route(terminal, view)
+    decision = apply_provider_route_decision_locked(
+        ledger,
+        decision,
+        outcome=terminal,
+        reservation_event_id=receipt.reservation_event_id,
+    )
+    if decision.kind == "provider_degraded":
+        return provider_scheduling_condition(
+            decision,
+            plan_id=receipt.plan_id,
+            dispatch_family_id=receipt.dispatch_family_id,
+            admission_attempt=receipt.admission_attempt,
+        )
+    if decision.kind != "provider_observation_wait":
+        return terminal
+    if probe_executor is None:
+        return provider_scheduling_condition(
+            decision,
+            plan_id=receipt.plan_id,
+            dispatch_family_id=receipt.dispatch_family_id,
+            admission_attempt=receipt.admission_attempt,
+        )
+    effective_child = launch if child_launch is None else child_launch
+    from_spec = terminal.selected_spec
+    to_spec, transition = _select_provider_child_target(request, terminal, effective_child)
+    child_result = _authorized_linked_child(
+        request,
+        receipt,
+        terminal,
+        from_spec=from_spec,
+        to_spec=to_spec,
+        transition=transition,
+        logical_suffix="recovery",
+        launch=launch,
+        child_launch=child_launch,
+        probe_executor=probe_executor,
+        ledger=ledger,
+        clock=clock,
+        sleeper=sleeper,
+        deadline=deadline,
+        return_worker=return_worker,
+        retry_after_s=decision.retry_after_s,
+    )
+    if (
+        transition in {"fallback", "configured_fallback"}
+        and isinstance(child_result, DispatchOutcome)
+        and child_result.kind == "success"
+    ):
+        return _authorized_linked_child(
+            request,
+            receipt,
+            terminal,
+            from_spec=to_spec,
+            to_spec=from_spec,
+            transition="return",
+            logical_suffix="return",
+            launch=launch,
+            child_launch=child_launch,
+            probe_executor=probe_executor,
+            ledger=ledger,
+            clock=clock,
+            sleeper=sleeper,
+            deadline=deadline,
+            return_worker=return_worker,
+            retry_after_s=0.0,
+        )
+    return child_result
+
+
+def dispatch_with_admission(
+    request: WorkerAdmissionRequest | Mapping[str, Any],
+    launch: Callable[[WorkerExecutionContextRef], Any],
+    *,
+    gate: Callable[[WorkerAdmissionRequest | Mapping[str, Any]], Any] = require_production_worker_dispatch_runtime,
+    ledger: IncidentLedger | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+    deadline_s: float | None = None,
+    return_worker: bool = False,
+    probe_executor: Callable[[Any], Any] | Any | None = None,
+    child_launch: Callable[[WorkerExecutionContextRef], Any] | None = None,
+) -> Any:
     """Run one logical dispatch through admission and one controlled closure."""
     if not isinstance(request, WorkerAdmissionRequest):
         request = WorkerAdmissionRequest.from_dict(request)
@@ -1334,8 +1765,27 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
             return decision
         if not isinstance(decision, WorkerAdmissionReceipt):
             raise TypeError("admission gate returned an unsupported decision")
+        active_ledger = ledger or current.ledger or IncidentLedger(current.ledger_root)
+        existing = _committed_terminal(active_ledger, decision)
+        if existing is not None:
+            # The parent already has its one terminal.  Continue T8 from the
+            # committed record; never relaunch or append a second parent death.
+            return _provider_post_terminal(
+                current,
+                decision,
+                _outcome_from_committed_terminal(existing, decision),
+                launch=launch,
+                gate=gate,
+                ledger=active_ledger,
+                clock=clock,
+                sleeper=sleeper,
+                deadline=deadline,
+                return_worker=return_worker,
+                probe_executor=probe_executor,
+                child_launch=child_launch,
+            )
         from arnold_pipelines.megaplan.cloud.controlled_final_launch import ControlledFinalLaunch
-        controlled = ControlledFinalLaunch(decision, ledger=ledger or current.ledger)
+        controlled = ControlledFinalLaunch(decision, ledger=active_ledger)
         try:
             pre_entry = getattr(launch, "pre_entry", None)
             if callable(pre_entry):
@@ -1353,7 +1803,7 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                 return reconcile_no_launch(
                     decision,
                     evidence_event_ids=tuple(str(item) for item in evidence_ids),
-                    ledger=ledger or current.ledger or controlled.ledger,
+                    ledger=active_ledger,
                     evidence_kind=str(evidence.get("evidence_kind") or "controlled_adapter"),
                     observed_at=evidence.get("observed_at"),
                 )
@@ -1363,7 +1813,6 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
             outcome = _normalize_outcome(value, decision, controlled.accepted_started_at or started, controlled.accepted_finished_at or finished)
             if outcome.kind in {"no_launch", "unresolved_launch"}:
                 return outcome
-            active_ledger = ledger or current.ledger or IncidentLedger(current.ledger_root)
             execution_context_identity = _digest({"plan_id": decision.plan_id, "phase": decision.phase, "logical_dispatch_id": decision.logical_dispatch_id, "physical_door_id": decision.physical_door_id, "semantic_dispatch_fingerprint": decision.semantic_dispatch_fingerprint})
             try:
                 terminal = active_ledger.append_terminal_outcome(outcome=outcome, reservation_event_id=decision.reservation_event_id, projection_key=decision.projection_key, physical_door_id=decision.physical_door_id, execution_context_identity=execution_context_identity, primary_spec=decision.normalized_spec, configured_fallback_chain_identity=current.configured_fallback_chain_identity)
@@ -1378,22 +1827,8 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                     finished_at=outcome.finished_at,
                 )
             terminal_outcome = replace(outcome, terminal_outcome_event_id=str((terminal.get("payload", terminal)).get("terminal_outcome_id")))
-            try:
-                controlled.close()
-            except Exception:
-                # Terminal projection is canonical and already committed.  A
-                # post-terminal bookkeeping marker must not erase that fact or
-                # turn a successful worker result into an unresolved launch.
-                pass
-            if return_worker:
-                raw = value.value if isinstance(value, LaunchResult) else value
-                transport_worker = raw[0] if isinstance(raw, tuple) and len(raw) == 4 else raw
-                if isinstance(terminal_outcome, DispatchOutcome) and hasattr(transport_worker, "auth_metadata"):
-                    metadata = dict(getattr(transport_worker, "auth_metadata", {}) or {})
-                    metadata["dispatch_outcome"] = terminal_outcome.to_dict()
-                    transport_worker.auth_metadata = metadata
-                return raw.returncode if isinstance(raw, ManagedCommandResult) else raw
-            return terminal_outcome
+        except ExecuteFallbackUnsafe:
+            raise
         except Exception:
             # ControlledFinalLaunch only normalizes a pre-entry exception. All
             # post-entry uncertainty is held and never blindly redispatched.
@@ -1403,4 +1838,34 @@ def dispatch_with_admission(request: WorkerAdmissionRequest | Mapping[str, Any],
                 started_at=controlled.accepted_started_at,
                 finished_at=controlled.accepted_finished_at,
             )
-__all__ = ["AdmissionRefusal", "LaunchResult", "ManagedCommandResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]
+        try:
+            controlled.close()
+        except Exception:
+            # Terminal projection is canonical and already committed.  A
+            # post-terminal bookkeeping marker must not erase that fact or
+            # turn a successful worker result into an unresolved launch.
+            pass
+        result = _provider_post_terminal(
+            current,
+            decision,
+            terminal_outcome,
+            launch=launch,
+            gate=gate,
+            ledger=active_ledger,
+            clock=clock,
+            sleeper=sleeper,
+            deadline=deadline,
+            return_worker=return_worker,
+            probe_executor=probe_executor,
+            child_launch=child_launch,
+        )
+        if return_worker and isinstance(result, DispatchOutcome) and result.kind == "success":
+            raw = value.value if isinstance(value, LaunchResult) else value
+            transport_worker = raw[0] if isinstance(raw, tuple) and len(raw) == 4 else raw
+            if hasattr(transport_worker, "auth_metadata"):
+                metadata = dict(getattr(transport_worker, "auth_metadata", {}) or {})
+                metadata["dispatch_outcome"] = result.to_dict()
+                transport_worker.auth_metadata = metadata
+            return raw.returncode if isinstance(raw, ManagedCommandResult) else raw
+        return result
+__all__ = ["AdmissionRefusal", "LaunchResult", "ManagedCommandResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "production_provider_probe_executor", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]
