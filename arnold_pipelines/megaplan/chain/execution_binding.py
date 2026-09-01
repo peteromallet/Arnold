@@ -1740,6 +1740,7 @@ def _rebind_optional_runtime_identity_transaction(
     verified_external_runtime_identity: Mapping[str, Any] | None,
     verified_external_runtime_receipt: str | None,
     expected_chain_spec_sha256: str | None,
+    released_hold_receipt: str | None = None,
 ) -> dict[str, Any]:
     """Replace an optional chain's runtime through one NBF-08 transaction.
 
@@ -1782,6 +1783,38 @@ def _rebind_optional_runtime_identity_transaction(
         reason,
         actor,
     )
+    release_reference: dict[str, Any] | None = None
+    if released_hold_receipt:
+        receipt_path = Path(released_hold_receipt).expanduser().resolve(strict=False)
+        try:
+            receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CliError(RUNTIME_DRIFT_ERROR, "released-hold receipt is unreadable") from exc
+        candidate = receipt_payload.get("event") if isinstance(receipt_payload, Mapping) else None
+        candidate = candidate if isinstance(candidate, Mapping) else receipt_payload
+        payload = candidate.get("payload") if isinstance(candidate, Mapping) else None
+        if not isinstance(candidate, Mapping) or candidate.get("event_kind") != "chain_control.hold_released" or not isinstance(payload, Mapping):
+            raise CliError(RUNTIME_DRIFT_ERROR, "released-hold receipt is not a hold release")
+        release_reference = {
+            "path": str(receipt_path),
+            "event_hash": str(candidate.get("event_hash") or ""),
+            "recovery_epoch": str(payload.get("recovery_epoch") or payload.get("release_operation_id") or ""),
+            "target_operation_id": str(payload.get("target_operation_id") or ""),
+        }
+        if not all(
+            (
+                re.fullmatch(r"[0-9a-f]{64}", release_reference["event_hash"]),
+                re.fullmatch(r"[0-9a-f]{64}", release_reference["recovery_epoch"]),
+                re.fullmatch(r"[0-9a-f]{64}", release_reference["target_operation_id"]),
+            )
+        ):
+            raise CliError(RUNTIME_DRIFT_ERROR, "released-hold receipt lacks exact recovery identities")
+        operation_id = _stable_id(
+            "runtime-rebind-released-hold",
+            operation_id,
+            release_reference["event_hash"],
+            release_reference["recovery_epoch"],
+        )
     # The operation identity, rather than the mutable revision counter, is the
     # replay key.  The adapter re-reads and CAS-checks the on-disk revision
     # under the lock; keeping this outer value unset lets a second identical
@@ -1793,6 +1826,8 @@ def _rebind_optional_runtime_identity_transaction(
         else None
     )
     linked_receipts = [receipt_link] if receipt_link else []
+    if release_reference:
+        linked_receipts.append(release_reference["path"])
 
     def _effect(txn: Any) -> dict[str, Any]:
         adapter = ChainStateAdapter(txn, state_path)
@@ -1831,6 +1866,41 @@ def _rebind_optional_runtime_identity_transaction(
                 },
             )
         current_state = ChainState.from_dict(dict(raw_state))
+        replay = txn.journal.replay_strict()
+        base_operation_id = _stable_id(
+            "runtime-rebind", "optional-policy-replacement", chain_id,
+            str(expected_chain_spec_sha256 or ""), expected_previous_runtime_sha256,
+            expected_active_runtime_sha256, expected_current_milestone,
+            expected_current_plan, direction, reason, actor,
+        )
+        if release_reference is None:
+            existing = replay["operations"].get(base_operation_id)
+            if existing is not None and existing.get("event_kind") == "chain_control.hold_released":
+                raise ChainControlHold(
+                    RUNTIME_DRIFT_ERROR,
+                    "runtime rebind refused: released hold receipt is required for a fresh attempt",
+                )
+        else:
+            authoritative = next(
+                (
+                    event for event in replay["accepted"]
+                    if event.get("event_kind") == "chain_control.hold_released"
+                    and event.get("event_hash") == release_reference["event_hash"]
+                ),
+                None,
+            )
+            auth_payload = authoritative.get("payload") if isinstance(authoritative, Mapping) else None
+            if (
+                authoritative is None
+                or not isinstance(auth_payload, Mapping)
+                or auth_payload.get("target_operation_id") != base_operation_id
+                or auth_payload.get("release_operation_id") != release_reference["recovery_epoch"]
+                or authoritative.get("chain_id") != chain_id
+            ):
+                raise ChainControlHold(
+                    RUNTIME_DRIFT_ERROR,
+                    "runtime rebind refused: released hold does not target the prior failed operation",
+                )
         try:
             rebound = rebind_runtime_identity(
                 spec_path,
@@ -1960,6 +2030,7 @@ def rebind_runtime_identity(
     allow_optional_policy: bool = False,
     expected_chain_spec_sha256: str | None = None,
     verified_external_runtime_receipt: str | None = None,
+    released_hold_receipt: str | None = None,
     _inside_transaction: bool = False,
     _external_identity_verified: bool = False,
 ) -> dict[str, Any]:
@@ -1977,6 +2048,11 @@ def rebind_runtime_identity(
     if direction not in {"cutover", "rollback"}:
         raise CliError(
             RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback"
+        )
+    if released_hold_receipt and not allow_optional_policy:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: released-hold receipt requires optional-policy override",
         )
     if not _FULL_SHA256.fullmatch(expected_previous_runtime_sha256):
         raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 is invalid")
@@ -2100,6 +2176,7 @@ def rebind_runtime_identity(
             verified_external_runtime_identity=verified_external_runtime_identity,
             verified_external_runtime_receipt=verified_external_runtime_receipt,
             expected_chain_spec_sha256=expected_chain_spec_sha256,
+            released_hold_receipt=released_hold_receipt,
         )
 
     policy = binding_policy(spec_path)

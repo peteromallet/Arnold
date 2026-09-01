@@ -11276,6 +11276,38 @@ def build_chain_parser(subparsers: Any) -> None:
             "required with --allow-optional-policy."
         ),
     )
+    runtime_rebind_parser.add_argument(
+        "--released-hold-receipt",
+        help=(
+            "Exact receipt emitted by `chain release-hold` for the prior failed "
+            "runtime-rebind operation. Required to retry a released hold."
+        ),
+    )
+
+    release_hold_parser = chain_sub.add_parser(
+        "release-hold",
+        help="Auditedly release one exact durable chain-control hold without changing chain state",
+    )
+    release_hold_parser.add_argument("--spec", required=True)
+    release_hold_parser.add_argument("--project-dir", required=True)
+    release_hold_parser.add_argument("--chain-id", required=True)
+    release_hold_parser.add_argument("--operation-id", required=True)
+    release_hold_parser.add_argument(
+        "--expected-hold-event-hash",
+        "--expected-hold-event-sha256",
+        dest="expected_hold_event_hash",
+        required=True,
+    )
+    release_hold_parser.add_argument("--expected-chain-spec-sha256", required=True)
+    release_hold_parser.add_argument("--expected-state-digest", required=True)
+    release_hold_parser.add_argument("--expected-state-revision", required=True, type=int)
+    release_hold_parser.add_argument("--expected-cursor", required=True, type=int)
+    release_hold_parser.add_argument("--expected-current-milestone", required=True)
+    release_hold_parser.add_argument("--expected-current-plan", required=True)
+    release_hold_parser.add_argument("--recovery-evidence", required=True)
+    release_hold_parser.add_argument("--receipt", required=True)
+    release_hold_parser.add_argument("--reason", required=True)
+    release_hold_parser.add_argument("--actor", default="operator")
 
     runtime_cutover_parser = chain_sub.add_parser(
         "runtime-cutover",
@@ -11808,6 +11840,58 @@ def run_chain_cli(
         )
         return 0
 
+    if action == "release-hold":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.incident.chain_control import (
+                chain_id_for_spec,
+                journal_for,
+            )
+
+            if args.chain_id != chain_id_for_spec(spec_path):
+                raise CliError(
+                    "chain_mismatch",
+                    "release-hold chain id does not match the spec",
+                )
+            result = journal_for(project_root).release_hold(
+                chain_id=args.chain_id,
+                operation_id=args.operation_id,
+                expected_hold_event_hash=args.expected_hold_event_hash,
+                expected_chain_spec_sha256=args.expected_chain_spec_sha256,
+                spec_path=spec_path,
+                expected_state_digest=args.expected_state_digest,
+                expected_state_revision=args.expected_state_revision,
+                expected_cursor=args.expected_cursor,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                recovery_evidence=Path(args.recovery_evidence).expanduser().resolve(),
+                actor=args.actor,
+                reason=args.reason,
+            )
+            receipt_path = Path(args.receipt).expanduser().resolve()
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_text(
+                json.dumps(
+                    {"schema": "nbf08-chain-control-hold-release-v1", "event": result["event"]},
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {"success": True, "spec": str(spec_path), "action": "release-hold", **result},
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
     if action == "occurrence-join":
         project_root = root
         project_dir_arg = getattr(args, "project_dir", None)
@@ -12018,6 +12102,9 @@ def run_chain_cli(
                 ),
                 expected_chain_spec_sha256=(
                     getattr(args, "expected_chain_spec_sha256", None) or None
+                ),
+                released_hold_receipt=(
+                    getattr(args, "released_hold_receipt", None) or None
                 ),
             )
             after = chain_state.to_dict()
