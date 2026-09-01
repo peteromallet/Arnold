@@ -713,6 +713,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.cas_conflict",
         "chain_control.genesis_accepted",
         "chain_control.suffix_rebound",
+        "chain_control.runtime_rebound",
     }
 )
 
@@ -1194,6 +1195,7 @@ class ChainControlJournal:
                     event_kind = payload.get("event_kind")
                     if event_kind in {
                         "chain_control.committed",
+                        "chain_control.runtime_rebound",
                         "chain_control.rejected",
                         "chain_control.cas_conflict",
                         "chain_control.hold",
@@ -1399,6 +1401,7 @@ class ChainControlJournal:
         linked_receipts: list[Any] | None = None,
         spec_identity: Any = None,
         source_identity: Any = None,
+        committed_event_kind: str = "chain_control.committed",
     ) -> dict[str, Any]:
         authority_mode = "file"
         key = replay_tuple_for(
@@ -1566,13 +1569,13 @@ class ChainControlJournal:
             post_digest = effect_result.get("post_state_digest")
             committed = self.append_under_lock(
                 txn,
-                event_kind="chain_control.committed",
+                event_kind=committed_event_kind,
                 chain_id=chain_id,
                 operation_id=operation_id,
                 causation_id=claimed["payload"]["event_id"],
                 correlation_id=operation_id,
                 payload={"intent_kind": intent_kind, "effect": {key: value for key, value in effect_result.items() if key != "state"}},
-                semantic_effect=semantic_effect_for("chain_control.committed", pre_digest=pre_digest, post_digest=post_digest),
+                semantic_effect=semantic_effect_for(committed_event_kind, pre_digest=pre_digest, post_digest=post_digest),
                 claim_class=claim_class,
                 actor=actor,
                 outcome="committed",
@@ -1584,12 +1587,18 @@ class ChainControlJournal:
                 pre_state_digest=pre_digest,
                 post_state_digest=post_digest,
                 linked_receipts=linked_receipts or effect_result.get("linked_receipts") or [],
+                runtime_identity=effect_result.get("runtime_identity"),
                 spec_identity=spec_identity,
                 source_identity=source_identity,
                 parent_chain_id=parent_chain_id,
             )
             txn.result = committed
-            return {"outcome": "committed", "result": committed.get("payload", committed), "effect": effect_result}
+            return {
+                "outcome": "committed",
+                "result": committed.get("payload", committed),
+                "event": committed.get("payload", committed),
+                "effect": effect_result,
+            }
 
     def ensure_genesis(
         self,
@@ -1982,9 +1991,12 @@ def apply_chain_lifecycle(
     actor: Any,
     operation_id: str | None = None,
     expected_revision: Any = None,
+    expected_cursor: Any = None,
     linked_receipts: list[Any] | None = None,
     parent_chain_id: str | None = None,
     effect: Callable[[LockedChainControlTransaction], dict[str, Any]] | None = None,
+    state_paths: Sequence[Path] = (),
+    committed_event_kind: str = "chain_control.committed",
 ) -> dict[str, Any]:
     journal = journal_for(root)
     chain_id = chain_id_for_spec(spec_path)
@@ -2004,11 +2016,13 @@ def apply_chain_lifecycle(
         intent_kind=intent_kind,
         actor=actor,
         expected_revision=expected_revision,
-        state_paths=[state_path],
+        expected_cursor=expected_cursor,
+        state_paths=[state_path, *state_paths],
         parent_chain_id=parent_chain_id,
         spec_identity=str(spec_path.resolve(strict=False)),
         linked_receipts=linked_receipts,
         effect=effect,
+        committed_event_kind=committed_event_kind,
     )
 
 
