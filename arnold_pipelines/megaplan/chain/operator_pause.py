@@ -98,7 +98,16 @@ def pause_chain(
     }
     state.metadata[AUTHORITY_KEY] = authority
     state.last_state = STATE_PAUSED
-    chain_spec.save_chain_state(spec_path, state)
+    from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle, cas_chain_state_effect
+
+    apply_chain_lifecycle(
+        spec_path,
+        project_root,
+        intent_kind="pause",
+        actor={"id": actor, "class": "operator"},
+        expected_revision=(state.metadata or {}).get("_nbf08_revision"),
+        effect=lambda txn: cas_chain_state_effect(txn, spec_path, state.to_dict()),
+    )
 
     if plan_dir is not None and previous_plan_state != STATE_PAUSED:
         def _pause(current: dict[str, Any]) -> bool:
@@ -367,7 +376,16 @@ def resume_chain(
         "restored_plan_state": restore_state,
     }
     state.metadata[RESUME_AUTHORITY_KEY] = resume_authority
-    chain_spec.save_chain_state(spec_path, state)
+    from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle, cas_chain_state_effect
+
+    apply_chain_lifecycle(
+        spec_path,
+        project_root,
+        intent_kind="resume",
+        actor={"id": actor, "class": "operator"},
+        expected_revision=(state.metadata or {}).get("_nbf08_revision"),
+        effect=lambda txn: cas_chain_state_effect(txn, spec_path, state.to_dict()),
+    )
     return {
         "changed": True,
         "paused": False,

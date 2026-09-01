@@ -3859,13 +3859,22 @@ def _append_completed_with_guard(
     acceptance_transaction_id: str = "",
     acceptance_snapshot_hash: str = "",
 ) -> tuple[bool, str]:
+    label = record.get("label") or "unknown"
+    if any(
+        isinstance(item, dict)
+        and item.get("label") == label
+        and item.get("status") in {"done", "completed"}
+        for item in state.completed
+    ):
+        from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+        raise ChainControlHold("terminal_completed", "terminal completed milestones cannot be appended")
     ok, reason = _chain_completion_guard(
         root,
         record,
         implementation_milestone=implementation_milestone,
         chain_state=state,
     )
-    label = record.get("label") or "unknown"
 
     from arnold_pipelines.megaplan.orchestration.completion_contract import (
         PREDICATE_KIND_DIVERGENT,
@@ -3937,7 +3946,36 @@ def _append_completed_with_guard(
                 entry_key=f"chain_advance:{label}:{milestone_index}",
                 evidence=validation_evidence,
             )
+        if any(item.get("label") == label and item.get("status") in {"done", "completed"} for item in state.completed):
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+            raise ChainControlHold("terminal_completed", "terminal completed milestones cannot be appended")
         state.completed.append(record)
+        if spec_path is not None:
+            from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle
+
+            apply_chain_lifecycle(
+                spec_path,
+                root,
+                intent_kind="completion",
+                actor={"id": "chain", "class": "system"},
+                linked_receipts=[
+                    item
+                    for item in (acceptance_transaction_id, acceptance_snapshot_hash)
+                    if item
+                ],
+                effect=lambda _txn: {
+                    "actual_cursor": milestone_index,
+                    "pre_state_digest": "incomplete",
+                    "post_state_digest": "completed",
+                    "label": label,
+                    "linked_receipts": [
+                        item
+                        for item in (acceptance_transaction_id, acceptance_snapshot_hash)
+                        if item
+                    ],
+                },
+            )
         return True, reason
 
     # ── Atomic / enforce (fail-closed) mode ──────────────────────────────
@@ -4125,7 +4163,36 @@ def _append_completed_with_guard(
         entry_key=f"chain_advance:{label}:{milestone_index}",
         evidence=validation_evidence,
     )
+    if any(item.get("label") == label and item.get("status") in {"done", "completed"} for item in state.completed):
+        from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+        raise ChainControlHold("terminal_completed", "terminal completed milestones cannot be appended")
     _apply_committed_acceptance_state(state, commit_plan.new_state)
+    if spec_path is not None:
+        from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle
+
+        apply_chain_lifecycle(
+            spec_path,
+            root,
+            intent_kind="completion",
+            actor={"id": "chain", "class": "system"},
+            linked_receipts=[
+                item
+                for item in (
+                    acceptance_transaction_id,
+                    acceptance_snapshot_hash,
+                    getattr(cas_result, "transaction_id", None),
+                )
+                if item
+            ],
+            effect=lambda _txn: {
+                "actual_cursor": milestone_index,
+                "pre_state_digest": "incomplete",
+                "post_state_digest": "completed",
+                "label": label,
+                "prepare_commit": True,
+            },
+        )
     return True, reason
 
 
@@ -4601,6 +4668,7 @@ def _handle_completion_guard_failure(
         milestone=milestone,
         state=state,
         root=root,
+        spec_path=spec_path,
     )
     if decision == "retry":
         resumable_state = _resumable_retry_state(root, state.current_plan_name)
@@ -6562,6 +6630,31 @@ def _preflight_agent_backends(
     )
 
 
+def _journal_production_ladder(
+    spec_path: Path | None,
+    root: Path | None,
+    state: ChainState,
+    *,
+    intent_kind: str,
+    label: str,
+) -> None:
+    if spec_path is None or root is None:
+        return
+    from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle, cas_chain_state_effect
+
+    apply_chain_lifecycle(
+        spec_path,
+        root,
+        intent_kind=intent_kind,
+        actor={"id": "chain", "class": "system"},
+        expected_revision=(state.metadata or {}).get("_nbf08_revision"),
+        effect=lambda txn: {
+            **cas_chain_state_effect(txn, spec_path, state.to_dict()),
+            "label": label,
+        },
+    )
+
+
 def _apply_ladder_action(
     action: str,
     *,
@@ -6569,6 +6662,8 @@ def _apply_ladder_action(
     state: ChainState,
     spec: ChainSpec,
     writer,
+    spec_path: Path | None = None,
+    root: Path | None = None,
 ) -> str:
     """Translate a single ladder action into a chain decision.
 
@@ -6582,8 +6677,10 @@ def _apply_ladder_action(
     if action == "stop_chain":
         return "stop"
     if action == "skip_milestone":
+        _journal_production_ladder(spec_path, root, state, intent_kind="skip", label=label)
         return "skip"
     if action in ("retry_milestone", "resume_milestone"):
+        _journal_production_ladder(spec_path, root, state, intent_kind="retry", label=label)
         return "retry"
     if action == "bump_profile":
         current = state.profile_bumps.get(label) or (
@@ -6635,6 +6732,7 @@ def _handle_outcome(
     milestone: "MilestoneSpec | None" = None,
     state: ChainState | None = None,
     root: Path | None = None,
+    spec_path: Path | None = None,
 ) -> str:
     """Decide the next action given a DriverOutcome, walking the ladder.
 
@@ -6724,7 +6822,13 @@ def _handle_outcome(
             # Without a counter a bare retry is unsafe; degrade to abort.
             action = policy.abort
         return _apply_ladder_action(
-            action, milestone=milestone, state=ChainState(), spec=spec, writer=writer
+            action,
+            milestone=milestone,
+            state=ChainState(),
+            spec=spec,
+            writer=writer,
+            spec_path=spec_path,
+            root=root,
         )
 
     label = milestone.label if milestone else "seed"
@@ -6747,7 +6851,13 @@ def _handle_outcome(
         # aborts (no infinite bump loop).
         state.ladder_stage[label] = "terminal"
         decision = _apply_ladder_action(
-            policy.escalate, milestone=milestone, state=state, spec=spec, writer=writer
+            policy.escalate,
+            milestone=milestone,
+            state=state,
+            spec=spec,
+            writer=writer,
+            spec_path=spec_path,
+            root=root,
         )
         if decision == "retry":
             # Reset the retry counter so the post-bump run gets a fresh re-init
@@ -6757,7 +6867,13 @@ def _handle_outcome(
 
     # No retry/escalate rungs left (or already terminal) → abort action.
     return _apply_ladder_action(
-        policy.abort, milestone=milestone, state=state, spec=spec, writer=writer
+        policy.abort,
+        milestone=milestone,
+        state=state,
+        spec=spec,
+        writer=writer,
+        spec_path=spec_path,
+        root=root,
     )
 
 
@@ -7574,6 +7690,20 @@ def run_chain(
     # Idempotent: the date/branch are persisted on first run, never recomputed.
     spec = ensure_reconcile_milestone(spec_path, root=root, writer=writer)
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
+    from arnold_pipelines.megaplan.incident.chain_control import apply_chain_lifecycle
+
+    apply_chain_lifecycle(
+        spec_path,
+        root,
+        intent_kind="start" if mode in {"start", "run", None} else str(mode),
+        actor={"id": "chain", "class": "system"},
+        effect=lambda _txn: {
+            "actual_cursor": 0,
+            "pre_state_digest": None,
+            "post_state_digest": "started",
+            "mode": mode,
+        },
+    )
     # Load without execution-binding verification first, so the bootstrap can
     # populate an empty current_identity from the launch seed before the
     # strict binding check runs.
@@ -7880,7 +8010,9 @@ def run_chain(
                 outcome,
                 writer=writer,
             )
-            decision = _handle_outcome(outcome, spec=spec, writer=writer, root=root)
+            decision = _handle_outcome(
+                outcome, spec=spec, writer=writer, root=root, spec_path=spec_path
+            )
             if decision == "authority_blocked":
                 state.last_state = "authority_divergence"
                 chain_spec.save_chain_state(spec_path, state)
@@ -9104,6 +9236,7 @@ def run_chain(
             milestone=milestone,
             state=state,
             root=root,
+            spec_path=spec_path,
         )
         if decision == "authority_blocked":
             state.last_state = "authority_divergence"

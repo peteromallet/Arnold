@@ -353,6 +353,16 @@ class DBStore(
         kwargs: dict[str, Any],
     ) -> Any:
         ledger_actor_id = _BOOTSTRAP_ACTOR_ID if operation in _BOOTSTRAP_IDEMPOTENT_MUTATORS else self._require_actor()
+        if kwargs.pop("chain_bound", False) and not kwargs.get("chain_operation_id"):
+            from arnold_pipelines.megaplan.incident.chain_control import (
+                UnattributedStateChange,
+                active_transaction,
+            )
+
+            if active_transaction() is None:
+                raise UnattributedStateChange(
+                    "direct SQL without transaction-scoped operation ID is forbidden"
+                )
         idempotency_key = kwargs.get("idempotency_key")
         if not idempotency_key and operation == "append_progress_event" and args:
             idempotency_key = getattr(args[0], "idempotency_key", None)

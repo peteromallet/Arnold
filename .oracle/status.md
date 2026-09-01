@@ -1,4 +1,24 @@
-# NBF execution contract — Batch 4 accepted / NBF06 complete / NBF08 suffix authorized — 2026-09-01
+# NBF execution contract — Batch 5 accepted / NBF08 complete — 2026-09-01
+
+- State: `BATCH_5_ACCEPTED_NBF08`; NBF08 is accepted at the Batch 5
+  implementation checkpoint with the Grok 4.6 `FINAL PASS` verdict.
+- Accepted tasks: `NBF-01`, `NBF-02`, `NBF-03`, `NBF-04`, `NBF-05`, `NBF-06`,
+  and `NBF-08`.
+- Strict progress: `7/8 = 87.5%`; batches: `5/6 = 83.3%`; Batch 5 is
+  complete; next is **Batch 6 / NBF-07**.
+- NBF08 implementation gate evidence: focused coverage `51/51` passed;
+  static contract checker `PASS`; surface inventory `83` IDs (`74
+  implemented`, `8 planned`, `1 excluded`); prior affected-criteria suite
+  `128` passed. Inventory artifact:
+  `.oracle/evidence/nbf08-chain-control-surface-inventory.json`.
+- Planning packet vectors, hashes, seals, and other planning-only artifacts
+  remain contract/provenance evidence and do not count as implementation
+  progress. The progress number above credits only the accepted NBF08 source,
+  tests, checker/scripts, inventory evidence, and this checkpoint.
+- Batch 5 checkpoint commit is the atomic source/test/checker/evidence
+  boundary recorded with this status update.
+
+# Prior checkpoint — Batch 4 accepted / NBF06 complete / NBF08 suffix authorized — 2026-09-01
 
 - State: `BATCH_4_ACCEPTED_NBF06`; NBF06 is accepted at the Batch 4
   implementation checkpoint with the Grok 4.6 `FINAL PASS` verdict.

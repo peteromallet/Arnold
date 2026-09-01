@@ -285,20 +285,100 @@ class _IncidentEventJournal(NdjsonEventJournal):
         payload: dict[str, Any],
         idempotency_key: str,
         init_ts: datetime | None,
+        nbf08_reservation: dict[str, Any] | None = None,
+        allocated_seq: int | None = None,
     ) -> dict[str, Any]:
-        """Append one record while the caller holds the seq-sidecar flock."""
-        try:
-            raw = os.read(seq_fd, 128)
-            current = (
-                int(raw.strip()) if raw.strip() else self._recover_durable_sequence()
-            )
-        except (ValueError, FileNotFoundError):
-            current = self._recover_durable_sequence()
-        new_seq = current + 1
-        os.lseek(seq_fd, 0, os.SEEK_SET)
-        os.write(seq_fd, str(new_seq).encode("ascii"))
-        os.ftruncate(seq_fd, os.lseek(seq_fd, 0, os.SEEK_CUR))
-        os.fsync(seq_fd)
+        """Append one record while the caller holds the seq-sidecar flock.
+
+        Ordinary NBF-01 writers keep the integer ``.events.seq`` sidecar
+        byte-for-byte. Chain-control / post-genesis writers persist a
+        structured reservation before the JSON line so a crash in the
+        seq-before-line gap becomes a tombstone rather than a silent hole.
+        """
+        from arnold_pipelines.megaplan.incident.chain_control import (
+            DurabilityUnknown,
+            canonical_json,
+            empty_reservation,
+            highest_complete_seq,
+            ledger_id_for,
+            migrate_integer_sidecar,
+            parse_sidecar_bytes,
+            physical_digest_after,
+            read_physical_lines,
+            read_sidecar_locked,
+            write_reservation_locked,
+            write_sidecar_locked,
+            ZERO_DIGEST,
+        )
+
+        raw = read_sidecar_locked(seq_fd)
+        sidecar_kind, parsed = parse_sidecar_bytes(raw)
+        physical = [item for item in read_physical_lines(self._ndjson_path) if not item.torn]
+        highest = highest_complete_seq(physical)
+        ledger_id = ledger_id_for(self._root)
+        previous_digest = physical_digest_after(ledger_id, physical)
+
+        use_reservation = nbf08_reservation is not None or sidecar_kind == "reservation"
+        if use_reservation:
+            reservation = nbf08_reservation
+            if sidecar_kind == "integer":
+                reservation = migrate_integer_sidecar(
+                    raw=raw,
+                    current=parsed,
+                    highest_complete=highest,
+                    ledger_id=ledger_id,
+                    previous_physical_digest=previous_digest,
+                )
+                write_reservation_locked(seq_fd, reservation)
+            elif sidecar_kind == "empty":
+                reservation = empty_reservation(
+                    ledger_id=ledger_id,
+                    physical_sequence=highest,
+                    status="committed" if highest >= 0 else "committed",
+                    previous_physical_digest=previous_digest,
+                )
+                write_reservation_locked(seq_fd, reservation)
+            elif sidecar_kind == "reservation":
+                reservation = parsed
+            if allocated_seq is None:
+                current = int(reservation.get("physical_sequence") if reservation else highest)
+                if reservation and reservation.get("status") == "reserved":
+                    new_seq = current
+                else:
+                    new_seq = (current if current >= 0 else -1) + 1
+                pending = dict(reservation or empty_reservation(
+                    ledger_id=ledger_id,
+                    physical_sequence=new_seq,
+                    status="reserved",
+                    previous_physical_digest=previous_digest,
+                ))
+                pending["physical_sequence"] = new_seq
+                pending["status"] = "reserved"
+                pending["scope"] = "chain_control" if str(kind).startswith("chain_control.") else "chainless"
+                if str(kind).startswith("chain_control.") and isinstance(payload, dict):
+                    pending["chain_id"] = payload.get("chain_id")
+                    pending["event_id"] = payload.get("event_id")
+                    pending["event_kind"] = kind
+                    pending["operation_id"] = payload.get("operation_id")
+                    pending["causation_id"] = payload.get("causation_id")
+                    pending["correlation_id"] = payload.get("correlation_id")
+                    pending["recovery_id"] = payload.get("recovery_id") or "none"
+                    pending["evidence_sequence"] = payload.get("evidence_sequence")
+                    pending["semantic_sequence"] = payload.get("semantic_sequence")
+                write_reservation_locked(seq_fd, pending)
+            else:
+                new_seq = allocated_seq
+                pending = dict(nbf08_reservation or reservation or {})
+        else:
+            try:
+                current = parsed if sidecar_kind == "integer" else (
+                    int(raw.strip()) if raw.strip() else self._recover_durable_sequence()
+                )
+            except (TypeError, ValueError, FileNotFoundError):
+                current = self._recover_durable_sequence()
+            new_seq = current + 1
+            write_sidecar_locked(seq_fd, str(new_seq).encode("ascii"))
+            pending = None
 
         ts_utc = datetime.now(timezone.utc)
         event: dict[str, Any] = {
@@ -322,6 +402,10 @@ class _IncidentEventJournal(NdjsonEventJournal):
             fh.write(line + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        if pending is not None:
+            pending["status"] = "committed"
+            pending["intended_record_sha256"] = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            write_reservation_locked(seq_fd, pending)
         return event
 
     def lookup_maintenance(self, idempotency_key: str) -> dict[str, Any] | None:
@@ -459,18 +543,36 @@ class IncidentLedger:
             raise ValueError("NBF event requires a canonical event identity")
         return event_id
 
-    def _append_nbf_locked(self, seq_fd: int, payload: dict[str, Any], records: list[dict[str, Any]], *, event_type: str | None = None, _changed_precondition: Any = None) -> dict[str, Any]:
+    def _append_nbf_locked(self, seq_fd: int, payload: dict[str, Any], records: list[dict[str, Any]], *, event_type: str | None = None, _changed_precondition: Any = None, _chain_control: dict[str, Any] | None = None) -> dict[str, Any]:
         """Validate and append with the caller's flock held.
 
         All compare/read/consume decisions must use ``records`` captured after
         acquiring the sequence-sidecar lock.  This is deliberately a small
         extension of the existing journal door, not a second transaction API.
+        Chain-control envelopes share this door; they never open a second
+        sequence, lock, or writer.
         """
-        """Validate and append one typed record under the existing journal lock.
-
-        Event IDs are idempotent.  This is intentionally the only write door
-        used by the NBF primitives; legacy ``append_event`` remains untouched.
-        """
+        if _chain_control is not None or (
+            isinstance(payload, dict) and str(payload.get("event_kind") or "").startswith("chain_control.")
+        ):
+            envelope = _chain_control or payload
+            event_id = envelope.get("event_id")
+            if not isinstance(event_id, str) or not event_id:
+                raise ValueError("chain-control event requires event_id")
+            for record in records:
+                stored_payload = record.get("payload") or {}
+                if stored_payload.get("event_id") == event_id and str(record.get("kind") or "").startswith("chain_control."):
+                    if stored_payload == envelope:
+                        return record
+                    raise ValueError(f"conflicting chain-control event_id: {event_id}")
+            return self._journal._emit_locked(
+                seq_fd,
+                kind=str(envelope.get("event_kind") or "chain_control.unknown"),
+                payload=envelope,
+                idempotency_key=event_id,
+                init_ts=self._journal._load_init_ts(),
+                nbf08_reservation={"schema_version": "nbf08-sequence-reservation-v1"},
+            )
         from arnold_pipelines.megaplan.incident.schema import validate_nbf_event
         payload = validate_nbf_event(payload, _changed_precondition=_changed_precondition)
         event_id = self._nbf_event_id(payload)

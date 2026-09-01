@@ -2018,12 +2018,16 @@ def load_chain_state(
         from arnold_pipelines.megaplan.chain.execution_binding import (
             assert_execution_binding,
         )
+        from arnold_pipelines.megaplan.incident.chain_control import (
+            verify_bound_state_matches_journal,
+        )
 
         assert_execution_binding(
             spec_path,
             best_state,
             operation="chain state load/resume",
         )
+        verify_bound_state_matches_journal(spec_path, best_state.to_dict())
     else:
         # Observe-only callers must not normalize or save a cursor while
         # presenting a binding mismatch.
@@ -2249,6 +2253,8 @@ def save_chain_state(
     state: ChainState,
     *,
     _record_projection: bool = True,
+    _direct: bool = False,
+    _chain_control_operation: str | None = None,
 ) -> None:
     """Persist chain state with atomic JSON replacement.
 
@@ -2259,8 +2265,21 @@ def save_chain_state(
 
     Set ``_record_projection=False`` to skip the projection side-effect
     (used by internal rebuild/repair callers that should not create
-    duplicate records).
+    duplicate records). Bound NBF-08 chains reject context-free direct
+    saves; the public wrapper opens one LockedChainControlTransaction.
     """
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        UnattributedStateChange,
+        _stable_id,
+        active_transaction,
+        persist_bound_chain_state,
+        require_bound_context,
+    )
+
+    if _direct:
+        bound = require_bound_context(spec_path)
+        if bound is not None and active_transaction() is None:
+            raise UnattributedStateChange("context-free bound save_chain_state is forbidden")
     state_path = _state_path_for(spec_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     spec_identity = _storage_identity_for_chain_spec(spec_path)
@@ -2284,9 +2303,28 @@ def save_chain_state(
     metadata.setdefault("_m7_projection_first_seen_at", now_utc())
     # ─────────────────────────────────────────────────────────────────────
     state.metadata = metadata
-    tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
-    tmp.replace(state_path)
+    bound_journal = None if _direct else require_bound_context(spec_path)
+    if bound_journal is not None or active_transaction() is not None:
+        persist_bound_chain_state(
+            spec_path,
+            state.to_dict(),
+            state_path=state_path,
+            operation_id=_chain_control_operation
+            or _stable_id(
+                "save_chain_state",
+                str(spec_path.resolve(strict=False)),
+                hashlib.sha256(
+                    json.dumps(state.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
+            ),
+            intent_kind="save_chain_state",
+            actor={"id": "chain", "class": "system"},
+            expected_revision=metadata.get("_nbf08_revision"),
+        )
+    else:
+        tmp = state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
+        tmp.replace(state_path)
 
     # ── M7 projection side-effect ────────────────────────────────────────
     if _record_projection:

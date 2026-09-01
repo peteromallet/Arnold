@@ -352,8 +352,44 @@ def load_epic_chain_state(spec_path: Path) -> EpicChainState:
     return EpicChainState.from_dict(raw)
 
 
-def save_epic_chain_state(spec_path: Path, state: EpicChainState) -> None:
+def save_epic_chain_state(
+    spec_path: Path,
+    state: EpicChainState,
+    *,
+    _direct: bool = False,
+    _chain_control_operation: str | None = None,
+) -> None:
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        UnattributedStateChange,
+        _stable_id,
+        active_transaction,
+        persist_bound_chain_state,
+        require_bound_context,
+    )
+
     state_path = _state_path_for(spec_path)
+    if _direct:
+        bound = require_bound_context(spec_path)
+        if bound is not None and active_transaction() is None:
+            raise UnattributedStateChange("context-free bound save_epic_chain_state is forbidden")
+    if not _direct and (require_bound_context(spec_path) is not None or active_transaction() is not None):
+        persist_bound_chain_state(
+            spec_path,
+            state.to_dict(),
+            state_path=state_path,
+            operation_id=_chain_control_operation
+            or _stable_id(
+                "save_epic_chain_state",
+                str(spec_path.resolve(strict=False)),
+                hashlib.sha256(
+                    json.dumps(state.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
+                str((state.to_dict().get("metadata") or {}).get("_nbf08_revision")),
+            ),
+            intent_kind="save_epic_chain_state",
+            actor={"id": "epic-chain", "class": "system"},
+        )
+        return
     state_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_path, state.to_dict())
 
@@ -826,6 +862,16 @@ def run_epic_chain(
     one: bool = False,
     start_child: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        chain_id_for_spec,
+        journal_for,
+    )
+
+    journal_for(root).ensure_genesis(
+        chain_id=chain_id_for_spec(spec_path),
+        actor={"id": "epic-chain", "class": "system"},
+        spec_identity=str(spec_path.resolve(strict=False)),
+    )
     spec = load_epic_chain_spec(spec_path)
     state = load_epic_chain_state(spec_path)
     prefix = _completed_prefix_epic_index(spec, state)

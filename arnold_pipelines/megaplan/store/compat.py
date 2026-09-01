@@ -100,6 +100,18 @@ class ArnoldStoreAdapter:
         return getattr(self._store, name)
 
     def _call(self, method_name: str, /, *args: Any, **kwargs: Any) -> Any:
+        bound = bool(kwargs.pop("chain_bound", False))
+        context = kwargs.pop("_chain_control_context", None) or kwargs.get("chain_operation_id")
+        if method_name in self._IDEMPOTENT_METHODS and bound and context is None:
+            from arnold_pipelines.megaplan.incident.chain_control import (
+                UnattributedStateChange,
+                active_transaction,
+            )
+
+            if active_transaction() is None:
+                raise UnattributedStateChange(
+                    "context-free bound store/compat mutation is forbidden"
+                )
         if method_name in self._IDEMPOTENT_METHODS and kwargs.get("idempotency_key") is None:
             kwargs["idempotency_key"] = deterministic_idempotency_key("arnold-adapter", method_name, *args, kwargs)
         method = getattr(self._store, method_name)

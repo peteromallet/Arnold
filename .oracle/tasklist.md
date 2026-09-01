@@ -1104,6 +1104,7 @@ On local pre-push PASS: push exactly the already-committed, validated, reviewed,
 
 - **Classification:** Normal
 - **Executor:** GPT-5.6 Luna
+- **Status:** `ACCEPTED` — Batch 5 checkpoint; Grok 4.6 `FINAL PASS`.
 - **Dependencies:** NBF-01 through NBF-06
 - **Brief:** `.oracle/briefs/nbf08-definitive-chain-control-ledger.md` — SHA-256 `ef1d0260930343d6b60ace1bf11214c418c43aaf7203f674635ba6116a19437c`
 - **Plan addendum:** `.oracle/plan-addenda/nbf08-definitive-chain-control-ledger.md` — SHA-256 `36680fe27c6c293d70691fc470db16788ce9078edead6df87e74552e684c1875`
@@ -1143,6 +1144,16 @@ tasklist/status mutation during implementation.
 - The exact focused commands and required evidence are those frozen in the
   brief/addendum; no broad whole-repository run is substituted for a failed
   gate.
+
+### Batch 5 checkpoint evidence
+
+- Grok 4.6 final implementation review: `FINAL PASS`; focused NBF08 coverage
+  `51/51` passed.
+- Static contract checker: `PASS`.
+- Surface inventory: `83` IDs (`CC-001..CC-083`), with `74 implemented`,
+  `8 planned`, and `1 excluded`; the committed artifact is
+  `.oracle/evidence/nbf08-chain-control-surface-inventory.json`.
+- Prior affected-criteria regression suite: `128` passed.
 
 The NBF08 entry is physically appended after the NBF07 entry for suffix
 preservation; physical file order is non-authoritative. The dependency/batch
