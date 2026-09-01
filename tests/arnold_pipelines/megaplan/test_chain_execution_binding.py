@@ -1158,6 +1158,14 @@ def _optional_runtime_rebind_case(
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["execution_binding"] = "optional"
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    # Keep a canonical launched bundle while changing only the policy mode in
+    # this fixture; the production optional-policy path may otherwise have no
+    # launch binding at all (the legacy not_required shape).
+    from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
+
+    state.metadata["execution_binding"]["launched_identity"] = (
+        active_execution_identity(spec_path)
+    )
     state.current_milestone_index = 1
     state.current_plan_name = "c2-plan"
     state.completed = [{"label": "c1", "plan": "c1-plan", "status": "done"}]
@@ -1172,26 +1180,31 @@ def _optional_runtime_rebind_case(
         "previous_plan_state": "planned",
         "plan": "c2-plan",
     }
-    # Save once after changing the spec so the persisted chain-spec hash is the
-    # exact CAS value the replacement command must provide.
+    plan_path = _write_plan_state(tmp_path, "c2-plan")
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_state["meta"] = {
+        "operator_pause": {
+            "schema_version": AUTHORITY_SCHEMA,
+            "active": True,
+            "plan": "c2-plan",
+        }
+    }
+    plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
+    # Save once after establishing the durable pause so the persisted
+    # chain-spec hash is the exact CAS value the replacement must provide.
     save_chain_state(spec_path, state)
     expected_spec_sha = hashlib.sha256(spec_path.read_bytes()).hexdigest()
     successor = json.loads(json.dumps(previous))
     successor["import_root"] = str(tmp_path / "runtime-successor")
     successor["source_revision"] = "b" * 40
     successor = normalize_runtime_identity(successor)
+    successor_execution = active_execution_identity(spec_path)
+    successor_execution["runtime"] = dict(successor)
+    successor_execution["ready"] = True
+    successor_execution["errors"] = []
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
-        lambda _path: {
-            "runtime": dict(successor),
-            "ready": True,
-            "errors": [],
-            "milestone_sequence": [
-                {"index": 0, "label": "c1"},
-                {"index": 1, "label": "c2"},
-                {"index": 2, "label": "c3"},
-            ],
-        },
+        lambda _path: dict(successor_execution),
     )
     return spec_path, state, previous, successor, expected_spec_sha
 
@@ -1286,6 +1299,145 @@ def test_optional_runtime_rebind_refuses_missing_binding_and_bad_prefix(
             expected_current_milestone="c2",
             expected_current_plan="c2-plan",
             reason="missing current identity",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert state.to_dict() == before
+
+
+@pytest.mark.parametrize("tamper", ["chain_schema", "plan_pause", "plan_identity"])
+def test_optional_runtime_rebind_rejects_forged_or_mismatched_pause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    plan_path = tmp_path / ".megaplan" / "plans" / "c2-plan" / "state.json"
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    if tamper == "chain_schema":
+        state.metadata["operator_pause"].pop("schema_version")
+    elif tamper == "plan_pause":
+        plan_state["meta"]["operator_pause"].pop("schema_version")
+        plan_path.write_text(json.dumps(plan_state) + "\n", encoding="utf-8")
+    else:
+        plan_state["name"] = "foreign-plan"
+        plan_path.write_text(json.dumps(plan_state) + "\n", encoding="utf-8")
+    before = json.loads(json.dumps(state.to_dict()))
+    with pytest.raises(CliError, match="pause|plan identity"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="reject forged pause authority",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_rejects_bound_brief_drift_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    brief = spec_path.parent / "briefs" / "c1.md"
+    brief.write_text(
+        brief.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8"
+    )
+    drifted_execution = active_execution_identity(spec_path)
+    drifted_execution["runtime"] = dict(successor)
+    drifted_execution["ready"] = True
+    drifted_execution["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: dict(drifted_execution),
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+    spec_bytes = spec_path.read_bytes()
+    with pytest.raises(CliError, match="non-runtime immutable"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="reject bound brief drift",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert state.to_dict() == before
+    assert spec_path.read_bytes() == spec_bytes
+
+
+@pytest.mark.parametrize("guard", ["from", "to"])
+def test_optional_runtime_rebind_wrong_runtime_cas_is_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    guard: str,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+    from_sha = "0" * 64 if guard == "from" else previous["content_sha256"]
+    to_sha = "1" * 64 if guard == "to" else successor["content_sha256"]
+    with pytest.raises(CliError, match="runtime SHA-256 does not match"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=from_sha,
+            expected_active_runtime_sha256=to_sha,
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="wrong runtime CAS",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_is_typed_idempotent_on_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        reason="first optional replacement",
+        verified_external_runtime_identity=successor,
+        allow_optional_policy=True,
+        expected_chain_spec_sha256=expected_spec_sha,
+    )
+    save_chain_state(spec_path, state)
+    before = json.loads(json.dumps(state.to_dict()))
+    with pytest.raises(CliError, match="previous runtime SHA-256 does not match"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="replay optional replacement",
             verified_external_runtime_identity=successor,
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
