@@ -1200,6 +1200,7 @@ class ChainControlJournal:
                         "chain_control.rejected",
                         "chain_control.cas_conflict",
                         "chain_control.hold",
+                        "chain_control.hold_released",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",
                     } or op_id not in operations:
@@ -1659,15 +1660,6 @@ class ChainControlJournal:
             chain_id,
             operation_id,
             expected_hold_event_hash,
-            expected_chain_spec_sha256,
-            expected_state_digest,
-            str(expected_state_revision),
-            str(expected_cursor),
-            expected_current_milestone,
-            expected_current_plan,
-            evidence_sha,
-            actor,
-            reason,
         )
 
         def _release(txn: LockedChainControlTransaction) -> dict[str, Any]:
@@ -1677,9 +1669,23 @@ class ChainControlJournal:
                 if (
                     event.get("event_kind") == "chain_control.hold_released"
                     and isinstance(payload, Mapping)
+                    and payload.get("chain_id") == chain_id
+                    and payload.get("target_operation_id") == operation_id
+                    and payload.get("held_event_hash") == expected_hold_event_hash
                     and payload.get("release_operation_id") == recovery_epoch
                 ):
                     return {"replay_event": event, "existing": True}
+            # A release is uniquely identified by the exact held operation
+            # tuple.  The held operation must still project to that hold: a
+            # later terminal event is evidence that another recovery path has
+            # already resolved it and must never be laundered by a release.
+            operation_events = [
+                event
+                for event in replay["accepted"]
+                if event.get("chain_id") == chain_id
+                and event.get("operation_id") == operation_id
+            ]
+            latest = operation_events[-1] if operation_events else None
             holds = [
                 event
                 for event in replay["accepted"]
@@ -1688,10 +1694,16 @@ class ChainControlJournal:
                 and event.get("event_kind") == "chain_control.hold"
                 and event.get("event_hash") == expected_hold_event_hash
             ]
-            if len(holds) != 1:
+            if (
+                len(holds) != 1
+                or not isinstance(latest, Mapping)
+                or latest.get("chain_id") != chain_id
+                or latest.get("event_kind") != "chain_control.hold"
+                or latest.get("event_hash") != expected_hold_event_hash
+            ):
                 raise ChainControlHold(
                     "hold_target_mismatch",
-                    "release-hold target is not the exact durable chain hold",
+                    "release-hold target is not the latest exact durable chain hold",
                 )
             current = ChainStateAdapter(txn, state_path).read_expected()
             if not isinstance(current, Mapping):

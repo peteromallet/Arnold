@@ -11847,6 +11847,7 @@ def run_chain_cli(
             project_root = Path(project_dir_arg).expanduser().resolve()
         try:
             from arnold_pipelines.megaplan.incident.chain_control import (
+                ChainControlError,
                 chain_id_for_spec,
                 journal_for,
             )
@@ -11880,6 +11881,14 @@ def run_chain_cli(
                 )
                 + "\n",
                 encoding="utf-8",
+            )
+        except ChainControlError as exc:
+            return _emit_error(
+                CliError(
+                    exc.code,
+                    str(exc),
+                    extra=exc.details,
+                )
             )
         except CliError as exc:
             return _emit_error(exc)
