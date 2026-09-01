@@ -714,6 +714,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.genesis_accepted",
         "chain_control.suffix_rebound",
         "chain_control.runtime_rebound",
+        "chain_control.hold_released",
     }
 )
 
@@ -1599,6 +1600,203 @@ class ChainControlJournal:
                 "event": committed.get("payload", committed),
                 "effect": effect_result,
             }
+
+    def release_hold(
+        self,
+        *,
+        chain_id: str,
+        operation_id: str,
+        expected_hold_event_hash: str,
+        expected_chain_spec_sha256: str,
+        spec_path: Path,
+        expected_state_digest: str,
+        expected_state_revision: int,
+        expected_cursor: int,
+        expected_current_milestone: str,
+        expected_current_plan: str,
+        recovery_evidence: Path,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Release one exact durable hold without changing chain state.
+
+        The hold remains immutable evidence.  The release sequence uses the
+        held operation id with a distinct recovery id, making the held
+        operation terminal for replay while retaining its original lineage.
+        """
+        from arnold_pipelines.megaplan._core.io import find_plan_dir
+        from arnold_pipelines.megaplan.chain.spec import _state_path_for, load_spec
+        from arnold_pipelines.megaplan.chain.target_rebind import _assert_pause
+
+        if chain_id != chain_id_for_spec(spec_path):
+            raise ChainControlHold("chain_mismatch", "release-hold chain id does not match the spec")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_hold_event_hash):
+            raise ChainControlHold("invalid_hold_hash", "held event hash must be a SHA-256")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_chain_spec_sha256):
+            raise ChainControlHold("invalid_spec_hash", "chain spec hash must be a SHA-256")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_state_digest):
+            raise ChainControlHold("invalid_state_digest", "state digest must be a SHA-256")
+        if not actor.strip() or not reason.strip() or not expected_current_plan.strip():
+            raise ChainControlHold("missing_release_guard", "actor, reason, and current plan are required")
+        if not recovery_evidence.is_file():
+            raise ChainControlHold("missing_recovery_evidence", "recovery evidence is unavailable")
+        evidence_sha = hashlib.sha256(recovery_evidence.read_bytes()).hexdigest()
+        state_path = _state_path_for(spec_path)
+        # The project root is derived exactly as the chain module derives it;
+        # avoid accepting a plan authority from an unrelated checkout.
+        project_root = spec_path.resolve()
+        for parent in project_root.parents:
+            if parent.name == ".megaplan":
+                project_root = parent.parent
+                break
+        plan_dir = find_plan_dir(project_root, expected_current_plan)
+        plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
+        if plan_state_path is None or not plan_state_path.is_file():
+            raise ChainControlHold("missing_plan_state", "canonical paused plan state is unavailable")
+
+        recovery_epoch = _stable_id(
+            "release-hold",
+            chain_id,
+            operation_id,
+            expected_hold_event_hash,
+            expected_chain_spec_sha256,
+            expected_state_digest,
+            str(expected_state_revision),
+            str(expected_cursor),
+            expected_current_milestone,
+            expected_current_plan,
+            evidence_sha,
+            actor,
+            reason,
+        )
+
+        def _release(txn: LockedChainControlTransaction) -> dict[str, Any]:
+            replay = self.replay_strict()
+            for event in replay["accepted"]:
+                payload = event.get("payload")
+                if (
+                    event.get("event_kind") == "chain_control.hold_released"
+                    and isinstance(payload, Mapping)
+                    and payload.get("release_operation_id") == recovery_epoch
+                ):
+                    return {"replay_event": event, "existing": True}
+            holds = [
+                event
+                for event in replay["accepted"]
+                if event.get("chain_id") == chain_id
+                and event.get("operation_id") == operation_id
+                and event.get("event_kind") == "chain_control.hold"
+                and event.get("event_hash") == expected_hold_event_hash
+            ]
+            if len(holds) != 1:
+                raise ChainControlHold(
+                    "hold_target_mismatch",
+                    "release-hold target is not the exact durable chain hold",
+                )
+            current = ChainStateAdapter(txn, state_path).read_expected()
+            if not isinstance(current, Mapping):
+                raise ChainControlHold("missing_chain_state", "canonical chain state is unavailable")
+            metadata = current.get("metadata") or {}
+            if hashlib.sha256(spec_path.read_bytes()).hexdigest() != expected_chain_spec_sha256:
+                raise ChainControlHold("spec_cas_conflict", "chain spec SHA-256 changed")
+            if str(metadata.get("chain_spec_sha256") or "") != expected_chain_spec_sha256:
+                raise ChainControlHold("spec_cas_conflict", "persisted chain spec SHA-256 changed")
+            if state_digest_for(current) != expected_state_digest:
+                raise ChainControlCasConflict("chain state digest changed")
+            if metadata.get("_nbf08_revision") != expected_state_revision:
+                raise ChainControlCasConflict("chain state revision changed")
+            if current.get("current_milestone_index") != expected_cursor:
+                raise ChainControlCasConflict("chain cursor changed")
+            if str(current.get("current_plan_name") or "") != expected_current_plan:
+                raise ChainControlCasConflict("chain current plan changed")
+            spec = load_spec(spec_path)
+            if not (0 <= expected_cursor < len(spec.milestones)):
+                raise ChainControlHold("cursor_mismatch", "current cursor is outside the frozen spec")
+            if spec.milestones[expected_cursor].label != expected_current_milestone:
+                raise ChainControlHold("milestone_mismatch", "current milestone does not match the frozen spec")
+            try:
+                plan_state = json.loads(plan_state_path.read_text(encoding="utf-8"))
+                _assert_pause(current, plan_state, expected_plan=expected_current_plan)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ChainControlHold("pause_unreadable", "canonical paused plan state is unreadable") from exc
+            except Exception as exc:
+                if isinstance(exc, ChainControlError):
+                    raise
+                raise ChainControlHold("pause_mismatch", str(exc)) from exc
+
+            base = {
+                "target_operation_id": operation_id,
+                "held_event_hash": expected_hold_event_hash,
+                "held_event_id": holds[0].get("event_id"),
+                "release_operation_id": recovery_epoch,
+                "recovery_epoch": recovery_epoch,
+                "chain_id": chain_id,
+                "chain_spec_sha256": expected_chain_spec_sha256,
+                "state_digest": expected_state_digest,
+                "state_revision": expected_state_revision,
+                "cursor": expected_cursor,
+                "current_milestone": expected_current_milestone,
+                "current_plan": expected_current_plan,
+                "recovery_evidence": {"path": str(recovery_evidence.resolve()), "sha256": evidence_sha},
+                "reason": reason,
+            }
+            intent = self.append_under_lock(
+                txn, event_kind="chain_control.intent", chain_id=chain_id,
+                operation_id=operation_id, causation_id=recovery_epoch,
+                correlation_id=recovery_epoch, recovery_id=recovery_epoch,
+                payload={"intent_kind": "release-hold", **base}, semantic_effect="no_change",
+                claim_class="evidence-only", actor=actor, intent="release-hold",
+                expected_cursor=expected_cursor, expected_revision=expected_state_revision,
+                linked_receipts=[str(recovery_evidence.resolve())], spec_identity=str(spec_path.resolve()),
+            )
+            validated = self.append_under_lock(
+                txn, event_kind="chain_control.authority_validated", chain_id=chain_id,
+                operation_id=operation_id, causation_id=intent["payload"]["event_id"],
+                correlation_id=recovery_epoch, recovery_id=recovery_epoch,
+                payload={"intent_kind": "release-hold", **base}, semantic_effect="no_change",
+                claim_class="evidence-only", actor=actor, intent="release-hold",
+            )
+            claimed = self.append_under_lock(
+                txn, event_kind="chain_control.claimed", chain_id=chain_id,
+                operation_id=operation_id, causation_id=validated["payload"]["event_id"],
+                correlation_id=recovery_epoch, recovery_id=recovery_epoch,
+                payload={"intent_kind": "release-hold", "claim": "single-use", **base}, semantic_effect="no_change",
+                claim_class="evidence-only", actor=actor, intent="release-hold",
+            )
+            released = self.append_under_lock(
+                txn, event_kind="chain_control.hold_released", chain_id=chain_id,
+                operation_id=operation_id, causation_id=claimed["payload"]["event_id"],
+                correlation_id=recovery_epoch, recovery_id=recovery_epoch,
+                payload=base, semantic_effect="no_change", claim_class="evidence-only",
+                actor=actor, intent="release-hold", outcome="hold_released",
+                failure_class="chain_control.hold", expected_cursor=expected_cursor,
+                expected_revision=expected_state_revision, actual_cursor=expected_cursor,
+                actual_revision=expected_state_revision, pre_state_digest=expected_state_digest,
+                post_state_digest=expected_state_digest,
+                linked_receipts=[str(recovery_evidence.resolve())], spec_identity=str(spec_path.resolve()),
+            )
+            return {
+                "event": released.get("payload", released),
+                "release_operation_id": recovery_epoch,
+                "existing": False,
+            }
+
+        with self.transaction(
+            chain_ids=[chain_id],
+            state_paths=[state_path, plan_state_path],
+            expected_revision=None,
+            operation_id=operation_id,
+            actor={"id": actor, "class": "operator"},
+        ) as txn:
+            result = _release(txn)
+        if result.get("existing"):
+            replay_event = result["replay_event"]
+            return {
+                "outcome": "replay",
+                "event": replay_event.get("payload", replay_event),
+                "release_operation_id": recovery_epoch,
+            }
+        return {"outcome": "committed", **result}
 
     def ensure_genesis(
         self,
