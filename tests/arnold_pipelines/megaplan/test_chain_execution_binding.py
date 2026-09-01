@@ -1206,6 +1206,10 @@ def _optional_runtime_rebind_case(
         "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
         lambda _path: dict(successor_execution),
     )
+    (tmp_path / "verified-runtime-receipt.json").write_text(
+        json.dumps({"schema": "test.runtime_provenance.v1", "verified": True}) + "\n",
+        encoding="utf-8",
+    )
     return spec_path, state, previous, successor, expected_spec_sha
 
 
@@ -1227,6 +1231,7 @@ def test_optional_runtime_rebind_replaces_identity_without_operational_mutation(
         expected_current_plan="c2-plan",
         reason="replace paused optional runtime",
         verified_external_runtime_identity=successor,
+        verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
         allow_optional_policy=True,
         expected_chain_spec_sha256=expected_spec_sha,
     )
@@ -1273,11 +1278,36 @@ def test_optional_runtime_rebind_refuses_without_exact_opt_in_guards(
         "expected_current_plan": "c2-plan",
         "reason": "guard refusal",
         "verified_external_runtime_identity": successor,
+        "verified_external_runtime_receipt": str(tmp_path / "verified-runtime-receipt.json"),
     }
     args.update(kwargs)
     with pytest.raises(CliError, match=message):
         rebind_runtime_identity(spec_path, state, **args)
     assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_requires_verified_receipt_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    before = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="runtime provenance receipt"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="missing receipt",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before
 
 
 def test_optional_runtime_rebind_refuses_missing_binding_and_bad_prefix(
@@ -1300,6 +1330,7 @@ def test_optional_runtime_rebind_refuses_missing_binding_and_bad_prefix(
             expected_current_plan="c2-plan",
             reason="missing current identity",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
@@ -1336,6 +1367,7 @@ def test_optional_runtime_rebind_rejects_forged_or_mismatched_pause(
             expected_current_plan="c2-plan",
             reason="reject forged pause authority",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
@@ -1373,6 +1405,7 @@ def test_optional_runtime_rebind_rejects_bound_brief_drift_without_mutation(
             expected_current_plan="c2-plan",
             reason="reject bound brief drift",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
@@ -1402,6 +1435,7 @@ def test_optional_runtime_rebind_wrong_runtime_cas_is_zero_mutation(
             expected_current_plan="c2-plan",
             reason="wrong runtime CAS",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
@@ -1424,6 +1458,7 @@ def test_optional_runtime_rebind_is_typed_idempotent_on_replay(
         expected_current_plan="c2-plan",
         reason="first optional replacement",
         verified_external_runtime_identity=successor,
+        verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
         allow_optional_policy=True,
         expected_chain_spec_sha256=expected_spec_sha,
     )
@@ -1439,6 +1474,7 @@ def test_optional_runtime_rebind_is_typed_idempotent_on_replay(
             expected_current_plan="c2-plan",
             reason="replay optional replacement",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
@@ -1459,6 +1495,7 @@ def test_optional_runtime_rebind_same_operation_replays_durable_receipt(
         "expected_current_plan": "c2-plan",
         "reason": "replay the same optional replacement",
         "verified_external_runtime_identity": successor,
+        "verified_external_runtime_receipt": str(tmp_path / "verified-runtime-receipt.json"),
         "allow_optional_policy": True,
         "expected_chain_spec_sha256": expected_spec_sha,
     }
@@ -1496,6 +1533,7 @@ def test_optional_runtime_rebind_spec_hash_race_holds_before_cas(
             expected_current_plan="c2-plan",
             reason="spec race",
             verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )

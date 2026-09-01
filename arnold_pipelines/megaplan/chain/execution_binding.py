@@ -1966,6 +1966,18 @@ def rebind_runtime_identity(
                 "runtime rebind refused: --expected-chain-spec-sha256 is "
                 "required with --allow-optional-policy",
             )
+        if not verified_external_runtime_receipt:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: optional-policy replacement requires "
+                "a runtime provenance receipt",
+            )
+        receipt_path = Path(str(verified_external_runtime_receipt)).expanduser().resolve(strict=False)
+        if not receipt_path.is_file():
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: runtime provenance receipt is unavailable",
+            )
         # Preserve the public API's fail-closed preflight for callers holding
         # an in-memory state snapshot, while the transaction repeats these
         # checks against the authoritative on-disk state immediately before

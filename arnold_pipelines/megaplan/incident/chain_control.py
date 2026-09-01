@@ -1887,7 +1887,11 @@ def _committed_state_digest(journal: ChainControlJournal, chain_id: str) -> str 
         event
         for event in replay["accepted"]
         if event.get("chain_id") == chain_id
-        and event.get("event_kind") == "chain_control.committed"
+        and event.get("event_kind") in {
+            "chain_control.committed",
+            "chain_control.runtime_rebound",
+        }
+        and event.get("semantic_effect") == "advance"
         and isinstance(event.get("post_state_digest"), str)
         and _SHA256_HEX.match(event["post_state_digest"] or "")
     ]

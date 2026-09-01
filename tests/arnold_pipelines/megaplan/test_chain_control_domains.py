@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     chain_id_for_spec,
     journal_for,
     state_digest_for,
+    verify_bound_state_matches_journal,
 )
 from arnold_pipelines.megaplan.store.compat import ArnoldStoreAdapter
 from arnold_pipelines.megaplan.store.db import DBStore
@@ -93,6 +94,73 @@ def test_raw_marker_edit_is_tamper_hold(tmp_path: Path) -> None:
     replay_after_save = journal.replay_strict()
     assert replay_after_save["semantic_by_chain"][chain_id] == cursor_before
     assert "chain_control.tamper_detected" in [event["event_kind"] for event in replay_after_save["accepted"]]
+
+
+def _state_authority_fixture(tmp_path: Path) -> tuple[Path, dict, dict, dict]:
+    initiative = tmp_path / ".megaplan" / "initiatives" / "demo"
+    initiative.mkdir(parents=True)
+    spec = initiative / "chain.yaml"
+    spec.write_text(
+        "anchors:\n  north_star: brief.md\nmilestones:\n  - label: M1\n    idea: brief.md\n",
+        encoding="utf-8",
+    )
+    (initiative / "brief.md").write_text("# brief\n", encoding="utf-8")
+    state0 = {"current_milestone_index": 0, "last_state": "paused"}
+    state1 = {"current_milestone_index": 0, "last_state": "rebound"}
+    state2 = {"current_milestone_index": 0, "last_state": "rebound-again"}
+    journal = journal_for(tmp_path)
+    chain_id = chain_id_for_spec(spec)
+    journal.ensure_genesis(chain_id=chain_id, actor={"id": "t", "class": "test"})
+    return spec, state0, state1, state2
+
+
+def test_runtime_rebound_is_latest_state_authority_without_generic_commit(tmp_path: Path) -> None:
+    spec, state0, state1, _state2 = _state_authority_fixture(tmp_path)
+    journal = journal_for(tmp_path)
+    journal.mutate(
+        chain_id=chain_id_for_spec(spec),
+        operation_id="op-runtime-only",
+        intent_kind="runtime-rebind",
+        actor={"id": "t", "class": "test"},
+        committed_event_kind="chain_control.runtime_rebound",
+        effect=lambda _txn: {
+            "pre_state_digest": state_digest_for(state0),
+            "post_state_digest": state_digest_for(state1),
+        },
+    )
+    verify_bound_state_matches_journal(spec, state1)
+    with pytest.raises(ChainControlTamper):
+        verify_bound_state_matches_journal(spec, {**state1, "last_state": "tampered"})
+
+
+def test_runtime_rebound_follows_generic_commit_and_rejects_post_tamper(tmp_path: Path) -> None:
+    spec, state0, state1, state2 = _state_authority_fixture(tmp_path)
+    journal = journal_for(tmp_path)
+    chain_id = chain_id_for_spec(spec)
+    journal.mutate(
+        chain_id=chain_id,
+        operation_id="op-generic",
+        intent_kind="save_chain_state",
+        actor={"id": "t", "class": "test"},
+        effect=lambda _txn: {
+            "pre_state_digest": state_digest_for(state0),
+            "post_state_digest": state_digest_for(state1),
+        },
+    )
+    journal.mutate(
+        chain_id=chain_id,
+        operation_id="op-runtime-after-generic",
+        intent_kind="runtime-rebind",
+        actor={"id": "t", "class": "test"},
+        committed_event_kind="chain_control.runtime_rebound",
+        effect=lambda _txn: {
+            "pre_state_digest": state_digest_for(state1),
+            "post_state_digest": state_digest_for(state2),
+        },
+    )
+    verify_bound_state_matches_journal(spec, state2)
+    with pytest.raises(ChainControlTamper):
+        verify_bound_state_matches_journal(spec, {**state2, "last_state": "tampered"})
 
 
 def test_direct_sql_without_operation_id_rejects(tmp_path: Path) -> None:
