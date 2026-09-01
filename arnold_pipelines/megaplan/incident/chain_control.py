@@ -1788,6 +1788,8 @@ class ChainControlJournal:
                 linked_receipts=[str(recovery_evidence.resolve())], spec_identity=str(spec_path.resolve()),
             )
             return {
+                # ``append_under_lock`` returns the physical record wrapper;
+                # expose its canonical chain-control envelope to match replay.
                 "event": released.get("payload", released),
                 "release_operation_id": recovery_epoch,
                 "existing": False,
@@ -1805,9 +1807,14 @@ class ChainControlJournal:
             replay_event = result["replay_event"]
             return {
                 "outcome": "replay",
-                "event": replay_event.get("payload", replay_event),
+                # Keep the replay receipt byte/semantic-compatible with the
+                # committed result.  The full envelope is required by the
+                # released-hold receipt consumer and carries its event hash.
+                "event": replay_event,
                 "release_operation_id": recovery_epoch,
             }
+        # Both first-write and replay expose the canonical full envelope.
+        # Consumers may persist either result as the released-hold receipt.
         return {"outcome": "committed", **result}
 
     def ensure_genesis(

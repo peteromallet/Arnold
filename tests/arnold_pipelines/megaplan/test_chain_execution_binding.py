@@ -1469,6 +1469,7 @@ def test_optional_runtime_rebind_legacy_rejects_spec_byte_drift_without_mutation
 def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec_path, state, previous, successor, expected_spec_sha = (
         _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
@@ -1538,6 +1539,19 @@ def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
         reason="release exact cursor-validation hold",
     )
     assert duplicate["outcome"] == "replay"
+    assert duplicate["event"] == release["event"]
+    assert duplicate["event"]["event_kind"] == "chain_control.hold_released"
+    first_receipt = json.dumps(
+        {"schema": "nbf08-chain-control-hold-release-v1", "event": release["event"]},
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    replay_receipt = json.dumps(
+        {"schema": "nbf08-chain-control-hold-release-v1", "event": duplicate["event"]},
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    assert replay_receipt == first_receipt
     changed_evidence = tmp_path / "changed-recovery-evidence.json"
     changed_evidence.write_text("a different authorized explanation\n", encoding="utf-8")
     changed_metadata = journal_for(tmp_path).release_hold(
@@ -1557,6 +1571,46 @@ def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
     )
     assert changed_metadata["outcome"] == "replay"
     assert changed_metadata["release_operation_id"] == release["release_operation_id"]
+    cli_receipt = tmp_path / "cli-released-hold.json"
+
+    def invoke_release_cli(*, evidence_path: Path, actor: str, reason: str) -> dict[str, Any]:
+        args = argparse.Namespace(
+            chain_action="release-hold",
+            spec=str(spec_path),
+            project_dir=str(tmp_path),
+            chain_id=chain_id_for_spec(spec_path),
+            operation_id=operation_id,
+            expected_hold_event_hash=hold_hash,
+            expected_chain_spec_sha256=expected_spec_sha,
+            expected_state_digest=state_digest_for(persisted.to_dict()),
+            expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+            expected_cursor=persisted.current_milestone_index,
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            recovery_evidence=str(evidence_path),
+            receipt=str(cli_receipt),
+            actor=actor,
+            reason=reason,
+        )
+        assert chain_module.run_chain_cli(tmp_path, args) == 0
+        return json.loads(capsys.readouterr().out)
+
+    first_cli = invoke_release_cli(
+        evidence_path=evidence,
+        actor="cli-operator",
+        reason="CLI duplicate of durable release",
+    )
+    first_cli_receipt = cli_receipt.read_bytes()
+    second_cli = invoke_release_cli(
+        evidence_path=changed_evidence,
+        actor="another-cli-operator",
+        reason="changed metadata remains the same release",
+    )
+    assert first_cli["event"] == second_cli["event"] == release["event"]
+    assert cli_receipt.read_bytes() == first_cli_receipt
+    assert json.loads(cli_receipt.read_text(encoding="utf-8"))["event"]["event_kind"] == (
+        "chain_control.hold_released"
+    )
     events_after = [json.loads(line) for line in events_path.read_text().splitlines()]
     assert sum(item.get("kind") == "chain_control.hold" for item in events_after) == 1
     assert sum(item.get("kind") == "chain_control.hold_released" for item in events_after) == 1
@@ -1616,8 +1670,101 @@ def test_optional_runtime_rebind_retries_only_with_exact_released_hold_receipt(
         actor="test-operator",
         reason="authorize exact retry",
     )
+    successor_path = tmp_path / "successor-runtime-identity.json"
+    successor_path.write_text(json.dumps(successor), encoding="utf-8")
+    before_cli = _state_path_for(spec_path).read_bytes()
+    cli_script = """
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan import chain as chain_module
+from arnold_pipelines.megaplan.chain import execution_binding as binding_module
+
+successor = json.loads(Path(sys.argv[8]).read_text(encoding="utf-8"))
+binding_module.active_execution_identity = lambda _path: {
+    "runtime": successor, "ready": True, "errors": []
+}
+binding_module.verify_external_runtime_identity = lambda _identity, _receipt: successor
+args = argparse.Namespace(
+    chain_action="runtime-rebind",
+    spec=sys.argv[1],
+    project_dir=sys.argv[2],
+    from_runtime_sha256=sys.argv[3],
+    to_runtime_sha256=sys.argv[4],
+    expected_current_milestone="c2",
+    expected_current_plan="c2-plan",
+    direction="cutover",
+    reason="release then retry exact operation",
+    actor="operator",
+    runtime_identity=sys.argv[6],
+    runtime_provenance_receipt=sys.argv[7],
+    allow_optional_policy=True,
+    expected_chain_spec_sha256=sys.argv[5],
+    released_hold_receipt=None,
+)
+raise SystemExit(chain_module.run_chain_cli(Path(sys.argv[2]), args))
+"""
+    cli_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME"}
+    }
+    cli_env["PYTHONPATH"] = str(REPO_ROOT)
+    no_receipt = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            cli_script,
+            str(spec_path),
+            str(tmp_path),
+            previous["content_sha256"],
+            successor["content_sha256"],
+            expected_spec_sha,
+            str(successor_path),
+            str(tmp_path / "verified-runtime-receipt.json"),
+            str(successor_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=cli_env,
+        cwd=str(REPO_ROOT),
+    )
+    assert no_receipt.returncode == 1
+    assert no_receipt.stderr == ""
+    no_receipt_payload = json.loads(no_receipt.stdout)
+    assert no_receipt_payload["success"] is False
+    assert no_receipt_payload["error"] == "replay_key_mismatch"
+    assert _state_path_for(spec_path).read_bytes() == before_cli
+    replayed_release = journal_for(tmp_path).release_hold(
+        chain_id=chain_id_for_spec(spec_path),
+        operation_id=hold["operation_id"],
+        expected_hold_event_hash=hold["event_hash"],
+        expected_chain_spec_sha256=expected_spec_sha,
+        spec_path=spec_path,
+        expected_state_digest=state_digest_for(persisted.to_dict()),
+        expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+        expected_cursor=persisted.current_milestone_index,
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        recovery_evidence=evidence,
+        actor="different-operator",
+        reason="replayed release",
+    )
+    assert replayed_release["outcome"] == "replay"
+    assert replayed_release["event"] == release["event"]
     receipt = tmp_path / "retry-released-hold.json"
-    receipt.write_text(json.dumps({"schema": "nbf08-chain-control-hold-release-v1", "event": release["event"]}) + "\n")
+    receipt.write_text(
+        json.dumps(
+            {"schema": "nbf08-chain-control-hold-release-v1", "event": replayed_release["event"]},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     retry = rebind_runtime_identity(
         spec_path,
         state,

@@ -11878,6 +11878,7 @@ def run_chain_cli(
                 json.dumps(
                     {"schema": "nbf08-chain-control-hold-release-v1", "event": result["event"]},
                     indent=2,
+                    sort_keys=True,
                 )
                 + "\n",
                 encoding="utf-8",
@@ -12065,6 +12066,9 @@ def run_chain_cli(
 
     if action == "runtime-rebind":
         try:
+            from arnold_pipelines.megaplan.incident.chain_control import (
+                ChainControlError,
+            )
             chain_state = chain_spec.load_chain_state(
                 spec_path,
                 verify_execution_binding=False,
@@ -12154,6 +12158,14 @@ def run_chain_cli(
             # runtime-rebind retains the legacy save path for compatibility.
             if not bool(getattr(args, "allow_optional_policy", False)):
                 chain_spec.save_chain_state(spec_path, chain_state)
+        except ChainControlError as exc:
+            return _emit_error(
+                CliError(
+                    exc.code,
+                    str(exc),
+                    extra=exc.details,
+                )
+            )
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(
