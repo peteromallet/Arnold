@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -1921,6 +1922,7 @@ def rebind_runtime_identity(
     expected_chain_spec_sha256: str | None = None,
     verified_external_runtime_receipt: str | None = None,
     _inside_transaction: bool = False,
+    _external_identity_verified: bool = False,
 ) -> dict[str, Any]:
     """Adopt or roll back an exact runtime without rewriting the spec binding.
 
@@ -1978,6 +1980,36 @@ def rebind_runtime_identity(
                 RUNTIME_DRIFT_ERROR,
                 "runtime rebind refused: runtime provenance receipt is unavailable",
             )
+        try:
+            receipt_payload = _json_object(
+                receipt_path, label="runtime provenance receipt"
+            )
+        except CliError:
+            raise
+        if receipt_payload.get("schema") != RUNTIME_PROVENANCE_RECEIPT_SCHEMA:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: runtime provenance receipt schema is invalid",
+            )
+        if not isinstance(verified_external_runtime_identity, Mapping):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: optional-policy replacement requires "
+                "an independently verified external runtime identity",
+            )
+        if not _external_identity_verified:
+            # Public callers provide the observed identity as a value, while
+            # the canonical verifier consumes identity/receipt files. Verify
+            # that same value through its independent interpreter before the
+            # chain-control transaction can acquire mutation authority.
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".runtime-identity.json"
+            ) as identity_file:
+                json.dump(dict(verified_external_runtime_identity), identity_file)
+                identity_file.flush()
+                verified_external_runtime_identity = verify_external_runtime_identity(
+                    Path(identity_file.name), receipt_path
+                )
         # Preserve the public API's fail-closed preflight for callers holding
         # an in-memory state snapshot, while the transaction repeats these
         # checks against the authoritative on-disk state immediately before
