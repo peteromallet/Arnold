@@ -1538,10 +1538,31 @@ def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
         reason="release exact cursor-validation hold",
     )
     assert duplicate["outcome"] == "replay"
+    changed_evidence = tmp_path / "changed-recovery-evidence.json"
+    changed_evidence.write_text("a different authorized explanation\n", encoding="utf-8")
+    changed_metadata = journal_for(tmp_path).release_hold(
+        chain_id=chain_id_for_spec(spec_path),
+        operation_id=operation_id,
+        expected_hold_event_hash=hold_hash,
+        expected_chain_spec_sha256=expected_spec_sha,
+        spec_path=spec_path,
+        expected_state_digest=state_digest_for(persisted.to_dict()),
+        expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+        expected_cursor=persisted.current_milestone_index,
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        recovery_evidence=changed_evidence,
+        actor="different-operator",
+        reason="different reason must not create another release",
+    )
+    assert changed_metadata["outcome"] == "replay"
+    assert changed_metadata["release_operation_id"] == release["release_operation_id"]
     events_after = [json.loads(line) for line in events_path.read_text().splitlines()]
     assert sum(item.get("kind") == "chain_control.hold" for item in events_after) == 1
     assert sum(item.get("kind") == "chain_control.hold_released" for item in events_after) == 1
     assert released["payload"]["held_event_hash"] == hold_hash
+    replay = journal_for(tmp_path).replay_strict()
+    assert replay["operations"][operation_id]["event_kind"] == "chain_control.hold_released"
 
 
 def test_optional_runtime_rebind_retries_only_with_exact_released_hold_receipt(
