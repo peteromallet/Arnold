@@ -12012,6 +12012,7 @@ def run_chain_cli(
                 actor=args.actor,
                 verified_external_runtime_identity=external_identity,
                 verified_external_runtime_receipt=receipt_arg or None,
+                _external_identity_verified=bool(identity_arg),
                 allow_optional_policy=bool(
                     getattr(args, "allow_optional_policy", False)
                 ),

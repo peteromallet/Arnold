@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -37,6 +38,7 @@ from arnold_pipelines.megaplan.chain.spec import (
     save_chain_state,
 )
 from arnold_pipelines.megaplan.cloud.runtime_cutover import normalize_runtime_identity
+from arnold_pipelines.megaplan.cloud.runtime_provenance import RUNTIME_PROVENANCE_RECEIPT_SCHEMA
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_SCHEMA_VERSION,
     RuntimeManifest,
@@ -1207,8 +1209,12 @@ def _optional_runtime_rebind_case(
         lambda _path: dict(successor_execution),
     )
     (tmp_path / "verified-runtime-receipt.json").write_text(
-        json.dumps({"schema": "test.runtime_provenance.v1", "verified": True}) + "\n",
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True}) + "\n",
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(successor),
     )
     return spec_path, state, previous, successor, expected_spec_sha
 
@@ -1307,6 +1313,69 @@ def test_optional_runtime_rebind_requires_verified_receipt_without_mutation(
             allow_optional_policy=True,
             expected_chain_spec_sha256=expected_spec_sha,
         )
+    assert _state_path_for(spec_path).read_bytes() == before
+
+
+def test_optional_runtime_rebind_rejects_forged_receipt_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    forged = tmp_path / "forged-runtime-receipt.json"
+    forged.write_text(json.dumps({"schema": "test.runtime_provenance.v1", "verified": True}) + "\n")
+    before = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="receipt schema is invalid"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="forged receipt",
+            verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(forged),
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before
+
+
+def test_optional_runtime_rebind_propagates_identity_receipt_verifier_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    calls = {"count": 0}
+
+    def reject(_identity_path: Path, _receipt_path: Path) -> dict[str, Any]:
+        calls["count"] += 1
+        raise CliError("chain_runtime_binding_drift", "runtime identity disagrees with its receipt")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        reject,
+    )
+    before = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="disagrees with its receipt"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="mismatched receipt",
+            verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert calls["count"] == 1
     assert _state_path_for(spec_path).read_bytes() == before
 
 
