@@ -1445,6 +1445,63 @@ def test_optional_runtime_rebind_is_typed_idempotent_on_replay(
     assert state.to_dict() == before
 
 
+def test_optional_runtime_rebind_same_operation_replays_durable_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    kwargs = {
+        "expected_previous_runtime_sha256": previous["content_sha256"],
+        "expected_active_runtime_sha256": successor["content_sha256"],
+        "expected_current_milestone": "c2",
+        "expected_current_plan": "c2-plan",
+        "reason": "replay the same optional replacement",
+        "verified_external_runtime_identity": successor,
+        "allow_optional_policy": True,
+        "expected_chain_spec_sha256": expected_spec_sha,
+    }
+    first = rebind_runtime_identity(spec_path, state, **kwargs)
+    state_bytes = _state_path_for(spec_path).read_bytes()
+    second = rebind_runtime_identity(spec_path, state, **kwargs)
+    assert first["outcome"] == "committed"
+    assert second["outcome"] == "replay"
+    assert second["receipt"]["event_kind"] == "chain_control.runtime_rebound"
+    assert _state_path_for(spec_path).read_bytes() == state_bytes
+    events = [json.loads(line) for line in (tmp_path / ".megaplan" / "incident-ledger" / "events.jsonl").read_text().splitlines()]
+    assert sum(item.get("kind") == "chain_control.runtime_rebound" for item in events) == 1
+
+
+def test_optional_runtime_rebind_spec_hash_race_holds_before_cas(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    before = _state_path_for(spec_path).read_bytes()
+    observed = iter((expected_spec_sha, "e" * 64))
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding._sha256_file",
+        lambda _path: next(observed),
+    )
+    with pytest.raises(CliError, match="supplied and persisted guard"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="spec race",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before
+
+
 def test_optional_runtime_rebind_rejects_optional_flag_on_required_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1778,6 +1835,73 @@ def test_b_cli_rolls_back_to_independently_receipted_a_runtime(
     assert after.current_milestone_index == before.current_milestone_index
     assert after.current_plan_name == before.current_plan_name
     assert after.completed == before.completed
+
+
+def test_b_cli_optional_runtime_rebind_commits_and_replays_without_spec_write(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["execution_binding"] = "optional"
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
+
+    state.metadata["execution_binding"]["launched_identity"] = active_execution_identity(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "c1-plan"
+    state.last_state = "paused"
+    state.metadata["operator_pause"] = {
+        "schema_version": AUTHORITY_SCHEMA,
+        "active": True,
+        "paused_at": "2026-08-12T00:00:00+00:00",
+        "actor": "test-operator",
+        "reason": "pause before optional CLI replacement",
+        "previous_chain_last_state": "planned",
+        "previous_plan_state": "planned",
+        "plan": "c1-plan",
+    }
+    plan_path = _write_plan_state(tmp_path, "c1-plan")
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_state["meta"] = {"operator_pause": {
+        "schema_version": AUTHORITY_SCHEMA,
+        "active": True,
+        "plan": "c1-plan",
+    }}
+    plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
+    save_chain_state(spec_path, state)
+    spec_bytes = spec_path.read_bytes()
+    persisted = load_chain_state(spec_path, verify_execution_binding=False)
+    from_runtime_sha = persisted.metadata["execution_binding"]["runtime_binding"]["current_identity"]["content_sha256"]
+    expected_spec_sha = hashlib.sha256(spec_bytes).hexdigest()
+    identity_a = json.loads(Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8"))
+    python_b = Path(offline_rollback_runtime["python_b"])
+    env_b = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
+    env_b["PYTHONPATH"] = str(REPO_ROOT)
+    command_args = [
+        str(python_b), "-P", "-m", "arnold_pipelines.megaplan", "chain", "runtime-rebind",
+        "--spec", str(spec_path), "--project-dir", str(tmp_path),
+        "--from-runtime-sha256", from_runtime_sha,
+        "--to-runtime-sha256", identity_a["content_sha256"],
+        "--expected-current-milestone", "c1", "--expected-current-plan", "c1-plan",
+        "--direction", "rollback", "--reason", "real optional B CLI replacement",
+        "--actor", "test-operator", "--runtime-identity", str(offline_rollback_runtime["identity"]),
+        "--runtime-provenance-receipt", str(offline_rollback_runtime["receipt"]),
+        "--allow-optional-policy", "--expected-chain-spec-sha256", expected_spec_sha,
+    ]
+    first = subprocess.run(command_args, check=False, capture_output=True, text=True, env=env_b)
+    assert first.returncode == 0, first.stderr
+    first_payload = json.loads(first.stdout)
+    assert first_payload["outcome"] == "committed"
+    second = subprocess.run(command_args, check=False, capture_output=True, text=True, env=env_b)
+    assert second.returncode == 0, second.stderr
+    second_payload = json.loads(second.stdout)
+    assert second_payload["outcome"] == "replay"
+    assert spec_path.read_bytes() == spec_bytes
+    events_path = tmp_path / ".megaplan" / "incident-ledger" / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert sum(item.get("kind") == "chain_control.runtime_rebound" for item in events) == 1
 
 
 def test_b_cli_runtime_cutover_moves_engine_root_to_receipted_a(

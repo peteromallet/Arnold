@@ -232,6 +232,51 @@ def test_same_operation_key_replays_without_second_effect(tmp_path: Path) -> Non
     assert second["result"]["event_id"] == first["result"]["event_id"]
 
 
+def test_runtime_rebound_is_a_replayable_typed_commit(tmp_path: Path) -> None:
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id="chain-runtime", actor={"id": "t", "class": "test"})
+    calls = {"n": 0}
+
+    def effect(_txn: LockedChainControlTransaction) -> dict[str, object]:
+        calls["n"] += 1
+        return {
+            "pre_state_digest": "0" * 64,
+            "post_state_digest": "c" * 64,
+            "runtime_identity": {"from": {"content_sha256": "a" * 64}, "to": {"content_sha256": "b" * 64}},
+            "chain_spec_sha256": "d" * 64,
+            "provenance_link": "receipt.json",
+        }
+
+    first = journal.mutate(
+        chain_id="chain-runtime",
+        operation_id="op-runtime-rebound",
+        intent_kind="runtime-rebind",
+        actor={"id": "t", "class": "test"},
+        linked_receipts=["receipt.json"],
+        committed_event_kind="chain_control.runtime_rebound",
+        effect=effect,
+    )
+    second = journal.mutate(
+        chain_id="chain-runtime",
+        operation_id="op-runtime-rebound",
+        intent_kind="runtime-rebind",
+        actor={"id": "t", "class": "test"},
+        linked_receipts=["receipt.json"],
+        committed_event_kind="chain_control.runtime_rebound",
+        effect=effect,
+    )
+    assert first["outcome"] == "committed"
+    assert first["event"]["event_kind"] == "chain_control.runtime_rebound"
+    assert first["event"]["semantic_effect"] == "advance"
+    assert first["event"]["runtime_identity"]["to"]["content_sha256"] == "b" * 64
+    assert second["outcome"] == "replay"
+    assert second["result"]["event_id"] == first["result"]["event_id"]
+    assert calls["n"] == 1
+    kinds = [event["event_kind"] for event in journal.replay_strict()["accepted"]]
+    assert kinds.count("chain_control.runtime_rebound") == 1
+    assert kinds.count("chain_control.replay") == 1
+
+
 def test_stale_revision_is_typed_cas_conflict(tmp_path: Path) -> None:
     journal = ChainControlJournal(IncidentLedger(tmp_path))
     journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})

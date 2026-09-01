@@ -12011,6 +12011,7 @@ def run_chain_cli(
                 reason=args.reason,
                 actor=args.actor,
                 verified_external_runtime_identity=external_identity,
+                verified_external_runtime_receipt=receipt_arg or None,
                 allow_optional_policy=bool(
                     getattr(args, "allow_optional_policy", False)
                 ),
@@ -12051,7 +12052,11 @@ def run_chain_cli(
                         "chain_runtime_binding_drift",
                         "chain runtime rebind refused: launch or engine metadata changed",
                     )
-            chain_spec.save_chain_state(spec_path, chain_state)
+            # Optional-policy replacement performs its sole state mutation via
+            # the canonical NBF-08 journal/CAS transaction.  Required-policy
+            # runtime-rebind retains the legacy save path for compatibility.
+            if not bool(getattr(args, "allow_optional_policy", False)):
+                chain_spec.save_chain_state(spec_path, chain_state)
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(

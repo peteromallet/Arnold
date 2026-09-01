@@ -1686,6 +1686,224 @@ def rebind_execution_identity(
     return {"event": event, "execution_binding": rebound_report}
 
 
+def _rebind_optional_runtime_identity_transaction(
+    spec_path: Path,
+    state: Any,
+    *,
+    expected_previous_runtime_sha256: str,
+    expected_active_runtime_sha256: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    reason: str,
+    actor: str,
+    direction: str,
+    verified_external_runtime_identity: Mapping[str, Any] | None,
+    verified_external_runtime_receipt: str | None,
+    expected_chain_spec_sha256: str | None,
+) -> dict[str, Any]:
+    """Replace an optional chain's runtime through one NBF-08 transaction.
+
+    This is intentionally a replacement-only path.  It reads and validates
+    every mutable authority (spec, chain state, and paused plan) while the
+    canonical journal locks are held, then performs the sole state write via
+    ``ChainStateAdapter.cas_write``.  In particular, there is no trailing
+    legacy ``save_chain_state`` call that could create a second effect.
+    """
+    from arnold_pipelines.megaplan._core.io import find_plan_dir
+    from arnold_pipelines.megaplan.chain.spec import ChainState, _state_path_for
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlCasConflict,
+        ChainControlHold,
+        ChainStateAdapter,
+        _stable_id,
+        apply_chain_lifecycle,
+        chain_id_for_spec,
+        state_digest_for,
+    )
+
+    project_root = _project_root(spec_path)
+    state_path = _state_path_for(spec_path)
+    current_plan = str(getattr(state, "current_plan_name", "") or "").strip()
+    plan_dir = find_plan_dir(project_root, current_plan) if current_plan else None
+    plan_state_path = (
+        plan_dir / "state.json" if plan_dir is not None else None
+    )
+    chain_id = chain_id_for_spec(spec_path)
+    operation_id = _stable_id(
+        "runtime-rebind",
+        "optional-policy-replacement",
+        chain_id,
+        str(expected_chain_spec_sha256 or ""),
+        expected_previous_runtime_sha256,
+        expected_active_runtime_sha256,
+        expected_current_milestone,
+        expected_current_plan,
+        direction,
+        reason,
+        actor,
+    )
+    # The operation identity, rather than the mutable revision counter, is the
+    # replay key.  The adapter re-reads and CAS-checks the on-disk revision
+    # under the lock; keeping this outer value unset lets a second identical
+    # CLI invocation replay after the first CAS increments that counter.
+    expected_revision = None
+    receipt_link = (
+        str(Path(verified_external_runtime_receipt).resolve(strict=False))
+        if verified_external_runtime_receipt
+        else None
+    )
+    linked_receipts = [receipt_link] if receipt_link else []
+
+    def _effect(txn: Any) -> dict[str, Any]:
+        adapter = ChainStateAdapter(txn, state_path)
+        raw_state = adapter.read_expected()
+        if not isinstance(raw_state, Mapping):
+            raise ChainControlHold(
+                "missing_chain_state",
+                "optional runtime replacement requires persisted chain state",
+            )
+        current_revision = (raw_state.get("metadata") or {}).get("_nbf08_revision")
+        if expected_revision is not None and current_revision != expected_revision:
+            raise ChainControlCasConflict(
+                "stale chain-state revision",
+                details={"expected": expected_revision, "actual": current_revision},
+            )
+
+        # These are the final on-disk/persisted guards, immediately before the
+        # state CAS.  The pause and cursor/binding guards are re-run by the
+        # existing rebind validator against this freshly read state below.
+        observed_spec_sha256 = _sha256_file(spec_path)
+        persisted_spec_sha256 = str(
+            (raw_state.get("metadata") or {}).get("chain_spec_sha256") or ""
+        )
+        if not (
+            observed_spec_sha256 == str(expected_chain_spec_sha256)
+            and persisted_spec_sha256 == str(expected_chain_spec_sha256)
+        ):
+            raise ChainControlHold(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: chain spec SHA-256 does not match "
+                "the supplied and persisted guard",
+                details={
+                    "expected": expected_chain_spec_sha256,
+                    "on_disk": observed_spec_sha256,
+                    "persisted": persisted_spec_sha256,
+                },
+            )
+        current_state = ChainState.from_dict(dict(raw_state))
+        try:
+            rebound = rebind_runtime_identity(
+                spec_path,
+                current_state,
+                expected_previous_runtime_sha256=expected_previous_runtime_sha256,
+                expected_active_runtime_sha256=expected_active_runtime_sha256,
+                expected_current_milestone=expected_current_milestone,
+                expected_current_plan=expected_current_plan,
+                reason=reason,
+                actor=actor,
+                direction=direction,
+                verified_external_runtime_identity=verified_external_runtime_identity,
+                verified_external_runtime_receipt=verified_external_runtime_receipt,
+                allow_optional_policy=True,
+                expected_chain_spec_sha256=expected_chain_spec_sha256,
+                _inside_transaction=True,
+            )
+        except CliError as exc:
+            raise ChainControlHold(
+                exc.code,
+                exc.message,
+                details=dict(exc.extra),
+            ) from exc
+        pre_digest = state_digest_for(raw_state)
+        written = adapter.cas_write(
+            current_state.to_dict(),
+            expected_revision=current_revision,
+        )
+        post_digest = state_digest_for(written)
+        state.__dict__.update(ChainState.from_dict(written).__dict__)
+        active_identity = dict(
+            (rebound.get("runtime_binding") or {}).get("active") or {}
+        )
+        return {
+            "pre_state_digest": pre_digest,
+            "post_state_digest": post_digest,
+            "actual_revision": (written.get("metadata") or {}).get("_nbf08_revision"),
+            "actual_cursor": written.get("current_milestone_index"),
+            "current_milestone_index": written.get("current_milestone_index"),
+            "current_milestone": expected_current_milestone,
+            "current_plan": expected_current_plan if expected_current_plan != "@none" else "",
+            "chain_spec_sha256": str(expected_chain_spec_sha256),
+            "runtime_identity": {
+                "from": dict(
+                    ((raw_state.get("metadata") or {}).get("execution_binding") or {})
+                    .get("runtime_binding", {})
+                    .get("current_identity", {})
+                ),
+                "to": active_identity,
+            },
+            "provenance_link": receipt_link,
+            "linked_receipts": linked_receipts,
+            "runtime_binding": rebound.get("runtime_binding"),
+            "verification_mode": rebound.get("verification_mode"),
+            "rebind_event": rebound.get("event"),
+        }
+
+    result = apply_chain_lifecycle(
+        spec_path,
+        project_root,
+        intent_kind="runtime-rebind",
+        actor={"id": actor, "class": "operator"},
+        operation_id=operation_id,
+        # Keep this stable across retries.  The effect checks the caller's
+        # revision, while mutate's replay key must remain replayable after the
+        # first CAS increments it.
+        expected_revision=None,
+        expected_cursor=expected_current_milestone,
+        linked_receipts=linked_receipts,
+        effect=_effect,
+        state_paths=[plan_state_path] if plan_state_path is not None else (),
+        committed_event_kind="chain_control.runtime_rebound",
+    )
+    if result.get("outcome") == "committed":
+        effect = result.get("effect") or {}
+        ledger_event = result.get("event") or result.get("result")
+        # Keep the established API's compact rebind event while exposing all
+        # canonical envelope fields for NBF-08 consumers.
+        event = dict(effect.get("rebind_event") or {})
+        if isinstance(ledger_event, Mapping):
+            event.update(dict(ledger_event))
+        return {
+            "outcome": "committed",
+            "event": event,
+            "receipt": ledger_event,
+            "ledger_event": ledger_event,
+            "runtime_binding": effect.get("runtime_binding"),
+            "verification_mode": effect.get("verification_mode"),
+        }
+    if result.get("outcome") == "replay":
+        prior = result.get("result") or {}
+        effect = ((prior.get("payload") or {}).get("effect") or {}) if isinstance(prior, Mapping) else {}
+        event = dict(effect.get("rebind_event") or {})
+        if isinstance(prior, Mapping):
+            event.update(dict(prior))
+        return {
+            "outcome": "replay",
+            "event": event,
+            "receipt": prior,
+            "ledger_event": prior,
+            "replay_event": result.get("replay_event"),
+            "runtime_binding": effect.get("runtime_binding"),
+            "verification_mode": effect.get("verification_mode", "external_interpreter_receipt"),
+        }
+    error = result.get("error")
+    if isinstance(error, ChainControlHold):
+        raise CliError(error.code, str(error), extra=dict(error.details)) from error
+    raise CliError(
+        RUNTIME_DRIFT_ERROR,
+        "runtime rebind refused: canonical chain-control transaction did not commit",
+    )
+
+
 def rebind_runtime_identity(
     spec_path: Path,
     state: Any,
@@ -1701,6 +1919,8 @@ def rebind_runtime_identity(
     update_engine_root: bool = False,
     allow_optional_policy: bool = False,
     expected_chain_spec_sha256: str | None = None,
+    verified_external_runtime_receipt: str | None = None,
+    _inside_transaction: bool = False,
 ) -> dict[str, Any]:
     """Adopt or roll back an exact runtime without rewriting the spec binding.
 
@@ -1726,6 +1946,78 @@ def rebind_runtime_identity(
         for value in (expected_current_milestone, expected_current_plan, reason, actor)
     ):
         raise CliError(RUNTIME_DRIFT_ERROR, "every runtime rebind guard is required")
+
+    # Optional-policy replacement has a distinct NBF-08 transaction boundary.
+    # Route before inspecting the old binding/cursor so an exact retry can be
+    # answered from the durable operation receipt even after the first write
+    # changed the persisted current identity and revision.
+    if allow_optional_policy and not _inside_transaction:
+        if binding_policy(spec_path)["mode"] != "optional":
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: --allow-optional-policy is only valid "
+                "when driver.execution_binding is optional",
+            )
+        if not expected_chain_spec_sha256 or not _FULL_SHA256.fullmatch(
+            str(expected_chain_spec_sha256)
+        ):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: --expected-chain-spec-sha256 is "
+                "required with --allow-optional-policy",
+            )
+        # Preserve the public API's fail-closed preflight for callers holding
+        # an in-memory state snapshot, while the transaction repeats these
+        # checks against the authoritative on-disk state immediately before
+        # CAS.  The pause contract itself remains owned by target_rebind.
+        snapshot_metadata = dict(getattr(state, "metadata", {}) or {})
+        snapshot_binding = snapshot_metadata.get("execution_binding")
+        snapshot_binding = snapshot_binding if isinstance(snapshot_binding, Mapping) else {}
+        snapshot_runtime = snapshot_binding.get("runtime_binding")
+        snapshot_runtime = snapshot_runtime if isinstance(snapshot_runtime, Mapping) else {}
+        if not isinstance(snapshot_runtime.get("current_identity"), Mapping):
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: persisted runtime identity is missing",
+            )
+        snapshot_plan = str(getattr(state, "current_plan_name", "") or "").strip()
+        if not snapshot_plan:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: optional-policy replacement requires a current plan",
+            )
+        from arnold_pipelines.megaplan._core.io import find_plan_dir
+        from arnold_pipelines.megaplan.chain.target_rebind import _assert_pause
+        snapshot_plan_dir = find_plan_dir(_project_root(spec_path), snapshot_plan)
+        if snapshot_plan_dir is None or not (snapshot_plan_dir / "state.json").is_file():
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: canonical paused plan state is missing",
+            )
+        try:
+            snapshot_plan_state = json.loads(
+                (snapshot_plan_dir / "state.json").read_text(encoding="utf-8")
+            )
+            _assert_pause(state.to_dict(), snapshot_plan_state, expected_plan=snapshot_plan)
+        except CliError as exc:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: " + exc.message,
+            ) from exc
+        return _rebind_optional_runtime_identity_transaction(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=expected_previous_runtime_sha256,
+            expected_active_runtime_sha256=expected_active_runtime_sha256,
+            expected_current_milestone=expected_current_milestone,
+            expected_current_plan=expected_current_plan,
+            reason=reason,
+            actor=actor,
+            direction=direction,
+            verified_external_runtime_identity=verified_external_runtime_identity,
+            verified_external_runtime_receipt=verified_external_runtime_receipt,
+            expected_chain_spec_sha256=expected_chain_spec_sha256,
+        )
 
     policy = binding_policy(spec_path)
     optional_policy = policy["mode"] == "optional"
