@@ -105,6 +105,14 @@ def _existing_process(config: Any, operation_id: str) -> Any | None:
     return None
 
 
+def _existing_process_resources(config: Any, operation_id: str) -> tuple[Any, ...]:
+    return tuple(
+        resource
+        for resource in open_operation_store(config).list_typed_resources(operation_id)
+        if resource.resource_type is ResourceType.PROCESS_SESSION
+    )
+
+
 def _receipt(
     *,
     session: str,
@@ -201,15 +209,62 @@ def launch_chain_drive(
     except (KeyError, ValueError):
         existing = None
     if existing is not None:
-        process_resource = _existing_process(config, operation_id)
-        if process_resource is None:
+        process_resources = _existing_process_resources(config, operation_id)
+        if not process_resources:
             raise ChainDriveError(
                 f"existing chain-drive operation {operation_id} has no process resource"
             )
-        status = inspect_session(process_resource.name)
-        if not status.exists:
+        for process_resource in reversed(process_resources):
+            status = inspect_session(process_resource.name)
+            if status.exists:
+                payload = _receipt(
+                    session=session,
+                    occurrence=occurrence,
+                    plan=plan,
+                    workspace=workspace,
+                    operation_id=operation_id,
+                    operation_key=operation_key,
+                    command=command,
+                    process_resource=process_resource,
+                    manifest=manifest,
+                    spec=spec,
+                    seed=seed,
+                )
+                _atomic_write(receipt_path, payload)
+                return payload
+
+        # A supervisor/session can die after the operation is durably created.
+        # Reuse that occurrence-bound operation, but record a distinct process
+        # resource for the replacement session instead of returning a dead
+        # resource as if it were live.
+        prepared = prepare_host_resources(
+            config,
+            operation_id,
+            operation_type="megaplan_chain",
+            command=command,
+            repo_names=(),
+            launch_intent="megaplan_chain_drive_retry",
+            metadata={
+                "chain_drive_key": key_values,
+                "session": session,
+                "occurrence_digest": occurrence,
+                "plan": plan,
+                "workspace": str(workspace),
+                "manifest": str(manifest),
+            },
+        )
+        process_resource = start_host_session(
+            config,
+            prepared,
+            command=command,
+            cwd=workspace,
+            process_resource_id=(
+                f"{operation_id}:process-session:retry-{len(process_resources)}"
+            ),
+        ).process_session_resource
+        if process_resource is None:
             raise ChainDriveError(
-                f"existing chain-drive operation {operation_id} has a dead session"
+                f"replacement chain-drive operation {operation_id} returned no process resource"
             )
         payload = _receipt(
             session=session,

@@ -173,11 +173,12 @@ def record_process_session_resource(
     name: str,
     status: SessionStatus,
     details: Mapping[str, Any] | None = None,
+    resource_id: str | None = None,
 ) -> TypedResource:
     """Record a PROCESS_SESSION durable resource for the tmux session."""
 
     resource = TypedResource(
-        id=f"{operation_id}:process-session",
+        id=resource_id or f"{operation_id}:process-session",
         operation_id=operation_id,
         resource_type=ResourceType.PROCESS_SESSION,
         name=name,

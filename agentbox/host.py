@@ -200,6 +200,7 @@ def start_host_session(
     *,
     command: Sequence[str] | str,
     cwd: Path | str | None = None,
+    process_resource_id: str | None = None,
 ) -> HostLaunchResult:
     """Start tmux for prepared host resources and mark the operation running."""
 
@@ -224,6 +225,7 @@ def start_host_session(
             name=session_name,
             status=status,
             details={"command": _command_payload(command)},
+            resource_id=process_resource_id,
         )
     except Exception as exc:
         diagnostics = {
