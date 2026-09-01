@@ -1790,23 +1790,52 @@ def rebind_runtime_identity(
         # deliberately narrower: an operator must first establish the same
         # durable pause authority used by the chain control surface, and the
         # caller must supply a freshly verified independent runtime receipt.
-        from arnold_pipelines.megaplan.chain.operator_pause import pause_record
-
-        pause = pause_record(state)
-        if pause is None or str(getattr(state, "last_state", "") or "") != "paused":
+        current_plan = str(getattr(state, "current_plan_name", "") or "").strip()
+        if not current_plan:
             raise CliError(
                 RUNTIME_DRIFT_ERROR,
                 "runtime rebind refused: optional-policy replacement requires "
-                "an active durable operator pause",
+                "a current plan",
             )
-        pause_plan = str(pause.get("plan") or "").strip()
-        current_plan = str(getattr(state, "current_plan_name", "") or "").strip()
-        if pause_plan and pause_plan != current_plan:
+        # target_rebind owns the pause contract. Reuse its validator so this
+        # path cannot accept a weaker chain-only or forged pause shape.
+        from arnold_pipelines.megaplan._core.io import find_plan_dir
+        from arnold_pipelines.megaplan.chain.target_rebind import _assert_pause
+
+        plan_dir = find_plan_dir(_project_root(spec_path), current_plan)
+        if plan_dir is None or not (plan_dir / "state.json").is_file():
             raise CliError(
                 RUNTIME_DRIFT_ERROR,
-                "runtime rebind refused: pause authority does not match the "
-                "current plan",
+                "runtime rebind refused: canonical paused plan state is missing",
             )
+        try:
+            plan_state = json.loads(
+                (plan_dir / "state.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: canonical paused plan state is unreadable",
+            ) from exc
+        if not isinstance(plan_state, Mapping) or plan_state.get("name") not in {
+            None,
+            current_plan,
+        }:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: paused plan identity does not match",
+            )
+        try:
+            _assert_pause(
+                state.to_dict(),
+                plan_state,
+                expected_plan=current_plan,
+            )
+        except CliError as exc:
+            raise CliError(
+                RUNTIME_DRIFT_ERROR,
+                "runtime rebind refused: " + exc.message,
+            ) from exc
         if not isinstance(verified_external_runtime_identity, Mapping):
             raise CliError(
                 RUNTIME_DRIFT_ERROR,
@@ -1852,6 +1881,15 @@ def rebind_runtime_identity(
                 RUNTIME_DRIFT_ERROR,
                 "runtime rebind refused while the immutable spec binding is not accepted",
             )
+    if allow_optional_policy and spec_report.get("status") not in {
+        "not_required",
+        "match",
+    }:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: optional-policy replacement found "
+            "non-runtime immutable execution-binding drift",
+        )
     if external_identity is None:
         report = spec_report["runtime_binding"]
     else:
