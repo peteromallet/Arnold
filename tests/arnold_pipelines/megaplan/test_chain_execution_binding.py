@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -1140,6 +1141,208 @@ def test_runtime_cutover_accepts_exact_completed_terminal_cursor(
     for field in before:
         if field != "metadata":
             assert state.to_dict()[field] == before[field]
+
+
+def _optional_runtime_rebind_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, ChainState, dict, dict, str]:
+    """Build an optional-policy chain with durable pause and a drifted target."""
+    spec_path = _pinned_chain(tmp_path, execution_binding="required")
+    state = _bound_state(spec_path)
+    previous = json.loads(
+        json.dumps(
+            state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        )
+    )
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["execution_binding"] = "optional"
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    state.current_milestone_index = 1
+    state.current_plan_name = "c2-plan"
+    state.completed = [{"label": "c1", "plan": "c1-plan", "status": "done"}]
+    state.last_state = "paused"
+    state.metadata["operator_pause"] = {
+        "schema_version": AUTHORITY_SCHEMA,
+        "active": True,
+        "paused_at": "2026-08-12T00:00:00+00:00",
+        "actor": "test-operator",
+        "reason": "pause before optional replacement",
+        "previous_chain_last_state": "planned",
+        "previous_plan_state": "planned",
+        "plan": "c2-plan",
+    }
+    # Save once after changing the spec so the persisted chain-spec hash is the
+    # exact CAS value the replacement command must provide.
+    save_chain_state(spec_path, state)
+    expected_spec_sha = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    successor = json.loads(json.dumps(previous))
+    successor["import_root"] = str(tmp_path / "runtime-successor")
+    successor["source_revision"] = "b" * 40
+    successor = normalize_runtime_identity(successor)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: {
+            "runtime": dict(successor),
+            "ready": True,
+            "errors": [],
+            "milestone_sequence": [
+                {"index": 0, "label": "c1"},
+                {"index": 1, "label": "c2"},
+                {"index": 2, "label": "c3"},
+            ],
+        },
+    )
+    return spec_path, state, previous, successor, expected_spec_sha
+
+
+def test_optional_runtime_rebind_replaces_identity_without_operational_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+
+    result = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        reason="replace paused optional runtime",
+        verified_external_runtime_identity=successor,
+        allow_optional_policy=True,
+        expected_chain_spec_sha256=expected_spec_sha,
+    )
+
+    assert result["runtime_binding"]["status"] == "not_required"
+    assert result["event"]["optional_policy_override"] is True
+    persisted_successor = dict(successor)
+    persisted_successor["editable_revision"] = None
+    assert (
+        state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        == persisted_successor
+    )
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
+    assert state.metadata["chain_spec_sha256"] == expected_spec_sha
+    assert state.metadata["execution_binding"]["launched_identity"] == before[
+        "metadata"
+    ]["execution_binding"]["launched_identity"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({}, "runtime rebind is not required"),
+        ({"expected_chain_spec_sha256": "0" * 64}, "requires --allow-optional-policy"),
+        ({"allow_optional_policy": True, "expected_chain_spec_sha256": "f" * 64}, "supplied and persisted"),
+    ],
+)
+def test_optional_runtime_rebind_refuses_without_exact_opt_in_guards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict,
+    message: str,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    before = json.loads(json.dumps(state.to_dict()))
+    args = {
+        "expected_previous_runtime_sha256": previous["content_sha256"],
+        "expected_active_runtime_sha256": successor["content_sha256"],
+        "expected_current_milestone": "c2",
+        "expected_current_plan": "c2-plan",
+        "reason": "guard refusal",
+        "verified_external_runtime_identity": successor,
+    }
+    args.update(kwargs)
+    with pytest.raises(CliError, match=message):
+        rebind_runtime_identity(spec_path, state, **args)
+    assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_refuses_missing_binding_and_bad_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+    )
+    binding = state.metadata["execution_binding"]["runtime_binding"]
+    binding.pop("current_identity")
+    before = json.loads(json.dumps(state.to_dict()))
+    with pytest.raises(CliError, match="persisted runtime identity is missing"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="missing current identity",
+            verified_external_runtime_identity=successor,
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_rejects_optional_flag_on_required_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = _pinned_chain(tmp_path, require_runtime_match=True)
+    state = ChainState()
+    before = json.loads(json.dumps(state.to_dict()))
+    with pytest.raises(CliError, match="only valid when driver.execution_binding is optional"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256="0" * 64,
+            expected_active_runtime_sha256="1" * 64,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            reason="required policy misuse",
+            allow_optional_policy=True,
+            expected_chain_spec_sha256="2" * 64,
+        )
+    assert state.to_dict() == before
+
+
+def test_runtime_rebind_parser_dispatches_optional_policy_guards() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_module.build_chain_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "chain",
+            "runtime-rebind",
+            "--spec",
+            "chain.yaml",
+            "--from-runtime-sha256",
+            "0" * 64,
+            "--to-runtime-sha256",
+            "1" * 64,
+            "--expected-current-milestone",
+            "c1",
+            "--expected-current-plan",
+            "c1-plan",
+            "--reason",
+            "parser coverage",
+            "--allow-optional-policy",
+            "--expected-chain-spec-sha256",
+            "2" * 64,
+        ]
+    )
+    assert args.chain_action == "runtime-rebind"
+    assert args.allow_optional_policy is True
+    assert args.expected_chain_spec_sha256 == "2" * 64
 
 
 def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(
