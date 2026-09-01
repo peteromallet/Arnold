@@ -2981,6 +2981,14 @@ def _is_harness_generated_block(task: dict[str, Any]) -> bool:
     return isinstance(notes, str) and "[harness]" in notes
 
 
+def _is_validation_blocked_task(task: Mapping[str, Any]) -> bool:
+    """Return true only for the explicit verification-incomplete disposition."""
+    return (
+        task.get("status") == "blocked"
+        and task.get("blocked_reason") == "validation_blocked"
+    )
+
+
 def _prerequisite_blocked_task_ids(
     tasks: Iterable[dict[str, Any]],
     *,
@@ -2991,6 +2999,7 @@ def _prerequisite_blocked_task_ids(
         for task in tasks
         if task.get("status") == "blocked"
         and not _is_harness_generated_block(task)
+        and not _is_validation_blocked_task(task)
         and isinstance(task.get("id"), str)
         and task["id"] in active_task_ids
     }
@@ -8645,7 +8654,29 @@ def handle_execute_auto_loop(
                 for deviation in baseline_deviations
                 if deviation.task_id is not None
             }
-            prereq_blocked_ids = blocked_task_ids - baseline_blocked_ids
+            prereq_blocked_ids = _prerequisite_blocked_task_ids(
+                finalize_data.get("tasks", []),
+                active_task_ids=blocked_task_ids,
+            ) - baseline_blocked_ids
+            validation_blocked_ids = {
+                task["id"]
+                for task in finalize_data.get("tasks", [])
+                if isinstance(task, Mapping)
+                and isinstance(task.get("id"), str)
+                and task["id"] in blocked_task_ids
+                and _is_validation_blocked_task(task)
+            } - baseline_blocked_ids
+            validation_deviations = [
+                Deviation(
+                    kind="validation_blocked",
+                    message=(
+                        f"Task {task_id} requires a fresh bounded verification retry"
+                    ),
+                    task_id=task_id,
+                    phase="execute",
+                )
+                for task_id in sorted(validation_blocked_ids)
+            ]
 
             # Build typed objects for policy evaluation — every blocked task
             # and baseline deviation flows through
@@ -8664,9 +8695,16 @@ def handle_execute_auto_loop(
                 cross_session=False,
             )
 
-            if baseline_deviations and not prereq_blocked_ids:
+            if (
+                (baseline_deviations or validation_deviations)
+                and not prereq_blocked_ids
+            ):
+                quality_deviations = [
+                    *baseline_deviations,
+                    *validation_deviations,
+                ]
                 summary = "Blocked: " + "; ".join(
-                    _deviation_messages(baseline_deviations)
+                    _deviation_messages(quality_deviations)
                 )
                 append_history(
                     state,
@@ -8688,7 +8726,7 @@ def handle_execute_auto_loop(
                     "next_step": blocked_short_circuit_target,
                     "state": STATE_FINALIZED,
                     "files_changed": [],
-                    "deviations": _deviation_dicts(baseline_deviations),
+                    "deviations": _deviation_dicts(quality_deviations),
                     "warnings": [summary],
                     "auto_approve": auto_approve,
                     "user_approved_gate": bool(

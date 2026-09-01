@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     _prepare_scoped_batch_checkpoint,
     _replay_proven_batch_artifacts,
     _stamp_result_envelopes,
+    _prerequisite_blocked_task_ids,
 )
 
 
@@ -753,6 +754,7 @@ def test_blocked_by_prereq_emits_prereq_blocked_task_ids_when_active_blocked_emp
                 "depends_on": [],
                 "description": "complete the pinned-baseline audit",
                 "executor_notes": "",
+                "blocked_by_user_action_ids": ["UA-X"],
             },
             {
                 "id": "H",
@@ -1479,6 +1481,28 @@ def test_validation_blocked_ids_and_transitive_dependents_stay_out_of_runnable_q
     assert tasks[0]["blocked_reason"] == "validation_blocked"
     assert tasks[3]["status"] == "blocked"
     assert tasks[3]["blocked_reason"] == "prerequisite_blocked"
+
+
+def test_validation_block_is_not_misclassified_as_prerequisite() -> None:
+    tasks = [
+        _frontier_task("T2", status="blocked"),
+        _frontier_task("T3", status="blocked"),
+    ]
+    tasks[0]["blocked_reason"] = "validation_blocked"
+    tasks[1]["blocked_reason"] = "prerequisite_blocked"
+    tasks[1]["blocked_by_user_action_ids"] = ["UA-1"]
+
+    assert _prerequisite_blocked_task_ids(
+        tasks,
+        active_task_ids={"T2", "T3"},
+    ) == {"T3"}
+
+
+def test_legacy_untyped_block_remains_prerequisite() -> None:
+    task = _frontier_task("legacy", status="blocked")
+    assert _prerequisite_blocked_task_ids(
+        [task], active_task_ids={"legacy"}
+    ) == {"legacy"}
 
 
 # ---------------------------------------------------------------------------
