@@ -1382,6 +1382,45 @@ def _identity_labels(identity: Mapping[str, Any]) -> list[str]:
     return labels if len(set(labels)) == len(labels) else []
 
 
+def _legacy_optional_spec_labels(
+    spec_path: Path,
+    *,
+    spec_report: Mapping[str, Any],
+    state: Any,
+) -> list[str]:
+    """Derive the cursor sequence for the pre-launch optional binding shape.
+
+    Optional chains created before runtime replacement was introduced have no
+    ``launched_identity``.  Their canonical frozen spec is still the authority
+    for the milestone sequence; runtime identities must never supply it.
+    Callers perform the spec SHA guards before invoking this helper (including
+    again inside the chain-control transaction).
+    """
+
+    if spec_report.get("status") != "not_required":
+        return []
+    if isinstance(spec_report.get("expected"), Mapping):
+        return []
+    binding = (getattr(state, "metadata", {}) or {}).get("execution_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    if isinstance(binding.get("launched_identity"), Mapping):
+        return []
+    runtime_binding = binding.get("runtime_binding")
+    runtime_binding = runtime_binding if isinstance(runtime_binding, Mapping) else {}
+    if not isinstance(runtime_binding.get("current_identity"), Mapping):
+        return []
+
+    from arnold_pipelines.megaplan.chain.spec import load_spec
+
+    labels = [str(milestone.label or "").strip() for milestone in load_spec(spec_path).milestones]
+    if not labels or any(not label for label in labels) or len(set(labels)) != len(labels):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: frozen spec milestone sequence is empty or ambiguous",
+        )
+    return labels
+
+
 def _completed_labels(state: Any) -> list[str]:
     completed = getattr(state, "completed", None)
     if not isinstance(completed, list):
@@ -2262,6 +2301,12 @@ def rebind_runtime_identity(
     labels = _identity_labels(spec_report.get("expected") or {})
     if allow_optional_policy and not labels:
         labels = _identity_labels(spec_report.get("active") or {})
+    if allow_optional_policy and not labels:
+        labels = _legacy_optional_spec_labels(
+            spec_path,
+            spec_report=spec_report,
+            state=state,
+        )
     current_index = int(getattr(state, "current_milestone_index", -1))
     terminal_cursor = current_index == len(labels)
     if current_index < 0 or current_index > len(labels):

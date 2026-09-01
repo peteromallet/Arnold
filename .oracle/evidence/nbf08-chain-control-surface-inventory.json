@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "2a38c2e7016d5c50f94925cf902a6a887c1952b9",
+  "base_revision": "a9c92b30cdec7f378dc0d36abf60f17320a0c460",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -659,7 +659,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "d325348a81922b8f8655bad4bbbf53379a4c1ea7baf6c88a0ced1b047e1473b4",
-        "5cdccdbc336a009f1a14fce2042411dae884a32f042a8f5fcc8aa88dfd5e0785"
+        "4a931cdeef14182362d09e3ccfea7a54676a28bf36369ffdcf802a77a7ce0119"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "f94a13804eab9b93804026afd52568a9e17e441fcbfd303bde4d105068146c3a"
+  "inventory_digest": "fee6e1479419bb93497622d4ded9a00209464f75a4807d08b67bf2092485bd8d"
 }

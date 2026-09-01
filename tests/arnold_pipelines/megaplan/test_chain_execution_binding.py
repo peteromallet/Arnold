@@ -1148,9 +1148,16 @@ def test_runtime_cutover_accepts_exact_completed_terminal_cursor(
 def _optional_runtime_rebind_case(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    legacy_binding: bool = False,
+    labels: tuple[str, ...] = ("c1", "c2", "c3"),
 ) -> tuple[Path, ChainState, dict, dict, str]:
     """Build an optional-policy chain with durable pause and a drifted target."""
-    spec_path = _pinned_chain(tmp_path, execution_binding="required")
+    spec_path = _pinned_chain(
+        tmp_path,
+        labels,
+        execution_binding="required",
+    )
     state = _bound_state(spec_path)
     previous = json.loads(
         json.dumps(
@@ -1160,17 +1167,20 @@ def _optional_runtime_rebind_case(
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["execution_binding"] = "optional"
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-    # Keep a canonical launched bundle while changing only the policy mode in
-    # this fixture; the production optional-policy path may otherwise have no
-    # launch binding at all (the legacy not_required shape).
+    # Most callers exercise an optional chain that retained its launch bundle;
+    # ``legacy_binding`` below deliberately removes it to cover the historical
+    # not_required shape.
     from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
 
-    state.metadata["execution_binding"]["launched_identity"] = (
-        active_execution_identity(spec_path)
-    )
+    if not legacy_binding:
+        state.metadata["execution_binding"]["launched_identity"] = (
+            active_execution_identity(spec_path)
+        )
+    else:
+        state.metadata["execution_binding"].pop("launched_identity", None)
     state.current_milestone_index = 1
-    state.current_plan_name = "c2-plan"
-    state.completed = [{"label": "c1", "plan": "c1-plan", "status": "done"}]
+    state.current_plan_name = f"{labels[1]}-plan"
+    state.completed = [{"label": labels[0], "plan": f"{labels[0]}-plan", "status": "done"}]
     state.last_state = "paused"
     state.metadata["operator_pause"] = {
         "schema_version": AUTHORITY_SCHEMA,
@@ -1180,15 +1190,15 @@ def _optional_runtime_rebind_case(
         "reason": "pause before optional replacement",
         "previous_chain_last_state": "planned",
         "previous_plan_state": "planned",
-        "plan": "c2-plan",
+        "plan": f"{labels[1]}-plan",
     }
-    plan_path = _write_plan_state(tmp_path, "c2-plan")
+    plan_path = _write_plan_state(tmp_path, f"{labels[1]}-plan")
     plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
     plan_state["meta"] = {
         "operator_pause": {
             "schema_version": AUTHORITY_SCHEMA,
             "active": True,
-            "plan": "c2-plan",
+            "plan": f"{labels[1]}-plan",
         }
     }
     plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
@@ -1259,6 +1269,138 @@ def test_optional_runtime_rebind_replaces_identity_without_operational_mutation(
     ]["execution_binding"]["launched_identity"]
 
 
+def test_optional_runtime_rebind_legacy_uses_frozen_23_milestone_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels = tuple(f"c{i}" for i in range(23))
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(
+            tmp_path,
+            monkeypatch,
+            legacy_binding=True,
+            labels=labels,
+        )
+    )
+    state.current_milestone_index = 6
+    state.current_plan_name = "c6-plan"
+    state.completed = [
+        {"label": label, "plan": f"{label}-plan", "status": "done"}
+        for label in labels[:6]
+    ]
+    state.metadata["operator_pause"]["plan"] = "c6-plan"
+    plan_path = _write_plan_state(tmp_path, "c6-plan")
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_state["meta"] = {
+        "operator_pause": {
+            "schema_version": AUTHORITY_SCHEMA,
+            "active": True,
+            "plan": "c6-plan",
+        }
+    }
+    plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
+    save_chain_state(spec_path, state)
+    before_spec = spec_path.read_bytes()
+
+    result = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        expected_current_milestone="c6",
+        expected_current_plan="c6-plan",
+        reason="legacy optional replacement",
+        verified_external_runtime_identity=successor,
+        verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+        allow_optional_policy=True,
+        expected_chain_spec_sha256=expected_spec_sha,
+    )
+
+    assert result["outcome"] == "committed"
+    assert state.current_milestone_index == 6
+    assert [item["label"] for item in state.completed] == list(labels[:6])
+    assert "launched_identity" not in state.metadata["execution_binding"]
+    assert state.metadata["chain_spec_sha256"] == expected_spec_sha
+    assert spec_path.read_bytes() == before_spec
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        ("cursor", "outside the bound sequence"),
+        ("prefix-altered", "completed milestone prefix"),
+        ("prefix-missing", "completed milestone prefix"),
+        ("prefix-reordered", "completed milestone prefix"),
+        ("prefix-extra", "completed milestone prefix"),
+        ("milestone", "current milestone does not match"),
+        ("plan", "current plan does not match"),
+    ],
+)
+def test_optional_runtime_rebind_legacy_rejects_cursor_and_prefix_guards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+    message: str,
+) -> None:
+    labels = tuple(f"c{i}" for i in range(23))
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(
+            tmp_path,
+            monkeypatch,
+            legacy_binding=True,
+            labels=labels,
+        )
+    )
+    state.current_milestone_index = 6
+    state.current_plan_name = "c6-plan"
+    state.completed = [
+        {"label": label, "plan": f"{label}-plan", "status": "done"}
+        for label in labels[:6]
+    ]
+    state.metadata["operator_pause"]["plan"] = "c6-plan"
+    plan_path = _write_plan_state(tmp_path, "c6-plan")
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_state["meta"] = {"operator_pause": {
+        "schema_version": AUTHORITY_SCHEMA,
+        "active": True,
+        "plan": "c6-plan",
+    }}
+    plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
+    expected_milestone = "c6"
+    expected_plan = "c6-plan"
+    if tamper == "cursor":
+        state.current_milestone_index = 24
+    elif tamper == "prefix-altered":
+        state.completed[5]["label"] = "not-c6"
+    elif tamper == "prefix-missing":
+        state.completed.pop()
+    elif tamper == "prefix-reordered":
+        state.completed[0], state.completed[1] = state.completed[1], state.completed[0]
+    elif tamper == "prefix-extra":
+        state.completed.append({"label": "c6", "plan": "c6-plan", "status": "done"})
+    elif tamper == "milestone":
+        expected_milestone = "wrong"
+    elif tamper == "plan":
+        expected_plan = "wrong-plan"
+    save_chain_state(spec_path, state)
+    before = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match=message):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone=expected_milestone,
+            expected_current_plan=expected_plan,
+            reason="legacy guard refusal",
+            verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -1290,6 +1432,33 @@ def test_optional_runtime_rebind_refuses_without_exact_opt_in_guards(
     with pytest.raises(CliError, match=message):
         rebind_runtime_identity(spec_path, state, **args)
     assert state.to_dict() == before
+
+
+def test_optional_runtime_rebind_legacy_rejects_spec_byte_drift_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    before_state = _state_path_for(spec_path).read_bytes()
+    before_spec = spec_path.read_bytes()
+    spec_path.write_bytes(before_spec + b"# reordered/altered\n")
+    with pytest.raises(CliError, match="supplied and persisted guard"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=previous["content_sha256"],
+            expected_active_runtime_sha256=successor["content_sha256"],
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            reason="legacy spec drift",
+            verified_external_runtime_identity=successor,
+            verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+            allow_optional_policy=True,
+            expected_chain_spec_sha256=expected_spec_sha,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before_state
 
 
 def test_optional_runtime_rebind_requires_verified_receipt_without_mutation(
@@ -1384,7 +1553,7 @@ def test_optional_runtime_rebind_refuses_missing_binding_and_bad_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spec_path, state, previous, successor, expected_spec_sha = (
-        _optional_runtime_rebind_case(tmp_path, monkeypatch)
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
     )
     binding = state.metadata["execution_binding"]["runtime_binding"]
     binding.pop("current_identity")
@@ -1953,9 +2122,7 @@ def test_b_cli_optional_runtime_rebind_commits_and_replays_without_spec_write(
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["execution_binding"] = "optional"
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-    from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
-
-    state.metadata["execution_binding"]["launched_identity"] = active_execution_identity(spec_path)
+    state.metadata["execution_binding"].pop("launched_identity", None)
     state.current_milestone_index = 0
     state.current_plan_name = "c1-plan"
     state.last_state = "paused"
