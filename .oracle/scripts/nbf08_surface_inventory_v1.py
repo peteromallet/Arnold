@@ -286,6 +286,24 @@ def _sha256_file(path: Path) -> str:
     return _sha256_bytes(path.read_bytes())
 
 
+def _source_index_revision(root: Path) -> str:
+    """Return a stable 40-char identity for the indexed source tree.
+
+    The generated inventory is excluded so committing it cannot change the
+    identity that it records.  Indexed mode/object/stage/path records retain
+    the same Git source-index semantics across worktrees and commits.
+    """
+    records = subprocess.check_output(
+        ["git", "ls-files", "-s"], cwd=root, text=True
+    ).splitlines()
+    records = sorted(
+        record
+        for record in records
+        if record.split("\t", 1)[-1] != INVENTORY_RELPATH
+    )
+    return hashlib.sha1(("\n".join(records) + "\n").encode("utf-8")).hexdigest()
+
+
 def _parse_row(line: str) -> list[str]:
     cols = [item.strip() for item in line.strip().strip("|").split("|")]
     if len(cols) == 18 and cols[0] == "CC-043":
@@ -838,7 +856,7 @@ def build_inventory(root: Path, research: Path, expected_sha256: str) -> dict[st
     surfaces = [_surface(row, root, digest) for row in rows]
     body: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+        "base_revision": _source_index_revision(root),
         "generator_version": GENERATOR_VERSION,
         "research_inventory_path": research_rel,
         "research_inventory_sha256": digest,
