@@ -4308,15 +4308,55 @@ def promote_legacy_runtime_binding(
                 if key != "expected_manifest_sha256"
             }
 
-        def _selector_correction_authorized(event: Mapping[str, Any]) -> bool:
-            payload = event.get("payload")
-            if not isinstance(payload, Mapping):
+        def _selector_correction_authorized(
+            hold: Mapping[str, Any], current_context: Mapping[str, Any]
+        ) -> bool:
+            payload = hold.get("payload")
+            if (
+                not isinstance(payload, Mapping)
+                or hold.get("failure_class") != EXECUTION_BINDING_MIGRATE_ERROR
+                or payload.get("code") != EXECUTION_BINDING_MIGRATE_ERROR
+            ):
                 return False
-            text = " ".join(
-                str(payload.get(key) or "")
-                for key in ("reason", "code", "details")
-            ).lower()
-            return "manifest" in text and "selector" in text
+            details = payload.get("details")
+            if isinstance(details, Mapping) and details:
+                expected = str(details.get("expected_sha256") or "")
+                actual = str(details.get("actual_sha256") or "")
+                if (
+                    details.get("guard") != "manifest_selector"
+                    or not _FULL_SHA256.fullmatch(expected)
+                    or not _FULL_SHA256.fullmatch(actual)
+                    or expected == actual
+                ):
+                    return False
+            context = payload.get("legacy_runtime_promotion.v1")
+            if not isinstance(context, Mapping):
+                return False
+            held_selector = str(context.get("expected_manifest_sha256") or "")
+            current_selector = str(current_context.get("expected_manifest_sha256") or "")
+            # The live seq-781 hold predates structured guard details.  Its
+            # typed hold/code plus the frozen expected selector and the
+            # current CAS selector provide the same non-prose evidence.
+            return (
+                _FULL_SHA256.fullmatch(held_selector) is not None
+                and _FULL_SHA256.fullmatch(current_selector) is not None
+                and held_selector != current_selector
+            )
+
+        def _base_operation_id_for_context(context: Mapping[str, Any]) -> str:
+            return _stable_id(
+                "execution-binding-promote",
+                chain_id,
+                str(context.get("chain_spec_sha256") or ""),
+                str(context.get("old_runtime_sha256") or ""),
+                str(context.get("expected_state_digest") or ""),
+                str(context.get("expected_state_revision")),
+                str(context.get("current_milestone") or ""),
+                str(context.get("current_plan") or ""),
+                str(context.get("expected_branch") or ""),
+                str(context.get("expected_marker_sha256") or ""),
+                str(context.get("expected_manifest_sha256") or ""),
+            )
 
         accepted = replay["accepted"]
         events_by_operation: dict[str, list[Mapping[str, Any]]] = {}
@@ -4444,26 +4484,30 @@ def promote_legacy_runtime_binding(
             str(context.get("expected_manifest_sha256") or "")
             for _operation, context, _hold, _release in chain
         }
-        root_operation, root_context, _root_hold, _root_release = chain[-1]
-        expected_root_operation = _stable_id(
-            "execution-binding-promote",
-            chain_id,
-            str(root_context.get("chain_spec_sha256") or ""),
-            str(root_context.get("old_runtime_sha256") or ""),
-            str(root_context.get("expected_state_digest") or ""),
-            str(root_context.get("expected_state_revision")),
-            str(root_context.get("current_milestone") or ""),
-            str(root_context.get("current_plan") or ""),
-            str(root_context.get("expected_branch") or ""),
-            str(root_context.get("expected_marker_sha256") or ""),
-            str(root_context.get("expected_manifest_sha256") or ""),
-        )
-        if root_operation != expected_root_operation:
-            _reject_release_chain("released-hold recovery chain has the wrong promotion root")
+        for index, (operation, context, _hold, _release) in enumerate(chain):
+            if index == len(chain) - 1:
+                expected_operation = _base_operation_id_for_context(context)
+            else:
+                linked = context.get("released_hold")
+                if not isinstance(linked, Mapping):
+                    _reject_release_chain("released-hold recovery chain link is missing")
+                expected_operation = _stable_id(
+                    "execution-binding-promote-released-hold",
+                    _base_operation_id_for_context(context),
+                    str(linked.get("event_hash") or ""),
+                    str(linked.get("recovery_epoch") or ""),
+                    str(context.get("expected_state_revision")),
+                )
+            if operation != expected_operation:
+                _reject_release_chain(
+                    "released-hold recovery chain has a tampered promotion operation identity"
+                )
         if len(historical_selectors) != 1:
             _reject_release_chain("released-hold recovery chain changes the manifest selector")
         current_selector = str(runtime_context.get("expected_manifest_sha256") or "")
-        if current_selector not in historical_selectors and not _selector_correction_authorized(chain[0][3]):
+        if current_selector not in historical_selectors and not _selector_correction_authorized(
+            chain[0][2], runtime_context
+        ):
             _reject_release_chain(
                 "manifest selector correction requires a selector-specific released-hold receipt"
             )
@@ -4482,7 +4526,7 @@ def promote_legacy_runtime_binding(
             for event in accepted_state:
                 if event.get("chain_id") == chain_id and event.get("operation_id"):
                     by_operation.setdefault(str(event["operation_id"]), []).append(event)
-            for operation, context, hold, release in chain:
+            for index, (operation, context, hold, release) in enumerate(chain):
                 current_events = by_operation.get(operation, [])
                 current_hold = next(
                     (event for event in current_events if event.get("event_hash") == hold.get("event_hash")),
@@ -4523,6 +4567,39 @@ def promote_legacy_runtime_binding(
                         EXECUTION_BINDING_MIGRATE_ERROR,
                         "released-hold recovery promotion identity changed",
                     )
+                if index == len(chain) - 1:
+                    expected_operation = _base_operation_id_for_context(context)
+                else:
+                    linked = context.get("released_hold")
+                    expected_operation = (
+                        _stable_id(
+                            "execution-binding-promote-released-hold",
+                            _base_operation_id_for_context(context),
+                            str(linked.get("event_hash") or ""),
+                            str(linked.get("recovery_epoch") or ""),
+                            str(context.get("expected_state_revision")),
+                        )
+                        if isinstance(linked, Mapping)
+                        else ""
+                    )
+                if operation != expected_operation:
+                    raise ChainControlHold(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "released-hold recovery promotion operation identity changed",
+                    )
+            historical_selectors = {
+                str(context.get("expected_manifest_sha256") or "")
+                for _operation, context, _hold, _release in chain
+            }
+            if (
+                len(historical_selectors) != 1
+                or str(runtime_context.get("expected_manifest_sha256") or "")
+                not in historical_selectors
+            ) and not _selector_correction_authorized(chain[0][2], runtime_context):
+                raise ChainControlHold(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "manifest selector correction is no longer authorized",
+                )
 
         released_reference = {
             "path": str(release_path),
@@ -4754,6 +4831,11 @@ def promote_legacy_runtime_binding(
                         raise ChainControlHold(
                             EXECUTION_BINDING_MIGRATE_ERROR,
                             "legacy runtime promotion manifest SHA-256 CAS failed",
+                            details={
+                                "guard": "manifest_selector",
+                                "expected_sha256": expected_manifest_sha256,
+                                "actual_sha256": manifest_sha,
+                            },
                         )
                     manifest = bootstrap_manifest(manifest_path)
                 except (OSError, ManifestError) as exc:

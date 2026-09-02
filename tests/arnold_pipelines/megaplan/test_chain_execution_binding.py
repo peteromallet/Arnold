@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 import yaml
@@ -4866,6 +4866,66 @@ def test_execution_binding_promote_accepts_exact_two_generation_recovery_chain(
         **kwargs,
         "expected_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
     }
+    # Simulate a torn/forked intermediate operation in the immutable view:
+    # even with a matching receipt, its full frozen tuple must recompute the
+    # original linked operation identity.
+    import arnold_pipelines.megaplan.incident.chain_control as chain_control_module
+
+    real_journal_for = chain_control_module.journal_for
+    real_journal = real_journal_for(tmp_path)
+    tampered_id = "f" * 64
+    tampered_replay = json.loads(json.dumps(real_journal.replay_strict()))
+    second_event = json.loads(second_receipt.read_text(encoding="utf-8"))["event"]
+    linked_id = second_event["operation_id"]
+    for event in tampered_replay["accepted"]:
+        if event.get("operation_id") == linked_id:
+            event["operation_id"] = tampered_id
+            payload = event.get("payload")
+            if isinstance(payload, Mapping) and payload.get("target_operation_id") == linked_id:
+                payload["target_operation_id"] = tampered_id
+
+    class _TamperedJournal:
+        def replay_strict(self) -> dict[str, Any]:
+            return tampered_replay
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(real_journal, name)
+
+    monkeypatch.setattr(
+        chain_control_module, "journal_for", lambda _root: _TamperedJournal()
+    )
+    tampered_intermediate = json.loads(second_receipt.read_text(encoding="utf-8"))
+    tampered_intermediate["event"]["operation_id"] = tampered_id
+    tampered_intermediate["event"]["payload"]["target_operation_id"] = tampered_id
+    tampered_intermediate_receipt = tmp_path / "tampered-intermediate-release.json"
+    tampered_intermediate_receipt.write_text(
+        json.dumps(tampered_intermediate) + "\n", encoding="utf-8"
+    )
+    before_intermediate_rejection = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="tampered promotion operation identity"):
+        promote_legacy_runtime_binding(
+            spec_path, tmp_path, **corrected_kwargs,
+            released_hold_receipt=tampered_intermediate_receipt,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before_intermediate_rejection
+    # A release reason mentioning a selector cannot authorize correction when
+    # the associated hold's typed failure classification is not the exact CAS
+    # refusal; prose is deliberately absent from this decision.
+    prose_replay = json.loads(json.dumps(real_journal.replay_strict()))
+    held_hash = second_event["payload"]["held_event_hash"]
+    for event in prose_replay["accepted"]:
+        if event.get("event_hash") == held_hash:
+            event["failure_class"] = "operator_prose"
+    tampered_replay = prose_replay
+    before_prose_rejection = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="selector-specific released-hold"):
+        promote_legacy_runtime_binding(
+            spec_path, tmp_path, **corrected_kwargs,
+            released_hold_receipt=second_receipt,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before_prose_rejection
+    monkeypatch.setattr(chain_control_module, "journal_for", real_journal_for)
+
     tampered = json.loads(second_receipt.read_text(encoding="utf-8"))
     tampered["event"]["payload"]["target_operation_id"] = "0" * 64
     tampered_receipt = tmp_path / "tampered-second-release.json"
