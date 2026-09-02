@@ -86,6 +86,50 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
     assert sleeps == [operator_control._POST_LAUNCH_GRACE_SECONDS]
 
 
+@pytest.mark.parametrize("reservation_status, expected_status", [("authorized", "cancelled"), ("claimed", "claimed")])
+def test_pause_marker_door_cancels_only_preclaim_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reservation_status: str,
+    expected_status: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "should_run": True,
+                "babysitter_launch_reservation": {
+                    "reservation_id": "reservation",
+                    "status": reservation_status,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    authority = {"schema_version": "arnold.megaplan.operator-pause.v1", "active": True, "plan": "demo-plan"}
+    monkeypatch.setattr(operator_control, "pause_chain", lambda *a, **k: {"authority": authority})
+    monkeypatch.setattr(operator_control, "_stop_tmux_session", lambda *a, **k: False)
+    monkeypatch.setattr(operator_control, "_stop_owned_pidfile", lambda *a, **k: False)
+    monkeypatch.setattr(operator_control, "reconcile_quiesced_plan_pause", lambda *a, **k: False)
+    monkeypatch.setattr(operator_control.time, "sleep", lambda *_: None)
+
+    operator_control.pause_session(
+        spec=tmp_path / "chain.yaml",
+        workspace=workspace,
+        session="demo",
+        marker_path=marker_path,
+        reason="hold",
+        actor="test",
+    )
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["should_run"] is False
+    assert marker["babysitter_launch_reservation"]["status"] == expected_status
+
+
 def test_resume_no_push_preserves_dirty_milestone_checkout(
     tmp_path: Path, monkeypatch
 ) -> None:

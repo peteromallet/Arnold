@@ -1732,6 +1732,7 @@ def dispatch_with_admission(
     return_worker: bool = False,
     probe_executor: Callable[[Any], Any] | Any | None = None,
     child_launch: Callable[[WorkerExecutionContextRef], Any] | None = None,
+    admission_preflight: Callable[[WorkerAdmissionReceipt], Mapping[str, Any] | None] | None = None,
 ) -> Any:
     """Run one logical dispatch through admission and one controlled closure."""
     if not isinstance(request, WorkerAdmissionRequest):
@@ -1785,6 +1786,38 @@ def dispatch_with_admission(
                 child_launch=child_launch,
             )
         from arnold_pipelines.megaplan.cloud.controlled_final_launch import ControlledFinalLaunch
+        preflight_result: Mapping[str, Any] = {}
+        if admission_preflight is not None:
+            result = admission_preflight(decision)
+            if result is not None:
+                if not isinstance(result, Mapping):
+                    raise TypeError("admission preflight must return a mapping or None")
+                preflight_result = result
+        physical_evidence = preflight_result.get("physical_operation_evidence")
+        if preflight_result.get("suppress") is True:
+            if not isinstance(physical_evidence, Mapping):
+                raise ValueError("suppressed admission requires physical no-launch evidence")
+            controlled = ControlledFinalLaunch(
+                decision,
+                ledger=active_ledger,
+                physical_operation_evidence=dict(physical_evidence),
+            )
+            evidence_ids = [
+                str(item.get("payload", {}).get("event_id"))
+                for item in active_ledger.read_nbf_events()
+                if item.get("payload", {}).get("event_type") == "controlled_adapter_state"
+                and item.get("payload", {}).get("reservation_event_id") == decision.reservation_event_id
+                and item.get("payload", {}).get("admission_receipt_id") == decision.admission_receipt_id
+                and item.get("payload", {}).get("launch_state_identity") == "not_started"
+                and item.get("payload", {}).get("event_id")
+            ]
+            return reconcile_no_launch(
+                decision,
+                evidence_event_ids=tuple(evidence_ids[-1:]),
+                ledger=active_ledger,
+                evidence_kind=str(preflight_result.get("evidence_kind") or "controlled_adapter"),
+                observed_at=preflight_result.get("observed_at"),
+            )
         controlled = ControlledFinalLaunch(decision, ledger=active_ledger)
         try:
             pre_entry = getattr(launch, "pre_entry", None)
