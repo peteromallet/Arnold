@@ -4761,6 +4761,137 @@ def test_execution_binding_promote_retries_only_with_exact_released_hold_receipt
     assert _state_path_for(spec_path).read_bytes() == state_after_replay
 
 
+def test_execution_binding_promote_accepts_exact_two_generation_recovery_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second retry must be linked to the immediately preceding release."""
+    canonical_marker_root = _use_canonical_marker_root(tmp_path, monkeypatch)
+    spec_path, state, previous, _successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    state.chain_session = "two-generation-recovery-session"
+    state.metadata["_nbf08_revision"] = 0
+    save_chain_state(spec_path, state)
+    marker_path = _write_cloud_marker(
+        tmp_path, spec_path, session=state.chain_session, plan="c2-plan",
+        runtime=previous, marker_root=canonical_marker_root,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json", epic_id="demo",
+        runtime_root=Path(previous["import_root"]), expected_head=previous["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    runtime_receipt = tmp_path / "verified-runtime-receipt.json"
+    runtime_receipt.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(previous),
+    )
+    marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    kwargs = {
+        "expected_current_milestone": "c2",
+        "expected_current_plan": "c2-plan",
+        "expected_branch": _git(tmp_path, "branch", "--show-current"),
+        "expected_chain_spec_sha256": expected_spec_sha,
+        "expected_state_digest": state_digest_for(
+            load_chain_state(spec_path, verify_execution_binding=False).to_dict()
+        ),
+        "expected_state_revision": 0,
+        "expected_marker_sha256": marker_sha,
+        "expected_manifest_sha256": manifest_sha,
+        "reason": "promote after linked release",
+        "actor": "test-operator",
+        "verified_external_runtime_identity": previous,
+        "verified_external_runtime_receipt": runtime_receipt,
+    }
+    import arnold_pipelines.megaplan.chain.execution_binding as binding_module
+
+    real_guard = binding_module._assert_marker_agrees_with_runtime
+
+    def fail_promotion(*_args: Any, **_kwargs: Any) -> None:
+        raise CliError("synthetic_promotion_failure", "synthetic promotion failure")
+
+    def release_latest(receipt_name: str, reason: str) -> Path:
+        held = [
+            event
+            for event in journal_for(tmp_path).replay_strict()["accepted"]
+            if event.get("event_kind") == "chain_control.hold"
+            and event.get("intent") is None
+        ][-1]
+        persisted = load_chain_state(spec_path, verify_execution_binding=False)
+        evidence = tmp_path / f"{receipt_name}.evidence"
+        evidence.write_text("recovery\n", encoding="utf-8")
+        release = journal_for(tmp_path).release_hold(
+            chain_id=chain_id_for_spec(spec_path), operation_id=held["operation_id"],
+            expected_hold_event_hash=held["event_hash"],
+            expected_chain_spec_sha256=expected_spec_sha, spec_path=spec_path,
+            expected_state_digest=state_digest_for(persisted.to_dict()),
+            expected_state_revision=persisted.metadata["_nbf08_revision"],
+            expected_cursor=persisted.current_milestone_index,
+            expected_current_milestone="c2", expected_current_plan="c2-plan",
+            recovery_evidence=evidence,
+            actor="test-operator", reason=reason,
+        )
+        receipt = tmp_path / receipt_name
+        receipt.write_text(
+            json.dumps({"schema": "nbf08-chain-control-hold-release-v1", "event": release["event"]})
+            + "\n", encoding="utf-8",
+        )
+        return receipt
+
+    # Root hold -> release -> first linked attempt, held again.
+    monkeypatch.setattr(binding_module, "_assert_marker_agrees_with_runtime", fail_promotion)
+    with pytest.raises(CliError, match="synthetic promotion failure"):
+        promote_legacy_runtime_binding(spec_path, tmp_path, **kwargs)
+    first_receipt = release_latest("first-release.json", "authorize first recovery")
+    with pytest.raises(CliError, match="synthetic promotion failure"):
+        promote_legacy_runtime_binding(
+            spec_path, tmp_path, **kwargs, released_hold_receipt=first_receipt
+        )
+    second_receipt = release_latest(
+        "second-release.json", "authorize manifest-selector correction recovery"
+    )
+    monkeypatch.setattr(binding_module, "_assert_marker_agrees_with_runtime", real_guard)
+
+    # The corrected selector is accepted only because the newest release is
+    # explicitly a manifest-selector recovery; all other request fields stay
+    # identical and the operation is newly derived from that release.
+    manifest_path.write_text(manifest_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    corrected_kwargs = {
+        **kwargs,
+        "expected_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    tampered = json.loads(second_receipt.read_text(encoding="utf-8"))
+    tampered["event"]["payload"]["target_operation_id"] = "0" * 64
+    tampered_receipt = tmp_path / "tampered-second-release.json"
+    tampered_receipt.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+    before_rejection = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="exact promotion request"):
+        promote_legacy_runtime_binding(
+            spec_path, tmp_path, **corrected_kwargs,
+            released_hold_receipt=tampered_receipt,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before_rejection
+    result = promote_legacy_runtime_binding(
+        spec_path, tmp_path, **corrected_kwargs, released_hold_receipt=second_receipt
+    )
+    assert result["outcome"] == "committed"
+    assert result["promotion"]["released_hold"]["target_operation_id"]
+    replay = promote_legacy_runtime_binding(
+        spec_path, tmp_path, **corrected_kwargs, released_hold_receipt=second_receipt
+    )
+    assert replay["outcome"] == "replay"
+    assert len([
+        event for event in journal_for(tmp_path).replay_strict()["accepted"]
+        if event.get("event_kind") == "chain_control.runtime_rebound"
+    ]) == 1
+
+
 def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
