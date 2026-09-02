@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "ce86e42eb3954033d8ac99b61a8a766e564bd5fc",
+  "base_revision": "831377cd20984f279e5d73b72f507e9196fef4d7",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -1285,7 +1285,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "39c36563a37a32f78398621d9c2e922540c05ffb2dc9f39d326e31b31e3fc718",
-        "a79372858acc4afe070b5484c696ea9f4e301851da85bcd69660441a2fa499d8",
+        "e83b875b27e0d8f66fb51c0456ab07e504c9dca9efda93305f10924caa890634",
         "ef5fb16a13f98d01354bd0ca25fe2ee6a860d20fdb299a266f54fc101932e9f7"
       ],
       "authority_mode": "db-projection",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "0cfe994918bf8695cd15222e38ebd3c0f831d08a6a9a7c47d5909450a54c427d"
+  "inventory_digest": "b3b2d69228b6323f1287afcb5b55e87100873bec00731f0f751b445472ff42da"
 }

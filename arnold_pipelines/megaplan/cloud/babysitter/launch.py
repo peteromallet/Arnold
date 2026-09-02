@@ -83,6 +83,7 @@ BACKEND = "babysitter"
 TASK_KIND = "autonomous"
 REASONING_EFFORT = "bounded"
 DEFAULT_DIFFICULTY = 8
+_AUTOMATIC_FINAL_MARKER_LOCK_TIMEOUT_S = 5.0
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -736,6 +737,7 @@ def _automatic_dispatch_preflight(
             ChainStateAdapter,
             ChainControlJournal,
             chain_id_for_spec,
+            state_digest_for,
         )
         from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
         from arnold_pipelines.megaplan.types import CliError
@@ -791,7 +793,12 @@ def _automatic_dispatch_preflight(
                     isinstance(state_revision, bool) or not isinstance(state_revision, int) or state_revision < 0
                 ):
                     return evidence("canonical chain state revision is malformed")
-                plan_name = str(ctx.get("plan") or state.current_plan_name or "").strip()
+                # The fresh chain state is canonical.  A watchdog context can
+                # carry a stale plan from before this transaction acquired
+                # its locks; it may only fill an absent legacy value.
+                plan_name = str(state.current_plan_name or ctx.get("plan") or "").strip()
+                if plan_name:
+                    ctx["plan"] = plan_name
                 plan_dir = find_plan_dir(workspace, plan_name) if plan_name else None
                 with marker_runtime_cutover_lock(marker_path, blocking=False):
                     marker, marker_sha = _load_marker(marker_path)
@@ -914,6 +921,8 @@ def _automatic_dispatch_preflight(
                             "claimed_at": _utcnow_iso(),
                             "marker_sha256": marker_sha,
                             "chain_id": chain_id,
+                            "chain_state_revision": state_revision,
+                            "chain_state_digest": state_digest_for(raw_state),
                             "plan": plan_name,
                             "spec": str(spec_path),
                         }
@@ -939,56 +948,132 @@ def _validate_automatic_launch_reservation(ctx: Mapping[str, Any]) -> None:
     if not isinstance(reservation, Mapping) or not isinstance(marker_dir, Path):
         raise RuntimeError("automatic launch reservation is missing")
     marker_path = marker_dir / f"{ctx['session']}.json"
-    from arnold_pipelines.megaplan.cloud.operator_control import marker_runtime_cutover_lock, _load_marker
-    with marker_runtime_cutover_lock(marker_path, blocking=False):
-        marker, _sha = _load_marker(marker_path)
-        current = marker.get("babysitter_launch_reservation")
-        if not isinstance(current, Mapping) or dict(current) != dict(reservation):
-            raise RuntimeError("automatic launch reservation changed before physical dispatch")
-        workspace = Path(str(ctx.get("workspace") or "")).resolve(strict=False)
-        expected_spec = Path(str(ctx.get("remote_spec") or ""))
-        if not expected_spec.is_absolute():
-            expected_spec = workspace / expected_spec
-        expected_spec = expected_spec.resolve(strict=False)
-        if (
-            current.get("schema") != "arnold.babysitter.launch-reservation.v1"
-            or current.get("schema_version") != 1
-            or current.get("status") != "claimed"
-            or current.get("session") != ctx.get("session")
-            or current.get("workspace") != str(Path(str(ctx.get("workspace") or "")).resolve(strict=False))
-            or current.get("spec") != str(expected_spec)
-            or current.get("plan") != str(ctx.get("plan") or "")
-            or current.get("occurrence_digest") != ctx.get("occurrence")
-            or current.get("run_id") != ctx.get("run_id")
-            or current.get("managed_run_id") != ctx.get("managed_run_id")
+    from arnold_pipelines.megaplan.cloud.operator_control import (
+        _load_marker,
+        marker_runtime_cutover_lock,
+    )
+    from arnold_pipelines.megaplan.chain import spec as chain_spec
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlJournal,
+        ChainStateAdapter,
+        chain_id_for_spec,
+        state_digest_for,
+    )
+    from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+
+    workspace = Path(str(ctx.get("workspace") or "")).resolve(strict=False)
+    expected_spec = Path(str(ctx.get("remote_spec") or ""))
+    if not expected_spec.is_absolute():
+        expected_spec = workspace / expected_spec
+    expected_spec = expected_spec.resolve(strict=False)
+    state_path = chain_spec._state_path_for(expected_spec)
+    chain_id = chain_id_for_spec(expected_spec)
+    # Keep the same global lock order as automatic preflight and operator
+    # pause: sequence -> chain/state -> marker.  The bounded marker wait is
+    # intentional after claim: a pause that already owns the marker lock must
+    # finish, after which the preserved claimed reservation is re-read.
+    journal = ChainControlJournal(IncidentLedger(workspace))
+    with journal.transaction(
+        chain_ids=[chain_id],
+        state_paths=[state_path],
+        expected_revision=None,
+        operation_id=str(reservation.get("logical_dispatch_id") or ctx.get("run_id") or "automatic-launch"),
+        actor={"id": "babysitter", "class": "automatic"},
+    ) as txn:
+        raw_state = ChainStateAdapter(txn, state_path).read_expected()
+        state = None
+        if isinstance(raw_state, dict):
+            state = chain_spec.ChainState.from_dict(raw_state)
+        metadata = state.metadata if state is not None and isinstance(state.metadata, dict) else {}
+        current_revision = metadata.get("_nbf08_revision")
+        canonical_plan = str(state.current_plan_name or "").strip() if state is not None else ""
+        captured_revision = reservation.get("chain_state_revision")
+        captured_digest = reservation.get("chain_state_digest")
+        with marker_runtime_cutover_lock(
+            marker_path,
+            blocking=True,
+            timeout_s=_AUTOMATIC_FINAL_MARKER_LOCK_TIMEOUT_S,
         ):
-            raise RuntimeError("automatic launch reservation identity is not canonical")
-        if marker.get("session") != ctx.get("session"):
-            raise RuntimeError("automatic launch marker session changed before physical dispatch")
-        if Path(str(marker.get("workspace") or "")).resolve(strict=False) != workspace:
-            raise RuntimeError("automatic launch marker workspace changed before physical dispatch")
-        marker_spec = str(marker.get("remote_spec") or "")
-        if marker_spec:
-            marker_spec_path = Path(marker_spec)
-            if not marker_spec_path.is_absolute():
-                marker_spec_path = workspace / marker_spec_path
-            if marker_spec_path.resolve(strict=False) != expected_spec:
-                raise RuntimeError("automatic launch marker spec changed before physical dispatch")
-        if marker.get("plan") is not None and str(marker.get("plan")) != str(ctx.get("plan") or ""):
-            raise RuntimeError("automatic launch marker plan changed before physical dispatch")
-        marker_pause = marker.get("operator_pause")
-        if "operator_pause" in marker and (
-            not isinstance(marker_pause, Mapping)
-            or marker_pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
-            or marker_pause.get("active") is not True
-        ):
-            raise RuntimeError("automatic launch marker pause authority is malformed")
-        paused = marker.get("should_run") is False and isinstance(marker_pause, Mapping) and marker_pause.get("schema_version") == "arnold.megaplan.operator-pause.v1" and marker_pause.get("active") is True
-        if marker.get("should_run") is not True and not paused:
-            raise RuntimeError("automatic launch marker no longer authorizes dispatch")
-        hold = marker.get("operator_resume_hold")
-        if isinstance(hold, Mapping) and hold.get("active") is True:
-            raise RuntimeError("automatic launch marker has an active resume hold")
+            marker, _sha = _load_marker(marker_path)
+            current = marker.get("babysitter_launch_reservation")
+            if not isinstance(current, Mapping) or dict(current) != dict(reservation):
+                raise RuntimeError("automatic launch reservation changed before physical dispatch")
+            if (
+                current.get("schema") != "arnold.babysitter.launch-reservation.v1"
+                or current.get("schema_version") != 1
+                or current.get("status") != "claimed"
+                or current.get("session") != ctx.get("session")
+                or current.get("workspace") != str(workspace)
+                or current.get("spec") != str(expected_spec)
+                or current.get("occurrence_digest") != ctx.get("occurrence")
+                or current.get("run_id") != ctx.get("run_id")
+                or current.get("managed_run_id") != ctx.get("managed_run_id")
+                or (current.get("chain_id") is not None and current.get("chain_id") != chain_id)
+            ):
+                raise RuntimeError("automatic launch reservation identity is not canonical")
+            reservation_plan = str(current.get("plan") or "").strip()
+            # The chain state is the canonical plan authority.  The context
+            # may be stale because it was assembled before the transaction;
+            # it must neither veto a valid reservation nor authorize drift.
+            canonical_plan = canonical_plan or reservation_plan
+            if not canonical_plan or reservation_plan != canonical_plan:
+                raise RuntimeError("automatic launch reservation plan is not canonical")
+            if state is not None and state.current_plan_name and state.current_plan_name != canonical_plan:
+                raise RuntimeError("automatic launch chain current-plan identity changed before physical dispatch")
+            if marker.get("session") != ctx.get("session"):
+                raise RuntimeError("automatic launch marker session changed before physical dispatch")
+            if Path(str(marker.get("workspace") or "")).resolve(strict=False) != workspace:
+                raise RuntimeError("automatic launch marker workspace changed before physical dispatch")
+            marker_spec = str(marker.get("remote_spec") or "")
+            if marker_spec:
+                marker_spec_path = Path(marker_spec)
+                if not marker_spec_path.is_absolute():
+                    marker_spec_path = workspace / marker_spec_path
+                if marker_spec_path.resolve(strict=False) != expected_spec:
+                    raise RuntimeError("automatic launch marker spec changed before physical dispatch")
+            if marker.get("plan") is not None and str(marker.get("plan")) != canonical_plan:
+                raise RuntimeError("automatic launch marker plan changed before physical dispatch")
+            marker_pause = marker.get("operator_pause")
+            if "operator_pause" in marker and (
+                not isinstance(marker_pause, Mapping)
+                or marker_pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
+                or marker_pause.get("active") is not True
+            ):
+                raise RuntimeError("automatic launch marker pause authority is malformed")
+            paused = (
+                marker.get("should_run") is False
+                and isinstance(marker_pause, Mapping)
+                and marker_pause.get("schema_version") == "arnold.megaplan.operator-pause.v1"
+                and marker_pause.get("active") is True
+            )
+            state_changed = (
+                ("chain_state_revision" in reservation and captured_revision != current_revision)
+                or (
+                    "chain_state_digest" in reservation
+                    and (raw_state is None or captured_digest != state_digest_for(raw_state))
+                )
+            )
+            # An operator pause is the one authorized post-claim state change:
+            # pause_chain advances the state revision/digest and the marker
+            # door preserves the exact claimed reservation.  Every other
+            # state change remains a CAS failure.  This check is intentionally
+            # after the marker lock so it observes the completed pause rather
+            # than racing its writer.
+            chain_pause = metadata.get("operator_pause")
+            chain_pause_valid = (
+                isinstance(chain_pause, Mapping)
+                and chain_pause.get("schema_version") == "arnold.megaplan.operator-pause.v1"
+                and chain_pause.get("active") is True
+                and state is not None
+                and state.last_state == "paused"
+            )
+            if state_changed and not (paused and chain_pause_valid):
+                raise RuntimeError("automatic launch chain state identity changed before physical dispatch")
+            if marker.get("should_run") is not True and not paused:
+                raise RuntimeError("automatic launch marker no longer authorizes dispatch")
+            hold = marker.get("operator_resume_hold")
+            if isinstance(hold, Mapping) and hold.get("active") is True:
+                raise RuntimeError("automatic launch marker has an active resume hold")
 
 
 def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
