@@ -2476,6 +2476,13 @@ try:
     run_root = repair_data_dir / "babysitter-runs" / run_id
     run_root.mkdir(parents=True, exist_ok=True)
     child_env = dict(os.environ)
+    if session.startswith("native-build-forward-c2-bb000694-20260903-r4"):
+        # The closed continuation fixer must receive an explicit registration
+        # identity; the launch module rejects a missing model instead of
+        # silently selecting the resident DeepSeek default.
+        child_env["ARNOLD_BABYSITTER_MODEL"] = (
+            "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+        )
     child_env["PYTHONPATH"] = str(engine_root)
     child_env["SRC_DIR"] = str(engine_root)
     child_env["ARNOLD_WATCHDOG_MANIFEST_RUNTIME_ROOT"] = str(engine_root)

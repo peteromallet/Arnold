@@ -85,12 +85,19 @@ def resolve_babysitter_routing(
     env: Mapping[str, str] | None = None,
     *,
     session: str | None = None,
+    require_explicit_model: bool = False,
 ) -> BabysitterRouting:
     """Resolve the babysitter route from an explicit, fail-closed toggle."""
 
     values = os.environ if env is None else env
     session_value = str(session or values.get("ARNOLD_BABYSITTER_SESSION", "")).strip()
     if session_value.startswith(CONTINUATION_SESSION_PREFIX):
+        requested_closed_model = str(values.get("ARNOLD_BABYSITTER_MODEL", "")).strip()
+        if require_explicit_model and not requested_closed_model:
+            raise ValueError(
+                f"{session_value} requires explicit {CONTINUATION_MUSE_MODEL}:high "
+                "for resident fixer registration"
+            )
         selected = str(values.get(ROUTING_ENV, "")).strip().lower()
         if selected and selected not in {OMP_ROUTING, "default", "legacy"}:
             raise ValueError(

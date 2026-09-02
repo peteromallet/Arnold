@@ -158,6 +158,26 @@ def test_git_push_helper_uses_noninteractive_github_token(monkeypatch, tmp_path:
     assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
 
 
+def test_git_push_helper_prefers_shared_on_box_path_only_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper = tmp_path / "git-credentials"
+    secret = "ghp_chain_secret_never_in_environment"
+    helper.write_text(f"https://x-access-token:{secret}@github.com\n", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(helper))
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-token-must-not-win")
+    monkeypatch.setenv("ARNOLD_GIT_HOME", str(tmp_path / "session-home"))
+
+    env = git_ops._git_push_env(["git", "push", "origin", "main"])
+
+    assert isinstance(env, dict)
+    assert env["GIT_CONFIG_VALUE_0"] == f"store --file={helper}"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["HOME"] == str(tmp_path / "session-home")
+    assert "ambient-token-must-not-win" not in repr(env)
+    assert secret not in repr(env)
+
+
 def test_gh_command_env_preserves_token_auth_for_first_attempt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -246,7 +246,12 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
     if not run_root_raw and repair_data_dir is not None:
         run_root_raw = str(repair_data_dir / "babysitter-runs" / run_id)
     run_root = Path(run_root_raw) if run_root_raw else _REPO_ROOT / ".babysitter-runs" / run_id
-    routing = resolve_babysitter_routing(session=session)
+    routing = resolve_babysitter_routing(
+        session=session,
+        require_explicit_model=session.startswith(
+            "native-build-forward-c2-bb000694-20260903-r4"
+        ),
+    )
     return {
         "session": session,
         "workspace": workspace,

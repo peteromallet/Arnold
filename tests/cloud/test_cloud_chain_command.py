@@ -314,6 +314,77 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert "python -P -m arnold_pipelines.megaplan chain start" not in command
 
 
+def test_chain_start_command_installs_session_scoped_git_boundary() -> None:
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/runtime-candidates/demo",
+        repair_session="native-build-forward-c2-bb000694-20260903-r4",
+    )
+    assert 'ARNOLD_CHAIN_GIT_HELPER="${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE:-/workspace/.creds/git-credentials}"' in command
+    assert "on_box_git_auth_unavailable" in command
+    assert "export HOME=\"$ARNOLD_GIT_HOME\"" in command
+    assert "GIT_CONFIG_NOSYSTEM=1" in command
+    assert "GIT_CONFIG_GLOBAL=/dev/null" in command
+    assert "GIT_CONFIG_VALUE_0=\"store --file=$ARNOLD_CHAIN_GIT_HELPER\"" in command
+    assert "GIT_TERMINAL_PROMPT=0" in command
+    assert "/workspace/.megaplan/cloud-sessions/native-build-forward-c2-bb000694-20260903-r4/git-home" in command
+
+
+def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _validate_continuation_muse_routes
+
+    good = {
+        "milestones": [
+            {
+                "label": "c2",
+                "resolved_phase_chains": {
+                    "plan": [
+                        "omp:openrouter/meta/muse-spark-1.3-contributor"
+                    ]
+                },
+            }
+        ]
+    }
+    assert _validate_continuation_muse_routes(
+        good, session="native-build-forward-c2-bb000694-20260903-r4"
+    ) == {
+        "status": "ok",
+        "model": "omp:openrouter/meta/muse-spark-1.3-contributor",
+        "thinking": "high",
+        "fallback": False,
+    }
+    bad = {
+        "milestones": [
+            {
+                "label": "c2",
+                "resolved_phase_chains": {
+                    "plan": ["omp:deepseek/deepseek-v4-flash", "codex"]
+                },
+            }
+        ]
+    }
+    with pytest.raises(CliError) as caught:
+        _validate_continuation_muse_routes(
+            bad, session="native-build-forward-c2-bb000694-20260903-r4"
+        )
+    assert caught.value.code == "closed_profile_route_mismatch"
+
+
+def test_r4_remote_credential_probe_returns_presence_only() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _remote_openrouter_credential_check
+
+    class Provider:
+        def ssh_exec(self, command):
+            assert command == 'test -n "${OPENROUTER_API_KEY:-}"'
+            return subprocess.CompletedProcess([], 0, "", "")
+
+    assert _remote_openrouter_credential_check(Provider()) == {
+        "status": "ok",
+        "credential": "OPENROUTER_API_KEY",
+    }
+
+
 def test_chain_start_command_cd_is_manifest_accepted_root_not_project_or_engine() -> None:
     """G5 round-6 finding 2: the emitted cd is ALWAYS the manifest-bound
     accepted root.  project_dir (the chain workspace) and the launch-time

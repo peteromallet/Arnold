@@ -15,6 +15,11 @@ from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan._core import list_batch_artifacts
+from arnold_pipelines.megaplan.cloud.auth import (
+    ON_BOX_GIT_CREDENTIAL_FILE,
+    ON_BOX_GIT_CREDENTIAL_FILE_ENV,
+    on_box_git_credential_env,
+)
 
 _MISSING_REMOTE_REF_MARKERS = (
     "couldn't find remote ref",
@@ -618,6 +623,15 @@ def _git_push_env(cmd: list[str]) -> dict[str, str] | None:
         return None
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
+    configured = env.get(ON_BOX_GIT_CREDENTIAL_FILE_ENV)
+    if configured or Path(ON_BOX_GIT_CREDENTIAL_FILE).is_file():
+        # Push is the one Git path that supplies an explicit subprocess env;
+        # keep it on the same path-only helper as inherited fetch/clone calls.
+        return on_box_git_credential_env(
+            env=env,
+            home=env.get("ARNOLD_GIT_HOME"),
+            required=True,
+        )
     token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")
     if token:
         auth = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")

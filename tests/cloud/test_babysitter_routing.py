@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud.babysitter import launch
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     CONTINUATION_FIXER_ROLES,
@@ -63,6 +65,25 @@ def test_continuation_route_rejects_ambient_alternate_model() -> None:
         resolve_babysitter_routing(
             {"ARNOLD_BABYSITTER_ROUTING": "codex"}, session=session
         )
+
+
+def test_continuation_launch_requires_explicit_closed_fixer_registration(
+    monkeypatch,
+) -> None:
+    from arnold_pipelines.megaplan.cloud.babysitter import launch as launch_module
+
+    session = "native-build-forward-c2-bb000694-20260903-r4"
+    monkeypatch.delenv("ARNOLD_BABYSITTER_MODEL", raising=False)
+    args = launch_module._build_parser().parse_args(["--session", session])
+    with pytest.raises(ValueError, match="explicit"):
+        launch_module._collect_context(args)
+
+    monkeypatch.setenv(
+        "ARNOLD_BABYSITTER_MODEL",
+        f"{CONTINUATION_MUSE_MODEL}:high",
+    )
+    ctx = launch_module._collect_context(args)
+    assert ctx["model"] == CONTINUATION_MUSE_MODEL
 
 
 def test_continuation_route_normalizes_all_thinking_inputs_to_high() -> None:

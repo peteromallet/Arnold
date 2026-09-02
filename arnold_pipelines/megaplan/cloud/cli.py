@@ -101,6 +101,49 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"\bTODO(?:_[A-Z0-9]+)+\b|<box-ip>|TODO_SSH_HOST|TODO_REPO_URL"
 )
 _RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_CONTINUATION_MUSE_MODEL = "omp:openrouter/meta/muse-spark-1.3-contributor"
+_CONTINUATION_MUSE_SESSION_PREFIX = "native-build-forward-c2-bb000694-20260903-r4"
+
+
+def _validate_continuation_muse_routes(
+    preflight_summary: Mapping[str, Any], *, session: str
+) -> dict[str, Any] | None:
+    """Validate the closed r4 route before any cloud side effect."""
+    if not session.startswith(_CONTINUATION_MUSE_SESSION_PREFIX):
+        return None
+    bad: list[dict[str, Any]] = []
+    for milestone in preflight_summary.get("milestones", []):
+        label = milestone.get("label", "")
+        phase_chains = milestone.get("resolved_phase_chains", {})
+        for phase, chain in phase_chains.items():
+            if chain != [_CONTINUATION_MUSE_MODEL]:
+                bad.append({"label": label, "phase": phase, "resolved": chain})
+    if bad:
+        raise CliError(
+            "closed_profile_route_mismatch",
+            "r4 continuation requires Muse Spark 1.3 Contributor/high with no fallback",
+            extra={"route_failures": bad},
+        )
+    return {
+        "status": "ok",
+        "model": _CONTINUATION_MUSE_MODEL,
+        "thinking": "high",
+        "fallback": False,
+    }
+
+
+def _remote_openrouter_credential_check(provider) -> dict[str, Any]:
+    """Check only credential presence; never return its value."""
+    try:
+        result = provider.ssh_exec(
+            'test -n "${OPENROUTER_API_KEY:-}"'
+        )
+    except Exception as exc:
+        return {"status": "error", "reason": type(exc).__name__}
+    return {
+        "status": "ok" if result.returncode == 0 else "missing",
+        "credential": "OPENROUTER_API_KEY",
+    }
 
 
 def _validate_zero_recovery_canary_spec(
@@ -3787,6 +3830,7 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
+    session_home = f"/workspace/.megaplan/cloud-sessions/{repair_session or CHAIN_SESSION_NAME}/git-home"
     # The manifest activation runs immediately before this command and exports
     # the per-epic runtime manifest as ARNOLD_RUNTIME_MANIFEST.  Capture that
     # path as readonly *before* an ordinary launch loads the mutable box-wide
@@ -3798,6 +3842,21 @@ def _chain_start_command(
     # engine dir (PYTHONPATH) derives from the pinned manifest's
     # ``epic.runtime_root``; nothing reads SRC selector envs (G4).
     prefix = (
+        # Fresh AgentBox chains inherit one hermetic Git environment.  The
+        # local developer path has no /workspace/.creds directory and keeps
+        # its normal Git configuration; an AgentBox path fails closed when its
+        # mounted helper is missing or unreadable.  Only the helper path is
+        # exported, never credential contents.
+        'ARNOLD_CHAIN_GIT_HELPER="${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE:-/workspace/.creds/git-credentials}"; '
+        'if [ -d /workspace/.creds ] || [ -n "${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE+x}" ]; then '
+        'if [ ! -r "$ARNOLD_CHAIN_GIT_HELPER" ]; then '
+        'echo "[megaplan-launch] on_box_git_auth_unavailable: credential helper is absent or unreadable"; exit 78; fi; '
+        f'mkdir -p {shlex.quote(session_home)}; '
+        'export ARNOLD_GIT_HOME=' + shlex.quote(session_home) + '; '
+        'export HOME="$ARNOLD_GIT_HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null '
+        'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper '
+        'GIT_CONFIG_VALUE_0="store --file=$ARNOLD_CHAIN_GIT_HELPER" GIT_TERMINAL_PROMPT=0; '
+        'fi; '
         'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
         'readonly PINNED_RUNTIME_MANIFEST; '
     )
@@ -5110,6 +5169,9 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         project_dir=project_root,
         cloud_default_agent=spec.agents.get("default"),
     )
+    closed_route = _validate_continuation_muse_routes(
+        preflight_summary, session=launch_ctx.session_name
+    )
     missing_env = _missing_configured_secrets(spec, os.environ)
     remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
     if not remote["skipped"]:
@@ -5176,6 +5238,8 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
                 provider,
                 list(preflight_summary.get("runtime_commands", [])),
             )
+            if closed_route is not None:
+                remote["provider_credentials"] = _remote_openrouter_credential_check(provider)
         else:
             import_check = {
                 "status": "unavailable",
@@ -5212,6 +5276,12 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         errors.extend(str(item) for item in remote["import_check"]["errors"])
     if remote.get("missing_commands"):
         errors.append("missing remote commands: " + ", ".join(remote["missing_commands"]))
+    if (
+        not remote["skipped"]
+        and remote.get("provider_credentials", {}).get("status") != "ok"
+        and closed_route is not None
+    ):
+        errors.append("r4 continuation requires an available OPENROUTER_API_KEY")
     payload = {
         "success": not errors,
         "event": "cloud_preflight",
@@ -5230,6 +5300,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             "warning": anchor_requirement.warning,
         },
         "preflight": preflight_summary,
+        "closed_route": closed_route,
         "warnings": _cloud_profile_warnings(preflight_summary, spec),
         "missing_env": missing_env,
         "template_placeholders": placeholder_findings,
@@ -5532,6 +5603,9 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         project_dir=project_root,
         cloud_default_agent=spec.agents.get("default"),
     )
+    closed_route = _validate_continuation_muse_routes(
+        preflight_summary, session=launch_ctx.session_name
+    )
     idea_dir = Path(args.idea_dir).expanduser().resolve() if args.idea_dir else local_spec_path.parent.resolve()
     remote_spec_path = launch_ctx.remote_spec_path
     uploads: list[tuple[Path, str]] = []
@@ -5581,6 +5655,21 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "preflight": preflight_summary,
             },
         )
+
+    provider_credentials = None
+    if closed_route is not None:
+        provider_credentials = _remote_openrouter_credential_check(provider)
+        if provider_credentials.get("status") != "ok":
+            raise CliError(
+                "cloud_preflight_failed",
+                "r4 continuation requires an available OPENROUTER_API_KEY",
+                extra={
+                    "missing_commands": [],
+                    "missing_env": ["OPENROUTER_API_KEY"],
+                    "provider_credentials": provider_credentials,
+                    "preflight": preflight_summary,
+                },
+            )
 
     if spec.isolated_chain_runner:
         seed_isolated_git_credentials(spec, provider, required=True)

@@ -59,6 +59,7 @@ def on_box_git_credential_env(
     *,
     env: dict[str, str] | None = None,
     credential_file: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
     required: bool = True,
 ) -> dict[str, str]:
     """Return a sanitized environment for on-box Git operations.
@@ -93,6 +94,8 @@ def on_box_git_credential_env(
     safe["GIT_CONFIG_KEY_0"] = "credential.helper"
     safe["GIT_CONFIG_VALUE_0"] = f"store --file={path}"
     safe["GIT_CONFIG_COUNT"] = "1"
+    if home is not None:
+        safe["HOME"] = str(home)
     return safe
 
 
