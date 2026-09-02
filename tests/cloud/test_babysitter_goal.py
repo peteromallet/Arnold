@@ -61,8 +61,8 @@ def test_renderer_is_the_single_agent_orchestrator_not_an_external_protocol() ->
 def test_continuation_goal_closes_all_roles_to_muse_high() -> None:
     renderer = _load_renderer()
     goal = renderer.render_babysitter_goal(
-        "native-build-forward-c2-c4b0c102-20260902-r2",
-        session="native-build-forward-c2-c4b0c102-20260902-r2",
+        "native-build-forward-c2-ec69ede3-20260902-r3",
+        session="native-build-forward-c2-ec69ede3-20260902-r3",
     )
     assert "omp:openrouter/meta/muse-spark-1.3-contributor" in goal
     assert "thinking=high" in goal

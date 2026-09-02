@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 import stat
+from urllib.parse import urlsplit, urlunsplit
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from string import Template
@@ -141,6 +142,22 @@ def _quoted(script: str) -> str:
     return shlex.quote(script.strip())
 
 
+def _sanitise_git_url(url: str) -> str:
+    """Strip URL userinfo before a rendered clone can expose credentials.
+
+    On-box Git receives authentication through the file-backed helper
+    environment.  Userinfo is therefore both unnecessary and unsafe in the
+    shell command (which is also captured by process-adapter evidence).
+    SCP-style ``git@host:path`` URLs are intentionally left alone; ``git`` is
+    the transport user there, not a password-bearing URL.
+    """
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https", "ssh"} or "@" not in parsed.netloc:
+        return url
+    host_netloc = parsed.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parsed.scheme, host_netloc, parsed.path, parsed.query, parsed.fragment))
+
+
 def render_ensure_repo_command(repo: RepoSpec) -> str:
     """Render the fixed clone-if-missing command used by cloud entrypoints."""
     workspace = PurePosixPath(repo.workspace)
@@ -152,7 +169,7 @@ def render_ensure_repo_command(repo: RepoSpec) -> str:
             (
                 f"if [ ! -d {shlex.quote(git_dir)} ]; then "
                 f"git clone --branch {shlex.quote(repo.branch)} "
-                f"{shlex.quote(repo.url)} {shlex.quote(repo.workspace)}; "
+                f"{shlex.quote(_sanitise_git_url(repo.url))} {shlex.quote(repo.workspace)}; "
                 "else true; fi"
             ),
         ]

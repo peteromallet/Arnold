@@ -50,7 +50,11 @@ from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, 
 from arnold_pipelines.megaplan.finite_canary_policy import (
     finite_canary_policy_is_exact,
 )
-from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
+from arnold_pipelines.megaplan.cloud.template import (
+    _sanitise_git_url,
+    materialize_deploy_dir,
+    render_ensure_repos_block,
+)
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
 
@@ -1548,7 +1552,9 @@ def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> N
         _relay_output(result, secret_names=spec.secrets, env=os.environ)
     if result.returncode != 0:
         repos = [spec.repo, *spec.extra_repos]
-        targets = ", ".join(f"{r.url}@{r.branch} into {r.workspace}" for r in repos)
+        targets = ", ".join(
+            f"{_sanitise_git_url(r.url)}@{r.branch} into {r.workspace}" for r in repos
+        )
         raise CliError(
             "provider_failed",
             f"ensure repo checkout failed for {targets} (exit {result.returncode})",

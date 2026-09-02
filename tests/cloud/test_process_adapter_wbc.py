@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import yaml
 
 from arnold.workflow.effect_protocol import EffectProtocol
@@ -16,6 +17,8 @@ from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
 from arnold_pipelines.megaplan.cloud.providers.local import LocalProvider
 from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
 from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+from arnold_pipelines.megaplan.cloud.template import render_ensure_repo_command
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
@@ -176,6 +179,133 @@ def test_on_box_checkout_clones_after_external_wbc_evidence(
     _ensure_repo_checkout(spec, provider, relay=False)
     assert (workspace / ".git").is_dir()
     assert (workspace / "README").read_text(encoding="utf-8") == "seed\n"
+
+
+def test_on_box_github_checkout_uses_file_helper_without_secret_in_argv_or_wbc(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """On-box Git receives only the durable helper path, never its contents."""
+    from arnold_pipelines.megaplan.cloud.cli import _ensure_repo_checkout
+
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+    credential_file = tmp_path / "git-credentials"
+    secret = "ghp_super_secret_value_1234567890"
+    credential_file.write_text(
+        f"https://x-access-token:{secret}@github.com\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(credential_file))
+    spec = replace(
+        _cloud_spec(tmp_path, provider="ssh"),
+        repo=replace(
+            _cloud_spec(tmp_path, provider="ssh").repo,
+            url=f"https://user:{secret}@github.com/example/app.git",
+        ),
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", fake_run
+    )
+    provider = OnBoxProvider(spec)
+    _ensure_repo_checkout(spec, provider, relay=False)
+
+    argv, kwargs = calls[0]
+    assert secret not in " ".join(argv)
+    assert secret not in render_ensure_repo_command(spec.repo)
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert env["GIT_CONFIG_VALUE_0"] == f"store --file={credential_file}"
+    assert all(secret not in str(value) for value in env.values())
+    journal = (
+        process_adapter_wbc_dir(
+            provider._process_adapter_evidence_root(),
+            producer_family="cloud_provider_adapter",
+            adapter_name="OnBoxProvider",
+        )
+        / "events.ndjson"
+    ).read_text()
+    assert secret not in journal
+
+
+def test_on_box_github_checkout_missing_helper_is_typed_and_does_not_spawn(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An authenticated on-box Git operation fails closed before transport."""
+    from arnold_pipelines.megaplan.cloud.cli import _ensure_repo_checkout
+
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+    missing = tmp_path / "missing-git-credentials"
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(missing))
+    spec = _cloud_spec(tmp_path, provider="ssh")
+    spawned = False
+
+    def fail_run(*_args, **_kwargs):
+        nonlocal spawned
+        spawned = True
+        raise AssertionError("Git transport must not start without helper")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", fail_run
+    )
+    with pytest.raises(CliError) as caught:
+        _ensure_repo_checkout(spec, OnBoxProvider(spec), relay=False)
+    assert caught.value.code == "on_box_git_auth_unavailable"
+    assert "missing-git-credentials" not in caught.value.message
+    assert not spawned
+
+
+def test_on_box_git_auth_failure_is_typed_and_redacted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    helper = tmp_path / "git-credentials"
+    secret = "ghp_auth_failure_secret_1234567890"
+    helper.write_text(f"https://x-access-token:{secret}@github.com\n", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(helper))
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+
+    def auth_failure(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            argv, 128, "", f"fatal: Authentication failed for {secret}\n"
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", auth_failure
+    )
+    provider = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh"))
+    with pytest.raises(CliError) as caught:
+        provider.ssh_exec("git push origin main")
+    assert caught.value.code == "on_box_git_auth_failed"
+    assert secret not in str(caught.value)
+    journal = (
+        process_adapter_wbc_dir(
+            provider._process_adapter_evidence_root(),
+            producer_family="cloud_provider_adapter",
+            adapter_name="OnBoxProvider",
+        )
+        / "events.ndjson"
+    )
+    assert secret not in journal.read_text(encoding="utf-8")
 
 
 def test_ssh_provider_ssh_exec_records_process_adapter_wbc(

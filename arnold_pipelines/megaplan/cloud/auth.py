@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import shlex
 import subprocess
 import sys
@@ -33,6 +34,66 @@ OAUTH_SEEDS = (
         root_dest="/root/.codex/auth.json",
     ),
 )
+
+
+# The AgentBox mounts the durable Git credential file on the shared control
+# volume.  Keep this in the cloud-auth module so on-box transports use the
+# same credential policy as the rest of cloud orchestration rather than
+# growing a provider-local secret convention.
+ON_BOX_GIT_CREDENTIAL_FILE = "/workspace/.creds/git-credentials"
+ON_BOX_GIT_CREDENTIAL_FILE_ENV = "ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE"
+_SAFE_ON_BOX_GIT_ENV = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "GIT_TERMINAL_PROMPT",
+    }
+)
+
+
+def on_box_git_credential_env(
+    *,
+    env: dict[str, str] | None = None,
+    credential_file: str | os.PathLike[str] | None = None,
+    required: bool = True,
+) -> dict[str, str]:
+    """Return a sanitized environment for on-box Git operations.
+
+    Only the credential-helper *path* is placed in Git's configuration
+    environment.  The helper file is deliberately never opened here, so its
+    contents cannot enter argv, receipts, or an exception message.  A missing
+    or unreadable helper is a typed setup failure when authentication is
+    required.  ``GIT_CONFIG_GLOBAL``/``GIT_CONFIG_NOSYSTEM`` retain the
+    hermetic on-box environment while replacing inherited Git config with the
+    single path-only helper entry.
+    """
+    source = dict(env if env is not None else os.environ)
+    configured = credential_file or source.get(ON_BOX_GIT_CREDENTIAL_FILE_ENV)
+    raw_path = str(configured or ON_BOX_GIT_CREDENTIAL_FILE).strip()
+    path = Path(raw_path)
+    valid = path.is_absolute() and path.is_file() and os.access(path, os.R_OK)
+    if required and not valid:
+        raise CliError(
+            "on_box_git_auth_unavailable",
+            "on-box Git credential helper file is absent or unreadable",
+        )
+    if not valid:
+        return source
+
+    # Do not forward the ambient cloud process environment: it can contain
+    # provider tokens unrelated to Git.  Git gets only ordinary process
+    # plumbing plus the path-only helper configuration below.
+    safe = {key: value for key, value in source.items() if key in _SAFE_ON_BOX_GIT_ENV}
+    safe["GIT_CONFIG_NOSYSTEM"] = "1"
+    safe["GIT_CONFIG_GLOBAL"] = os.devnull
+    safe["GIT_CONFIG_KEY_0"] = "credential.helper"
+    safe["GIT_CONFIG_VALUE_0"] = f"store --file={path}"
+    safe["GIT_CONFIG_COUNT"] = "1"
+    return safe
 
 
 def _remote_seed_command(*, payload_b64: str, persistent_dest: str, root_dest: str) -> str:
