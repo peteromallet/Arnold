@@ -294,6 +294,14 @@ class SshEffectAdapter:
                 "production is action-off in M10",
                 target.target_key,
             )
+            return SshOutcome(
+                ok=False,
+                shard=target.shard.value,
+                glek="",
+                outcome_kind=OUTCOME_FAILED,
+                error="Production SSH dispatch is action-off in M10",
+                evidence={"gate_verdict": "production_action_off"},
+            )
 
         # Provider-missing negative
         if not self._check_provider_available(target):

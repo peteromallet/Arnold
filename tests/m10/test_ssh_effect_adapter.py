@@ -352,6 +352,36 @@ def test_authorized_gate_dispatches_with_apply_fn_and_protocol(
     assert apply_calls == [{"deploy_dir": "/tmp/deploy"}]
 
 
+def test_production_route_is_action_off_before_gate_protocol_or_apply(
+    mock_protocol, build_target
+):
+    """Production route denies before any effect or transport interaction."""
+    gate = MagicMock(return_value=GateResult.AUTHORIZED)
+    production = SshEffectAdapter(
+        mock_protocol,
+        action_gate_check=gate,
+        production_enabled=True,
+    )
+    apply_calls: list[dict] = []
+
+    result = production.route(
+        target=build_target,
+        intent_payload={"deploy_dir": "/tmp/deploy"},
+        apply_fn=lambda payload: apply_calls.append(payload),
+        # This would be rejected by the stale-fence check if production mode
+        # were allowed to reach it; the action-off guard must come first.
+        fence_token=None,
+    )
+
+    assert not result.ok
+    assert result.outcome_kind == OUTCOME_FAILED
+    assert result.error == "Production SSH dispatch is action-off in M10"
+    assert result.evidence == {"gate_verdict": "production_action_off"}
+    gate.assert_not_called()
+    mock_protocol.assert_not_called()
+    assert apply_calls == []
+
+
 def test_adapter_effect_authorized_is_strict_authorized_only():
     """The shared predicate admits only the canonical AUTHORIZED verdict."""
     assert adapter_effect_authorized(GateResult.AUTHORIZED) is True
