@@ -217,6 +217,13 @@ class TestThinkingMapping:
     def test_passthrough_identity(self):
         assert omp_thinking_level("high", "deepseek", "deepseek-v4-pro") == "high"
 
+    def test_muse_spark_13_requires_minimal_thinking(self):
+        model = "muse-spark-1.3-contributor"
+        assert omp_thinking_level(None, "openrouter", model) == "minimal"
+        assert omp_thinking_level("auto", "openrouter", model) == "minimal"
+        assert omp_thinking_level("off", "openrouter", model) == "minimal"
+        assert omp_thinking_level("high", "openrouter", model) == "minimal"
+
 
 class TestStructuredOutput:
     def test_valid_output_via_write_tool(

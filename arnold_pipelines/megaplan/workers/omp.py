@@ -145,6 +145,7 @@ _OMP_THINKING_LEVELS = frozenset(
 )
 # CLI-level ``auto`` leaves the RPC client unset (omp's own default applies).
 _AUTO_THINKING = "auto"
+_MUSE_SPARK_1_3_MODEL = "muse-spark-1.3-contributor"
 
 
 def _omp_model_thinking_ladder(provider: str | None, model_id: str | None) -> tuple[str, ...] | None:
@@ -162,6 +163,11 @@ def _omp_model_thinking_ladder(provider: str | None, model_id: str | None) -> tu
     mid = (model_id or "").lower()
     provider = (provider or "").lower()
     if provider == "openrouter":
+        if _MUSE_SPARK_1_3_MODEL in mid:
+            # Muse Spark 1.3's OpenRouter route rejects the wire ``off``
+            # value; minimal is the only safe floor observed by the
+            # production provider probe.
+            return ("minimal",)
         if "deepseek" in mid:
             return ("high",)
         if "glm" in mid:
@@ -204,17 +210,23 @@ def omp_thinking_level(
 ) -> str | None:
     """Map an Arnold effort suffix to a typed RPC thinking level.
 
-    ``None``/``auto`` leave the RPC client unset (omp default).  ``off``
-    disables thinking.  Levels outside the per-model ladder are clamped to the
-    nearest accepted tier.  Fireworks maps ``minimal`` to provider ``none``
-    (thinking off).
+    ``None``/``auto`` leave the RPC client unset (omp default), except for
+    Muse Spark 1.3 on OpenRouter, whose provider contract requires explicit
+    ``minimal``.  ``off`` disables thinking for ordinary routes; Muse 1.3 is
+    pinned to ``minimal`` because the provider rejects ``off``.  Levels
+    outside the per-model ladder are clamped to the nearest accepted tier.
+    Fireworks maps ``minimal`` to provider ``none`` (thinking off).
     """
     if not effort or effort == _AUTO_THINKING:
-        return None
+        ladder = _omp_model_thinking_ladder(provider, model_id)
+        return ladder[0] if ladder == ("minimal",) else None
     if effort not in _OMP_THINKING_LEVELS:
         # Unknown Arnold-side token: do not invent a wire level.
         return None
     if effort == "off":
+        ladder = _omp_model_thinking_ladder(provider, model_id)
+        if ladder == ("minimal",):
+            return "minimal"
         return "off"
     if provider == "fireworks" and effort == "minimal":
         # Fireworks host map: minimal → provider ``none`` (thinking off).
