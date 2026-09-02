@@ -1903,6 +1903,21 @@ def test_legacy_contextless_release_can_be_attested_then_consumed(
     )
     assert attested["outcome"] == "committed"
     assert _state_path_for(spec_path).read_bytes() == before
+    attested_events = [
+        event for event in journal_for(tmp_path).replay_strict()["accepted"]
+        if event.get("operation_id") == attested["event"]["operation_id"]
+    ]
+    assert {
+        event["event_kind"] for event in attested_events
+    } == {
+        "chain_control.intent",
+        "chain_control.authority_validated",
+        "chain_control.claimed",
+        "chain_control.hold_context_attested",
+    }
+    assert all(event.get("expected_cursor") == 1 for event in attested_events)
+    terminal = next(event for event in attested_events if event["event_kind"] == "chain_control.hold_context_attested")
+    assert terminal["actual_cursor"] == 1
     attested_receipt = tmp_path / "attested.json"
     attested_receipt.write_text(
         json.dumps({"schema": "nbf08-chain-control-hold-context-attestation-v1", "event": attested["event"]}),
@@ -1938,6 +1953,126 @@ def test_legacy_contextless_release_can_be_attested_then_consumed(
         attested_hold_context_receipt=str(attested_receipt),
     )
     assert replay["outcome"] == "replay"
+
+
+def test_legacy_context_attestation_subprocess_round_trip(
+    tmp_path: Path,
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["execution_binding"] = "optional"
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    state.metadata["execution_binding"].pop("launched_identity", None)
+    state.current_milestone_index = 0
+    state.current_plan_name = "c1-plan"
+    state.last_state = "paused"
+    state.metadata["operator_pause"] = {
+        "schema_version": AUTHORITY_SCHEMA,
+        "active": True,
+        "paused_at": "2026-08-12T00:00:00+00:00",
+        "actor": "test-operator",
+        "reason": "pause before legacy context attestation",
+        "previous_chain_last_state": "planned",
+        "previous_plan_state": "planned",
+        "plan": "c1-plan",
+    }
+    plan_path = _write_plan_state(tmp_path, "c1-plan")
+    plan_state = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_state["meta"] = {"operator_pause": {"schema_version": AUTHORITY_SCHEMA, "active": True, "plan": "c1-plan"}}
+    plan_path.write_text(json.dumps(plan_state, sort_keys=True) + "\n", encoding="utf-8")
+    save_chain_state(spec_path, state)
+    spec_bytes = spec_path.read_bytes()
+    persisted = load_chain_state(spec_path, verify_execution_binding=False)
+    previous = persisted.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+    target = json.loads(Path(offline_rollback_runtime["identity"]).read_text(encoding="utf-8"))
+    expected_spec_sha = hashlib.sha256(spec_bytes).hexdigest()
+
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+    journal = journal_for(tmp_path)
+    chain_id = chain_id_for_spec(spec_path)
+    journal.ensure_genesis(chain_id=chain_id, actor={"id": "legacy", "class": "operator"}, spec_identity=str(spec_path))
+    held = journal.mutate(
+        chain_id=chain_id,
+        operation_id="b" * 64,
+        intent_kind="runtime-rebind",
+        actor={"id": "legacy", "class": "operator"},
+        expected_revision=None,
+        expected_cursor=0,
+        state_paths=[_state_path_for(spec_path), plan_path],
+        effect=lambda _txn: (_ for _ in ()).throw(ChainControlHold("legacy_runtime_drift", "legacy contextless hold")),
+    )
+    hold = journal.operation_result("b" * 64)
+    assert held["outcome"] == "hold" and hold is not None
+    evidence = tmp_path / "legacy-attestation-evidence.txt"
+    evidence.write_text("operator attested legacy hold\n", encoding="utf-8")
+    release = journal.release_hold(
+        chain_id=chain_id,
+        operation_id="b" * 64,
+        expected_hold_event_hash=hold["event_hash"],
+        expected_chain_spec_sha256=expected_spec_sha,
+        spec_path=spec_path,
+        expected_state_digest=state_digest_for(persisted.to_dict()),
+        expected_state_revision=None,
+        expected_cursor=0,
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        recovery_evidence=evidence,
+        actor="operator",
+        reason="release legacy hold",
+        expect_missing_state_revision=True,
+    )
+    release_receipt = tmp_path / "legacy-release.json"
+    release_receipt.write_text(json.dumps({"schema": "nbf08-chain-control-hold-release-v1", "event": release["event"]}), encoding="utf-8")
+    attested_receipt = tmp_path / "legacy-attested.json"
+    env = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    python_b = str(offline_rollback_runtime["python_b"])
+    attest_args = [
+        python_b, "-P", "-m", "arnold_pipelines.megaplan", "chain", "attest-hold-context",
+        "--spec", str(spec_path), "--project-dir", str(tmp_path), "--chain-id", chain_id,
+        "--operation-id", "b" * 64, "--expected-hold-event-hash", hold["event_hash"],
+        "--released-hold-receipt", str(release_receipt), "--expected-release-event-hash", release["event"]["event_hash"],
+        "--expected-chain-spec-sha256", expected_spec_sha, "--expected-state-digest", state_digest_for(persisted.to_dict()),
+        "--expect-missing-state-revision", "--expected-cursor", "0", "--expected-current-milestone", "c1",
+        "--expected-current-plan", "c1-plan", "--from-runtime-sha256", previous["content_sha256"],
+        "--to-runtime-sha256", target["content_sha256"], "--runtime-identity", str(offline_rollback_runtime["identity"]),
+        "--runtime-provenance-receipt", str(offline_rollback_runtime["receipt"]), "--recovery-evidence", str(evidence),
+        "--receipt", str(attested_receipt), "--reason", "attest legacy hold", "--actor", "operator",
+    ]
+    before_attest = _state_path_for(spec_path).read_bytes()
+    attest = subprocess.run(attest_args, check=False, capture_output=True, text=True, env=env)
+    assert attest.returncode == 0, attest.stderr
+    assert _state_path_for(spec_path).read_bytes() == before_attest
+    attest_replay = subprocess.run(attest_args, check=False, capture_output=True, text=True, env=env)
+    assert attest_replay.returncode == 0, attest_replay.stderr
+    assert json.loads(attest.stdout)["receipt"] == json.loads(attest_replay.stdout)["receipt"]
+    rebind_args = [
+        python_b, "-P", "-m", "arnold_pipelines.megaplan", "chain", "runtime-rebind", "--spec", str(spec_path),
+        "--project-dir", str(tmp_path), "--from-runtime-sha256", previous["content_sha256"],
+        "--to-runtime-sha256", target["content_sha256"], "--expected-current-milestone", "c1",
+        "--expected-current-plan", "c1-plan", "--direction", "cutover", "--reason", "consume attested hold",
+        "--actor", "operator", "--runtime-identity", str(offline_rollback_runtime["identity"]),
+        "--runtime-provenance-receipt", str(offline_rollback_runtime["receipt"]), "--allow-optional-policy",
+        "--expected-chain-spec-sha256", expected_spec_sha, "--attested-hold-context-receipt", str(attested_receipt),
+    ]
+    wrong_target_args = list(rebind_args)
+    wrong_target_args[wrong_target_args.index("--to-runtime-sha256") + 1] = "0" * 64
+    wrong_target = subprocess.run(wrong_target_args, check=False, capture_output=True, text=True, env=env)
+    assert wrong_target.returncode == 1
+    assert _state_path_for(spec_path).read_bytes() == before_attest
+    first = subprocess.run(rebind_args, check=False, capture_output=True, text=True, env=env)
+    second = subprocess.run(rebind_args, check=False, capture_output=True, text=True, env=env)
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    assert first_payload["outcome"] == "committed"
+    assert second_payload["outcome"] == "replay"
+    assert first_payload["receipt"] == second_payload["receipt"]
+    assert spec_path.read_bytes() == spec_bytes
 
 
 def test_optional_runtime_rebind_requires_verified_receipt_without_mutation(
