@@ -99,6 +99,30 @@ def _current_head(root: Path) -> str:
     return value
 
 
+def _source_guard(chain: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = chain.get("metadata")
+    binding = metadata.get("project_source_binding") if isinstance(metadata, Mapping) else None
+    if not isinstance(binding, Mapping):
+        raise _refuse("project-source binding is unavailable for restart custody")
+    current = binding.get("current")
+    if not isinstance(current, Mapping):
+        raise _refuse("project-source binding current identity is unavailable for restart custody")
+    branch = current.get("branch")
+    head = current.get("head")
+    if not isinstance(branch, str) or not branch.strip():
+        raise _refuse("project-source binding current branch is unavailable for restart custody")
+    if not isinstance(head, str) or _FULL_SHA.fullmatch(head.lower()) is None:
+        raise _refuse("project-source binding current head is unavailable for restart custody")
+    execution = metadata.get("execution_binding") if isinstance(metadata, Mapping) else None
+    if not isinstance(execution, Mapping):
+        raise _refuse("execution binding is unavailable for restart custody")
+    return {
+        "source_binding": dict(binding),
+        "source": {"branch": branch, "head": head.lower()},
+        "execution_binding": dict(execution),
+    }
+
+
 def _matching_retirement(
     plan: Mapping[str, Any],
     *,
@@ -466,6 +490,7 @@ def restart_current_attempt(
             expected_source_head=expected_source_head,
             operation_id=operation_id,
         )
+        source_guard = _source_guard(chain)
     except CliError as exc:
         if exc.code == "current_attempt_restart_refused":
             raise
@@ -570,6 +595,24 @@ def restart_current_attempt(
             "milestone": expected_current_milestone,
             "plan_state_sha256": sha256_path(plan_path),
             "chain_state_sha256": sha256_path(state_path),
+            "restart_guard": {
+                "schema": "arnold.megaplan.current-attempt-restart-guard.v1",
+                "session_id": expected_session_id,
+                "spec_sha256": expected_spec_sha256,
+                "chain_state_sha256_before": expected_chain_state_sha256,
+                "plan_state_sha256_before": expected_plan_state_sha256,
+                "marker_sha256": expected_marker_sha256,
+                "state_revision_before": expected_state_revision,
+                "cursor": expected_cursor,
+                "milestone": expected_current_milestone,
+                "retired_plan": expected_current_plan,
+                "source_binding_sha256": expected_binding_sha256,
+                "pre_state_digest": chain_effect.get("pre_state_digest"),
+                "post_state_digest": chain_effect.get("post_state_digest"),
+                "chain_state_sha256_after": sha256_path(state_path),
+                "plan_state_sha256_after": sha256_path(plan_path),
+                **source_guard,
+            },
         }
 
     result = apply_chain_lifecycle(

@@ -283,6 +283,42 @@ def test_target_rebind_accepts_retired_plan_without_mutating_it(tmp_path: Path) 
     assert binding["current"]["head"] == fixture["source"]
 
 
+def test_post_restart_rebind_uses_guarded_source_when_retired_base_is_historical(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    plan = _load_json(fixture["plan_path"])
+    plan["meta"]["chain_policy"]["milestone_base_sha"] = "9" * 40
+    _write_json(fixture["plan_path"], plan)
+    _restart(fixture)
+
+    result = target_rebind(
+        fixture["spec"],
+        fixture["root"],
+        direction="cutover",
+        expected_session_id=fixture["root"].name,
+        expected_current_milestone=MILESTONE,
+        expected_current_plan=PLAN_NAME,
+        from_branch=SOURCE_BRANCH,
+        from_head=fixture["source"],
+        from_milestone_base=fixture["source"],
+        from_ref=f"refs/heads/{SOURCE_BRANCH}",
+        to_branch=TARGET_BRANCH,
+        to_head=fixture["target"],
+        to_ref=f"refs/heads/{TARGET_BRANCH}",
+        expected_spec_sha256=sha256_path(fixture["spec"]),
+        expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+        expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
+        reason="rebind after guarded restart from historical plan base",
+        actor="test",
+    )
+
+    assert result["head"] == fixture["target"]
+    # The retired plan remains immutable; the new source is recorded only on
+    # the chain boundary and is available to the resumed successor.
+    assert _load_json(fixture["plan_path"])["meta"]["chain_policy"]["milestone_base_sha"] == "9" * 40
+
+
 def test_forged_restart_record_with_live_plan_refuses_target_rebind(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     chain = _load_json(fixture["state_path"])

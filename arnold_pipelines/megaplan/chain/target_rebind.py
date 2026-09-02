@@ -54,6 +54,8 @@ _STALE_GATE_ARTIFACT_PATTERNS = (
     "gate_signals_v*.json",
     "phase_result.json",
 )
+_RESTART_GUARD_SCHEMA = "arnold.megaplan.current-attempt-restart-guard.v1"
+_FULL_SHA256_RAW = re.compile(r"^[0-9a-f]{64}$")
 
 
 def sha256_path(path: Path) -> str:
@@ -361,6 +363,246 @@ def _milestone(
             f"current milestone {milestone.label!r} does not match {expected_label!r}",
         )
     return index, milestone
+
+
+def _binding_digest(binding: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            binding,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _require_restart_sha(value: Any, *, label: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if _FULL_SHA256_RAW.fullmatch(normalized) is None:
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            f"restart custody {label} must be a full SHA-256",
+        )
+    return normalized
+
+
+def _assert_restart_receipt(
+    *,
+    spec_path: Path,
+    project_root: Path,
+    state_path: Path,
+    plan_path: Path,
+    chain: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    chain_raw: bytes,
+    plan_raw: bytes,
+    milestone_index: int,
+    expected_session_id: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    from_branch: str,
+    from_head: str,
+    from_milestone_base: str,
+    expected_spec_sha256: str,
+) -> Mapping[str, Any]:
+    """Validate the one committed restart that authorizes a post-restart rebind.
+
+    The restart receipt is the committed ChainControl event, not the mutable
+    ``current_attempt_restart`` projection.  The projection selects the
+    operation; strict replay and the receipt's frozen guard payload prove the
+    operation and its before/after custody identities.
+    """
+
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        chain_id_for_spec,
+        journal_for,
+        state_digest_for,
+    )
+
+    metadata = chain.get("metadata")
+    restart = metadata.get("current_attempt_restart") if isinstance(metadata, Mapping) else None
+    if not isinstance(restart, Mapping):
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "post-restart target rebind requires a restart receipt",
+        )
+    operation_id = str(restart.get("operation_id") or "").strip().lower()
+    if _FULL_SHA256_RAW.fullmatch(operation_id) is None:
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt operation id is malformed",
+        )
+
+    replay = journal_for(project_root).replay_strict()
+    chain_id = chain_id_for_spec(spec_path)
+    committed = [
+        event
+        for event in replay.get("accepted", [])
+        if isinstance(event, Mapping)
+        and event.get("chain_id") == chain_id
+        and event.get("operation_id") == operation_id
+        and event.get("event_kind") == "chain_control.committed"
+    ]
+    if len(committed) != 1:
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt must resolve to exactly one committed event",
+        )
+    event = committed[0]
+    event_hash = _require_restart_sha(event.get("event_hash"), label="event hash")
+    if event.get("intent") != "restart_current_attempt":
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt intent is not restart_current_attempt",
+        )
+    if event.get("chain_id") != chain_id or event.get("operation_id") != operation_id:
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt chain or operation identity does not match the projection",
+        )
+    if event.get("spec_identity") != str(spec_path.resolve(strict=False)):
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt spec identity does not match the guarded spec",
+        )
+    effect_payload = event.get("payload")
+    effect = effect_payload.get("effect") if isinstance(effect_payload, Mapping) else None
+    if (
+        not isinstance(effect_payload, Mapping)
+        or effect_payload.get("intent_kind") != "restart_current_attempt"
+        or not isinstance(effect, Mapping)
+    ):
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt committed effect is malformed",
+        )
+    guard = effect.get("restart_guard")
+    if not isinstance(guard, Mapping) or guard.get("schema") != _RESTART_GUARD_SCHEMA:
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt lacks exact source and state guards",
+        )
+
+    required = {
+        "session_id",
+        "spec_sha256",
+        "chain_state_sha256_before",
+        "plan_state_sha256_before",
+        "marker_sha256",
+        "state_revision_before",
+        "cursor",
+        "milestone",
+        "retired_plan",
+        "source_binding_sha256",
+        "source_binding",
+        "source",
+        "execution_binding",
+        "pre_state_digest",
+        "post_state_digest",
+        "chain_state_sha256_after",
+        "plan_state_sha256_after",
+    }
+    if not required.issubset(guard):
+        raise CliError(
+            PROJECT_SOURCE_REBIND_ERROR,
+            "restart receipt lacks complete source, binding, or state guards",
+        )
+    if guard.get("session_id") != expected_session_id:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt session identity does not match")
+    if _require_restart_sha(guard.get("spec_sha256"), label="spec SHA-256") != expected_spec_sha256:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt spec guard does not match")
+    if guard.get("cursor") != milestone_index or guard.get("milestone") != expected_current_milestone:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt milestone guard does not match")
+    if guard.get("retired_plan") != expected_current_plan:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt retired-plan guard does not match")
+    if event.get("expected_cursor") != milestone_index or event.get("actual_cursor") != milestone_index:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt cursor evidence does not match")
+    expected_revision = guard.get("state_revision_before")
+    actual_revision = event.get("actual_revision")
+    if (
+        isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or event.get("expected_revision") != expected_revision
+        or isinstance(actual_revision, bool)
+        or not isinstance(actual_revision, int)
+        or actual_revision != expected_revision + 1
+    ):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt revision evidence does not match")
+    observed_revision = metadata.get("_nbf08_revision") if isinstance(metadata, Mapping) else None
+    if observed_revision != actual_revision:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt has an intervening state revision")
+
+    source = guard.get("source")
+    source_binding = guard.get("source_binding")
+    current_binding = metadata.get("project_source_binding") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(source, Mapping)
+        or source.get("branch") != from_branch
+        or source.get("head") != from_head
+        or source.get("head") != str(source.get("head") or "").lower()
+        or not isinstance(source_binding, Mapping)
+        or not isinstance(current_binding, Mapping)
+        or dict(source_binding) != dict(current_binding)
+        or _binding_digest(current_binding) != _require_restart_sha(
+            guard.get("source_binding_sha256"), label="source binding SHA-256"
+        )
+    ):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt source binding does not match")
+    if from_milestone_base != from_head:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt source base does not match source HEAD")
+    execution_binding = metadata.get("execution_binding") if isinstance(metadata, Mapping) else None
+    if not isinstance(execution_binding, Mapping) or dict(guard.get("execution_binding") or {}) != dict(execution_binding):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt launched execution binding changed")
+
+    pre_chain = _require_restart_sha(guard.get("chain_state_sha256_before"), label="pre chain-state SHA-256")
+    pre_plan = _require_restart_sha(guard.get("plan_state_sha256_before"), label="pre plan-state SHA-256")
+    marker_sha = _require_restart_sha(guard.get("marker_sha256"), label="marker SHA-256")
+    post_chain = _require_restart_sha(guard.get("chain_state_sha256_after"), label="post chain-state SHA-256")
+    post_plan = _require_restart_sha(guard.get("plan_state_sha256_after"), label="post plan-state SHA-256")
+    if _require_restart_sha(guard.get("spec_sha256"), label="spec SHA-256") != sha256_path(spec_path):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt spec changed")
+    if _require_restart_sha(effect.get("chain_state_sha256"), label="effect chain-state SHA-256") != hashlib.sha256(chain_raw).hexdigest():
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt post chain state does not match")
+    if _require_restart_sha(effect.get("plan_state_sha256"), label="effect plan-state SHA-256") != hashlib.sha256(plan_raw).hexdigest():
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt post plan state does not match")
+    if post_chain != hashlib.sha256(chain_raw).hexdigest() or post_plan != hashlib.sha256(plan_raw).hexdigest():
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt post-state hashes do not match")
+    if _require_restart_sha(effect.get("chain_state_sha256"), label="effect chain-state SHA-256") != _require_restart_sha(guard.get("chain_state_sha256_after"), label="post chain-state SHA-256"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt chain-state hashes disagree")
+    if _require_restart_sha(effect.get("plan_state_sha256"), label="effect plan-state SHA-256") != _require_restart_sha(guard.get("plan_state_sha256_after"), label="post plan-state SHA-256"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt plan-state hashes disagree")
+    if _require_restart_sha(event.get("pre_state_digest"), label="pre state digest") != _require_restart_sha(guard.get("pre_state_digest"), label="pre state digest"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt pre-state digest changed")
+    if _require_restart_sha(event.get("post_state_digest"), label="post state digest") != _require_restart_sha(guard.get("post_state_digest"), label="post state digest"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt post-state digest changed")
+    if _require_restart_sha(event.get("post_state_digest"), label="post state digest") != state_digest_for(chain):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt post-state digest does not match current chain state")
+
+    marker_path = project_root / ".megaplan" / "cloud-session.json"
+    if marker_path.is_file():
+        if hashlib.sha256(marker_path.read_bytes()).hexdigest() != marker_sha:
+            raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt marker changed")
+        _, marker = _load_json_bytes(marker_path, label="session marker")
+        if marker.get("session") != expected_session_id or marker.get("should_run") is not False:
+            raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt requires a paused, unoccupied session marker")
+        for key in ("owner", "runner", "tmux_session", "pid", "worker_pid"):
+            value = marker.get(key)
+            if value not in (None, False, "", [], {}, ()):
+                raise CliError(PROJECT_SOURCE_REBIND_ERROR, f"restart receipt session marker names an occupied {key}")
+
+    retirement = plan.get("meta", {}).get("retirement") if isinstance(plan.get("meta"), Mapping) else None
+    if (
+        str(plan.get("current_state") or "").strip().lower() != "aborted"
+        or not isinstance(retirement, Mapping)
+        or retirement.get("kind") != "retired_for_restart"
+        or retirement.get("operation_id") != operation_id
+        or retirement.get("cursor") != milestone_index
+        or retirement.get("milestone") != expected_current_milestone
+    ):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt retired plan identity does not match")
+    if pre_chain == post_chain or pre_plan == post_plan:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt does not prove a state transition")
+    return {"event_hash": event_hash, "operation_id": operation_id, "event": event, "guard": guard}
 
 
 def _event(
@@ -743,6 +985,7 @@ def target_rebind(
             expected_label=expected_current_milestone,
         )
         restart_boundary = chain.get("current_plan_name") is None
+        restart_receipt: Mapping[str, Any] | None = None
         if restart_boundary:
             metadata = chain.get("metadata")
             restart = metadata.get("current_attempt_restart") if isinstance(metadata, Mapping) else None
@@ -786,6 +1029,24 @@ def target_rebind(
                     "post-restart target rebind requires the retired plan to be "
                     "terminal with matching retirement metadata",
                 )
+            restart_receipt = _assert_restart_receipt(
+                spec_path=spec_path,
+                project_root=project_root,
+                state_path=state_path,
+                plan_path=plan_path,
+                chain=chain,
+                plan=plan,
+                chain_raw=chain_raw,
+                plan_raw=plan_raw,
+                milestone_index=milestone_index,
+                expected_session_id=expected_session_id,
+                expected_current_milestone=expected_current_milestone,
+                expected_current_plan=expected_current_plan,
+                from_branch=from_branch,
+                from_head=from_head,
+                from_milestone_base=from_milestone_base,
+                expected_spec_sha256=spec_sha,
+            )
         elif chain.get("current_plan_name") != expected_current_plan:
             raise CliError(PROJECT_SOURCE_REBIND_ERROR, "current plan does not match the guard")
         if plan.get("name") not in {None, expected_current_plan}:
@@ -811,10 +1072,15 @@ def target_rebind(
         meta = plan.get("meta")
         policy = meta.get("chain_policy") if isinstance(meta, Mapping) else None
         observed_base = policy.get("milestone_base_sha") if isinstance(policy, Mapping) else None
-        if observed_base != from_milestone_base or observed_base != from_head:
+        if not restart_boundary and (observed_base != from_milestone_base or observed_base != from_head):
             raise CliError(
                 PROJECT_SOURCE_REBIND_ERROR,
                 "plan milestone base does not exactly match the guarded source HEAD",
+            )
+        if restart_boundary and restart_receipt is None:
+            raise CliError(
+                PROJECT_SOURCE_REBIND_ERROR,
+                "post-restart target rebind requires a validated restart receipt",
             )
 
         from_advertised = _remote_advertised_sha(project_root, from_ref)
