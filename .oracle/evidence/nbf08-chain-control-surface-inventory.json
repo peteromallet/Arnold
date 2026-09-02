@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "06950c115f4d1e82e86272ebe32406a7f4035b62",
+  "base_revision": "f5fcf68685a638638c696da0c7ff03e7d4d0f196",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -433,7 +433,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "d325348a81922b8f8655bad4bbbf53379a4c1ea7baf6c88a0ced1b047e1473b4",
-        "be6d9f84af90dd0fed1e04782da38614c36813c82d0f53c9952341a2fd851821"
+        "4bdbe2b3ab85eb0146afba7486392a30391c9a62cca89746b3e82185c55b15c2"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -3934,7 +3934,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "b745da48f44329651f63cdb6d6082843709f0a4e34f2e50a3d3ead245f6fd1e2",
-        "6023b663b0219b81cad6bf389087112a709f1034947b25ef7832a44f13dd0bb9"
+        "51e4b19f3573d9ab87688db522d4b325bab32196cbb12ac39c4107eae93a4001"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "81da5f7a3d177395f0beda9ed85be117561cb16dc08f175deecccbb67e45fa01"
+  "inventory_digest": "28bb332d4e91b156763ef9f40abb8f9350a258b0b5cf57ccfbfe75478e7b0e13"
 }

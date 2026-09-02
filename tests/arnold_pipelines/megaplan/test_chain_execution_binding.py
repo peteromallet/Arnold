@@ -46,6 +46,8 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
 )
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.incident.chain_control import (
+    ChainControlCasConflict,
+    ChainControlHold,
     chain_id_for_spec,
     journal_for,
     state_digest_for,
@@ -1503,24 +1505,45 @@ def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
     operation_id = hold["operation_id"]
     evidence = tmp_path / "recovery-evidence.json"
     evidence.write_text('{"operator":"test","resolution":"cursor guard"}\n', encoding="utf-8")
+    common_release = {
+        "chain_id": chain_id_for_spec(spec_path),
+        "operation_id": operation_id,
+        "expected_hold_event_hash": hold_hash,
+        "expected_chain_spec_sha256": expected_spec_sha,
+        "spec_path": spec_path,
+        "expected_state_digest": state_digest_for(persisted.to_dict()),
+        "expected_cursor": persisted.current_milestone_index,
+        "expected_current_milestone": "c2",
+        "expected_current_plan": "c2-plan",
+        "recovery_evidence": evidence,
+        "actor": "test-operator",
+        "reason": "release exact cursor-validation hold",
+    }
+    with pytest.raises(ChainControlHold, match="requires an expected state revision"):
+        journal_for(tmp_path).release_hold(**common_release)
+    with pytest.raises(ChainControlHold, match="cannot be combined"):
+        journal_for(tmp_path).release_hold(
+            **common_release,
+            expected_state_revision=0,
+            expect_missing_state_revision=True,
+        )
+    for wrong_revision in (0, 1):
+        with pytest.raises(ChainControlCasConflict, match="revision"):
+            journal_for(tmp_path).release_hold(
+                **common_release,
+                expected_state_revision=wrong_revision,
+            )
+    assert state_path.read_bytes() == state_bytes
     release = journal_for(tmp_path).release_hold(
-        chain_id=chain_id_for_spec(spec_path),
-        operation_id=operation_id,
-        expected_hold_event_hash=hold_hash,
-        expected_chain_spec_sha256=expected_spec_sha,
-        spec_path=spec_path,
-        expected_state_digest=state_digest_for(persisted.to_dict()),
-        expected_state_revision=persisted.metadata.get("_nbf08_revision"),
-        expected_cursor=persisted.current_milestone_index,
-        expected_current_milestone="c2",
-        expected_current_plan="c2-plan",
-        recovery_evidence=evidence,
-        actor="test-operator",
-        reason="release exact cursor-validation hold",
+        **common_release,
+        expect_missing_state_revision=True,
     )
     assert release["outcome"] == "committed"
     assert state_path.read_bytes() == state_bytes
     released = release["event"]
+    assert released["payload"]["state_revision"] is None
+    assert released["payload"]["expected_state_revision"] is None
+    assert released["payload"]["state_revision_expectation"] == "absent"
     receipt = tmp_path / "released-hold-receipt.json"
     receipt.write_text(json.dumps({"schema": "nbf08-chain-control-hold-release-v1", "event": released}) + "\n")
     duplicate = journal_for(tmp_path).release_hold(
@@ -1584,6 +1607,7 @@ def test_optional_runtime_rebind_hold_release_is_state_neutral_and_replayable(
             expected_chain_spec_sha256=expected_spec_sha,
             expected_state_digest=state_digest_for(persisted.to_dict()),
             expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+            expect_missing_state_revision=True,
             expected_cursor=persisted.current_milestone_index,
             expected_current_milestone="c2",
             expected_current_plan="c2-plan",
@@ -2142,6 +2166,32 @@ def test_runtime_rebind_parser_dispatches_optional_policy_guards() -> None:
     assert args.chain_action == "runtime-rebind"
     assert args.allow_optional_policy is True
     assert args.expected_chain_spec_sha256 == "2" * 64
+
+
+def test_release_hold_revision_parser_requires_one_expectation() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_module.build_chain_parser(subparsers)
+    common = [
+        "chain", "release-hold", "--spec", "chain.yaml", "--project-dir", "/tmp/project",
+        "--chain-id", "chain-demo", "--operation-id", "op-demo",
+        "--expected-hold-event-hash", "a" * 64,
+        "--expected-chain-spec-sha256", "b" * 64,
+        "--expected-state-digest", "c" * 64, "--expected-cursor", "0",
+        "--expected-current-milestone", "c1", "--expected-current-plan", "c1-plan",
+        "--recovery-evidence", "evidence.json", "--receipt", "release.json",
+        "--reason", "parser coverage",
+    ]
+    absent = parser.parse_args([*common, "--expect-missing-state-revision"])
+    assert absent.expect_missing_state_revision is True
+    assert absent.expected_state_revision is None
+    valued = parser.parse_args([*common, "--expected-state-revision", "0"])
+    assert valued.expect_missing_state_revision is False
+    assert valued.expected_state_revision == 0
+    with pytest.raises(SystemExit):
+        parser.parse_args(common)
+    with pytest.raises(SystemExit):
+        parser.parse_args([*common, "--expected-state-revision", "0", "--expect-missing-state-revision"])
 
 
 def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(

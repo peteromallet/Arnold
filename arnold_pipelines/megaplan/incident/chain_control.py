@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 ABSENT: dict[str, bool] = {"__nbf08_absent__": True}
 ABSENT_KEY = "__nbf08_absent__"
+_UNSET_STATE_REVISION = object()
 SCHEMA_VERSION = "nbf08-chain-control-v1"
 RESERVATION_SCHEMA = "nbf08-sequence-reservation-v1"
 EVENT_DOMAIN = b"NBF08-CHAIN-CONTROL-EVENT-V1\x00"
@@ -1611,13 +1612,14 @@ class ChainControlJournal:
         expected_chain_spec_sha256: str,
         spec_path: Path,
         expected_state_digest: str,
-        expected_state_revision: int,
         expected_cursor: int,
         expected_current_milestone: str,
         expected_current_plan: str,
         recovery_evidence: Path,
         actor: str,
         reason: str,
+        expected_state_revision: int | None | object = _UNSET_STATE_REVISION,
+        expect_missing_state_revision: bool = False,
     ) -> dict[str, Any]:
         """Release one exact durable hold without changing chain state.
 
@@ -1639,6 +1641,33 @@ class ChainControlJournal:
             raise ChainControlHold("invalid_state_digest", "state digest must be a SHA-256")
         if not actor.strip() or not reason.strip() or not expected_current_plan.strip():
             raise ChainControlHold("missing_release_guard", "actor, reason, and current plan are required")
+        if expect_missing_state_revision:
+            if expected_state_revision not in (_UNSET_STATE_REVISION, None):
+                raise ChainControlHold(
+                    "revision_expectation_conflict",
+                    "missing-revision mode cannot be combined with an expected state revision",
+                )
+            state_revision_expectation = "absent"
+            expected_revision_value = None
+        else:
+            if expected_state_revision is _UNSET_STATE_REVISION:
+                raise ChainControlHold(
+                    "missing_revision_expectation",
+                    "release-hold requires an expected state revision or explicit missing-revision mode",
+                )
+            if expected_state_revision is None:
+                # Preserve the legacy API's explicit ``None`` representation
+                # of an unversioned state; omission remains an error.
+                state_revision_expectation = "absent"
+                expected_revision_value = None
+            elif not isinstance(expected_state_revision, int) or isinstance(expected_state_revision, bool):
+                raise ChainControlHold(
+                    "invalid_state_revision",
+                    "expected state revision must be an integer",
+                )
+            else:
+                state_revision_expectation = "value"
+                expected_revision_value = expected_state_revision
         if not recovery_evidence.is_file():
             raise ChainControlHold("missing_recovery_evidence", "recovery evidence is unavailable")
         evidence_sha = hashlib.sha256(recovery_evidence.read_bytes()).hexdigest()
@@ -1715,7 +1744,13 @@ class ChainControlJournal:
                 raise ChainControlHold("spec_cas_conflict", "persisted chain spec SHA-256 changed")
             if state_digest_for(current) != expected_state_digest:
                 raise ChainControlCasConflict("chain state digest changed")
-            if metadata.get("_nbf08_revision") != expected_state_revision:
+            observed_revision = metadata.get("_nbf08_revision")
+            if state_revision_expectation == "absent":
+                if observed_revision is not None:
+                    raise ChainControlCasConflict(
+                        "chain state revision is present; missing-revision guard failed"
+                    )
+            elif observed_revision != expected_revision_value:
                 raise ChainControlCasConflict("chain state revision changed")
             if current.get("current_milestone_index") != expected_cursor:
                 raise ChainControlCasConflict("chain cursor changed")
@@ -1745,7 +1780,15 @@ class ChainControlJournal:
                 "chain_id": chain_id,
                 "chain_spec_sha256": expected_chain_spec_sha256,
                 "state_digest": expected_state_digest,
-                "state_revision": expected_state_revision,
+                "state_revision": expected_revision_value,
+                **(
+                    {
+                        "expected_state_revision": None,
+                        "state_revision_expectation": state_revision_expectation,
+                    }
+                    if state_revision_expectation == "absent"
+                    else {}
+                ),
                 "cursor": expected_cursor,
                 "current_milestone": expected_current_milestone,
                 "current_plan": expected_current_plan,
@@ -1758,7 +1801,7 @@ class ChainControlJournal:
                 correlation_id=recovery_epoch, recovery_id=recovery_epoch,
                 payload={"intent_kind": "release-hold", **base}, semantic_effect="no_change",
                 claim_class="evidence-only", actor=actor, intent="release-hold",
-                expected_cursor=expected_cursor, expected_revision=expected_state_revision,
+                expected_cursor=expected_cursor, expected_revision=expected_revision_value,
                 linked_receipts=[str(recovery_evidence.resolve())], spec_identity=str(spec_path.resolve()),
             )
             validated = self.append_under_lock(
@@ -1782,8 +1825,8 @@ class ChainControlJournal:
                 payload=base, semantic_effect="no_change", claim_class="evidence-only",
                 actor=actor, intent="release-hold", outcome="hold_released",
                 failure_class="chain_control.hold", expected_cursor=expected_cursor,
-                expected_revision=expected_state_revision, actual_cursor=expected_cursor,
-                actual_revision=expected_state_revision, pre_state_digest=expected_state_digest,
+                expected_revision=expected_revision_value, actual_cursor=expected_cursor,
+                actual_revision=expected_revision_value, pre_state_digest=expected_state_digest,
                 post_state_digest=expected_state_digest,
                 linked_receipts=[str(recovery_evidence.resolve())], spec_identity=str(spec_path.resolve()),
             )
