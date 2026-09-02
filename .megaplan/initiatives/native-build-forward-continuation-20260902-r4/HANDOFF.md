@@ -44,7 +44,7 @@ at launch; no caller-supplied abbreviated value is authoritative.
 
 ## New continuation identity
 
-Canonical source is `main@bb00069421aa5a8a1c7d73bd7c258477958fd462`.
+Canonical source is `main@5ae65980ee6d04dd85c78f7fcee53532a5cdbdfc`.
 The intended branch is `fixer/native-build-forward-c2-bb000694-20260903-r4`.
 The cloud workspace, runtime candidate, and session all use the unique
 namespace `native-build-forward-c2-bb000694-20260903-r4`:
@@ -61,6 +61,12 @@ The superseded r2 continuation identity
 `native-build-forward-c2-c4b0c102-20260902-r2` is likewise preserved as
 historical evidence. Its failed WBC launch receipt and partial runtime remain
 under the r2 namespace; they are not deleted, imported, or replayed by r4.
+The superseded r3 launch was invoked once and stopped before chain startup at
+the typed `engine_ref_probe_failed` authentication guard. Its failed runtime
+and marker remain immutable evidence at
+`/workspace/runtime-candidates/native-build-forward-c2-ec69ede3-20260902-r3`
+and `/workspace/.megaplan/cloud-sessions/native-build-forward-c2-ec69ede3-20260902-r3.json`;
+they are not reused by r4.
 
 All workflow, preparation, nested tier, execution, critique, and review
 routes resolve through `all-muse-spark-openrouter` to the exact
@@ -76,7 +82,7 @@ the operator must:
 1. publish this branch (or an equivalent content-addressed commit) and make
    the remote `main`/`megaplan.ref` resolve the exact canonical source;
 2. verify that the chain driver's content-addressed revision pin
-   (`bb00069421aa5a8a1c7d73bd7c258477958fd462`) and the remote checkout agree,
+   (`5ae65980ee6d04dd85c78f7fcee53532a5cdbdfc`) and the remote checkout agree,
    then verify the chain spec, North Star, all 16 briefs, and the bound Muse
    profile resolve byte-for-byte at that revision;
 3. run the supported `cloud preflight` against `cloud.yaml`, then
