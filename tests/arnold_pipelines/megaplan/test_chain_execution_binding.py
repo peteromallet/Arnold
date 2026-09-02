@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     expected_worker_launch_values,
     find_bound_chain_spec,
     migrate_execution_binding,
+    promote_legacy_runtime_binding,
     require_bound_chain_spec,
     rebind_execution_identity,
     rebind_runtime_identity,
@@ -49,9 +50,12 @@ from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlCasConflict,
     ChainControlHold,
+    ChainControlTamper,
     chain_id_for_spec,
     journal_for,
+    projection_rebuild,
     state_digest_for,
+    verify_bound_state_matches_journal,
 )
 
 
@@ -2444,6 +2448,49 @@ def test_runtime_rebind_parser_dispatches_optional_policy_guards() -> None:
     assert args.expected_chain_spec_sha256 == "2" * 64
 
 
+def test_execution_binding_migrate_parser_dispatches_legacy_promotion_guards() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_module.build_chain_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "chain",
+            "execution-binding-migrate",
+            "--spec",
+            "chain.yaml",
+            "--project-dir",
+            "/tmp/project",
+            "--old-runtime-identity",
+            "identity.json",
+            "--old-runtime-provenance-receipt",
+            "receipt.json",
+            "--expected-current-milestone",
+            "c2",
+            "--expected-current-plan",
+            "c2-plan",
+            "--expected-branch",
+            "main",
+            "--expected-chain-spec-sha256",
+            "a" * 64,
+            "--expected-state-digest",
+            "b" * 64,
+            "--expected-state-revision",
+            "4",
+            "--expect-marker-sha256",
+            "c" * 64,
+            "--expect-manifest-sha256",
+            "d" * 64,
+            "--promote-legacy-runtime-only",
+            "--reason",
+            "parser coverage",
+        ]
+    )
+    assert args.chain_action == "execution-binding-migrate"
+    assert args.promote_legacy_runtime_only is True
+    assert args.expected_state_revision == 4
+    assert args.expect_manifest_sha256 == "d" * 64
+
+
 def test_release_hold_revision_parser_requires_one_expectation() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")
@@ -4419,3 +4466,184 @@ def test_b_cli_execution_binding_migrate_refuses_forged_receipt_zero_mutation(
     assert payload["success"] is False
     assert payload["error"] == "chain_runtime_binding_drift"
     assert _state_path_for(spec_path).read_bytes() == state_bytes
+
+
+def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The explicit promotion upgrades only binding metadata through NBF08."""
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    state.chain_session = "legacy-promotion-session"
+    state.metadata["_nbf08_revision"] = 0
+    save_chain_state(spec_path, state)
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session=state.chain_session,
+        plan="c2-plan",
+        runtime=previous,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=Path(previous["import_root"]),
+        expected_head=previous["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    receipt_path = tmp_path / "verified-runtime-receipt.json"
+    receipt_path.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(previous),
+    )
+    marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    marker_before = marker_path.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+    before = load_chain_state(spec_path, verify_execution_binding=False)
+    before_fields = before.to_dict()
+    before_fields.pop("metadata")
+    result = promote_legacy_runtime_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        expected_branch=_git(tmp_path, "branch", "--show-current"),
+        expected_chain_spec_sha256=expected_spec_sha,
+        expected_state_digest=state_digest_for(before.to_dict()),
+        expected_state_revision=0,
+        expected_marker_sha256=marker_sha,
+        expected_manifest_sha256=manifest_sha,
+        reason="promote legacy binding",
+        actor="test-operator",
+        verified_external_runtime_identity=previous,
+        verified_external_runtime_receipt=receipt_path,
+    )
+    assert result["outcome"] == "committed"
+    promoted = load_chain_state(spec_path, verify_execution_binding=False)
+    assert promoted.metadata["execution_binding"]["launched_identity"]["runtime"] == previous
+    assert promoted.metadata["execution_binding"]["launched_identity"]["chain_spec_sha256"] == expected_spec_sha
+    after_fields = promoted.to_dict()
+    after_fields.pop("metadata")
+    assert after_fields == before_fields
+    assert marker_path.read_bytes() == marker_before
+    assert manifest_path.read_bytes() == manifest_before
+    replay = journal_for(tmp_path).replay_strict()
+    semantic = [
+        event for event in replay["accepted"]
+        if event.get("event_kind") == "chain_control.runtime_rebound"
+    ]
+    assert len(semantic) == 1
+    assert semantic[0]["payload"]["effect"]["chain_spec_sha256"] == expected_spec_sha
+
+    replayed = promote_legacy_runtime_binding(
+        spec_path,
+        tmp_path,
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        expected_branch=_git(tmp_path, "branch", "--show-current"),
+        expected_chain_spec_sha256=expected_spec_sha,
+        expected_state_digest=state_digest_for(before.to_dict()),
+        expected_state_revision=0,
+        expected_marker_sha256=marker_sha,
+        expected_manifest_sha256=manifest_sha,
+        reason="different retry metadata",
+        actor="different-operator",
+        verified_external_runtime_identity=previous,
+        verified_external_runtime_receipt=receipt_path,
+    )
+    assert replayed["outcome"] == "replay"
+    assert len([
+        event for event in journal_for(tmp_path).replay_strict()["accepted"]
+        if event.get("event_kind") == "chain_control.runtime_rebound"
+    ]) == 1
+    projection = projection_rebuild(journal_for(tmp_path))
+    assert projection["authority"] == "file"
+    assert result["promotion"]["actual_cursor"] == 1
+    tampered = json.loads(_state_path_for(spec_path).read_text(encoding="utf-8"))
+    tampered["metadata"]["execution_environment"]["engine_root"] = "/tampered"
+    _state_path_for(spec_path).write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+    with pytest.raises(ChainControlTamper, match="diverges from journal"):
+        verify_bound_state_matches_journal(spec_path)
+
+
+@pytest.mark.parametrize("bad_guard", ["state", "marker", "manifest"])
+def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_guard: str,
+) -> None:
+    spec_path, state, previous, _successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    state.chain_session = "legacy-promotion-cas-session"
+    state.metadata["_nbf08_revision"] = 0
+    save_chain_state(spec_path, state)
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session=state.chain_session,
+        plan="c2-plan",
+        runtime=previous,
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=Path(previous["import_root"]),
+        expected_head=previous["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    receipt_path = tmp_path / "verified-runtime-receipt.json"
+    receipt_path.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(previous),
+    )
+    state_before = _state_path_for(spec_path).read_bytes()
+    spec_before = spec_path.read_bytes()
+    marker_before = marker_path.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+    state_obj = load_chain_state(spec_path, verify_execution_binding=False)
+    marker_sha = hashlib.sha256(marker_before).hexdigest()
+    manifest_sha = hashlib.sha256(manifest_before).hexdigest()
+    kwargs: dict[str, Any] = {
+        "expected_chain_spec_sha256": expected_spec_sha,
+        "expected_state_digest": state_digest_for(state_obj.to_dict()),
+        "expected_state_revision": 0,
+        "expected_marker_sha256": marker_sha,
+        "expected_manifest_sha256": manifest_sha,
+    }
+    if bad_guard == "state":
+        kwargs["expected_state_digest"] = "0" * 64
+    elif bad_guard == "marker":
+        kwargs["expected_marker_sha256"] = "1" * 64
+    else:
+        kwargs["expected_manifest_sha256"] = "2" * 64
+    with pytest.raises(CliError):
+        promote_legacy_runtime_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            expected_branch=_git(tmp_path, "branch", "--show-current"),
+            reason="bad promotion CAS",
+            actor="test-operator",
+            verified_external_runtime_identity=previous,
+            verified_external_runtime_receipt=receipt_path,
+            **kwargs,
+        )
+    assert _state_path_for(spec_path).read_bytes() == state_before
+    assert spec_path.read_bytes() == spec_before
+    assert marker_path.read_bytes() == marker_before
+    assert manifest_path.read_bytes() == manifest_before

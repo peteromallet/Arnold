@@ -3994,3 +3994,456 @@ def migrate_execution_binding(
         "execution_binding": migrated_report,
         "runtime_binding": runtime_report,
     }
+
+
+def promote_legacy_runtime_binding(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    expected_branch: str,
+    expected_chain_spec_sha256: str,
+    expected_state_digest: str,
+    expected_state_revision: int,
+    expected_marker_sha256: str,
+    expected_manifest_sha256: str,
+    reason: str,
+    actor: str = "operator",
+    verified_external_runtime_identity: Mapping[str, Any],
+    verified_external_runtime_receipt: str | Path,
+) -> dict[str, Any]:
+    """Promote a legacy runtime-only binding through the NBF08 ledger.
+
+    This is deliberately separate from the historical unbound migration
+    above.  A chain that already has ``runtime_binding.current_identity`` is
+    an NBF08-bound chain, so its metadata upgrade must use the canonical
+    chain-control transaction rather than the legacy ``save_chain_state``
+    path.  Only the binding metadata (and the CAS revision) may change.
+    """
+
+    from arnold_pipelines.megaplan._core.io import find_plan_dir
+    from arnold_pipelines.megaplan.chain.spec import ChainState, _state_path_for, load_chain_state
+    from arnold_pipelines.megaplan.chain.target_rebind import _assert_pause
+    from arnold_pipelines.megaplan.cloud.operator_control import (
+        marker_runtime_cutover_lock,
+    )
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        ManifestError,
+        active_manifest_path,
+        bootstrap_manifest,
+    )
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlCasConflict,
+        ChainControlHold,
+        ChainStateAdapter,
+        _stable_id,
+        apply_chain_lifecycle,
+        chain_id_for_spec,
+        state_digest_for,
+    )
+
+    spec_path = spec_path.resolve(strict=False)
+    project_root = project_root.resolve(strict=False)
+    if binding_policy(spec_path)["mode"] != "optional":
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime-only promotion requires optional execution-binding policy",
+        )
+    for value, label in (
+        (expected_chain_spec_sha256, "chain spec SHA-256"),
+        (expected_state_digest, "state digest"),
+        (expected_marker_sha256, "marker SHA-256"),
+        (expected_manifest_sha256, "manifest SHA-256"),
+    ):
+        if not _FULL_SHA256.fullmatch(str(value or "")):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                f"promotion requires a valid {label} guard",
+            )
+    if isinstance(expected_state_revision, bool) or not isinstance(expected_state_revision, int):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "promotion requires an integer state revision guard",
+        )
+    if not all(
+        str(value or "").strip()
+        for value in (
+            expected_current_milestone,
+            expected_current_plan,
+            expected_branch,
+            reason,
+            actor,
+        )
+    ):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "every legacy runtime promotion guard is required",
+        )
+    if not isinstance(verified_external_runtime_identity, Mapping):
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime promotion requires an external runtime identity",
+        )
+    receipt_path = Path(str(verified_external_runtime_receipt)).expanduser().resolve(strict=False)
+    if not receipt_path.is_file():
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime promotion requires a runtime provenance receipt",
+        )
+    # Always reverify at this public API boundary.  A caller-provided mapping
+    # is only an input; the independent interpreter receipt is the authority.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".runtime-identity.json"
+    ) as identity_file:
+        json.dump(dict(verified_external_runtime_identity), identity_file)
+        identity_file.flush()
+        verified_external_runtime_identity = verify_external_runtime_identity(
+            Path(identity_file.name), receipt_path
+        )
+    external = _normalized_runtime_identity(verified_external_runtime_identity)
+    old_root_text = str(external.get("import_root") or "").strip()
+    if not old_root_text:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "verified legacy runtime identity has no import_root",
+        )
+    old_root = Path(old_root_text).expanduser().resolve(strict=False)
+    state_path = _state_path_for(spec_path)
+    chain_id = chain_id_for_spec(spec_path)
+    plan_dir = find_plan_dir(project_root, expected_current_plan)
+    if plan_dir is None or not (plan_dir / "state.json").is_file():
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime promotion requires the current plan state",
+        )
+    plan_state_path = plan_dir / "state.json"
+
+    # ``apply_chain_lifecycle`` carries the numeric cursor in every intent,
+    # claim, and terminal envelope.  Read it only to construct that immutable
+    # transaction guard; the effect re-reads and validates the state under the
+    # transaction lock immediately before the CAS write.
+    try:
+        initial_state = load_chain_state(spec_path, verify_execution_binding=False)
+        expected_cursor = int(getattr(initial_state, "current_milestone_index", -1))
+    except (OSError, ValueError, TypeError) as exc:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime promotion requires a readable numeric chain cursor",
+        ) from exc
+    if expected_cursor < 0:
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            "legacy runtime promotion requires a non-negative chain cursor",
+        )
+
+    marker_path: Path | None = None
+    env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
+
+    def _resolve_marker(session: str) -> Path:
+        candidate_dirs: list[Path] = []
+        if env_marker_dir.strip():
+            candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
+        candidate_dirs.extend(
+            (
+                Path("/workspace/.megaplan/cloud-sessions"),
+                project_root / ".megaplan" / "cloud-sessions",
+            )
+        )
+        for directory in candidate_dirs:
+            candidate = directory / f"{session}.json"
+            if candidate.exists():
+                return candidate.resolve(strict=False)
+        raise CliError(
+            EXECUTION_BINDING_MIGRATE_ERROR,
+            f"cloud-session marker is missing for session {session!r}",
+        )
+
+    runtime_context = {
+        "promotion": "legacy-runtime-only",
+        "chain_spec_sha256": expected_chain_spec_sha256,
+        "old_runtime_sha256": external.get("content_sha256"),
+        "old_runtime_source_revision": external.get("source_revision"),
+        "old_runtime_root": str(old_root),
+        "current_milestone": expected_current_milestone,
+        "current_plan": expected_current_plan,
+        "expected_branch": expected_branch,
+        "expected_marker_sha256": expected_marker_sha256,
+        "expected_manifest_sha256": expected_manifest_sha256,
+    }
+    operation_id = _stable_id(
+        "execution-binding-promote",
+        chain_id,
+        expected_chain_spec_sha256,
+        str(external.get("content_sha256") or ""),
+        expected_state_digest,
+        str(expected_state_revision),
+        expected_current_milestone,
+        expected_current_plan,
+        expected_branch,
+        expected_marker_sha256,
+        expected_manifest_sha256,
+    )
+    manifest_path = active_manifest_path().resolve(strict=False)
+
+    def _effect(txn: Any) -> dict[str, Any]:
+        adapter = ChainStateAdapter(txn, state_path)
+        raw_state = adapter.read_expected()
+        if not isinstance(raw_state, Mapping):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion requires persisted chain state",
+            )
+        raw_metadata = raw_state.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+        observed_revision = metadata.get("_nbf08_revision")
+        if observed_revision != expected_state_revision:
+            raise ChainControlCasConflict(
+                "legacy runtime promotion state revision changed",
+                details={"expected": expected_state_revision, "actual": observed_revision},
+            )
+        if state_digest_for(raw_state) != expected_state_digest:
+            raise ChainControlCasConflict("legacy runtime promotion state digest changed")
+        observed_spec_sha = _sha256_file(spec_path)
+        persisted_spec_sha = str(metadata.get("chain_spec_sha256") or "").strip()
+        if not (
+            observed_spec_sha == expected_chain_spec_sha256
+            and persisted_spec_sha == expected_chain_spec_sha256
+        ):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion chain spec SHA-256 CAS failed",
+                details={
+                    "expected": expected_chain_spec_sha256,
+                    "on_disk": observed_spec_sha,
+                    "persisted": persisted_spec_sha,
+                },
+            )
+
+        current = ChainState.from_dict(dict(raw_state))
+        binding = metadata.get("execution_binding")
+        binding = dict(binding) if isinstance(binding, Mapping) else {}
+        if isinstance(binding.get("launched_identity"), Mapping):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion requires a runtime-only binding",
+            )
+        runtime_binding = binding.get("runtime_binding")
+        runtime_binding = dict(runtime_binding) if isinstance(runtime_binding, Mapping) else {}
+        persisted_identity = runtime_binding.get("current_identity")
+        if not isinstance(persisted_identity, Mapping):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion requires a persisted current runtime identity",
+            )
+        if _normalized_runtime_identity(persisted_identity) != external:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "persisted current runtime does not match the verified legacy runtime",
+            )
+        if not _looks_like_legacy_runtime_binding(persisted_identity):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "persisted runtime identity is not the legacy runtime-only shape",
+            )
+
+        labels = _identity_labels(active_execution_identity(spec_path))
+        current_index = int(getattr(current, "current_milestone_index", -1))
+        if current_index < 0 or current_index >= len(labels):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion cursor is outside the canonical sequence",
+            )
+        if labels[current_index] != expected_current_milestone:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion current milestone does not match the guard",
+            )
+        if str(getattr(current, "current_plan_name", "") or "") != expected_current_plan:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion current plan does not match the guard",
+            )
+        completed = _completed_labels(current)
+        if len(completed) != current_index or labels[:current_index] != completed:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion completed prefix does not match the cursor",
+            )
+        try:
+            plan_state = json.loads(plan_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion plan state is unreadable",
+            ) from exc
+        if not isinstance(plan_state, Mapping):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion plan state is malformed",
+            )
+        try:
+            _assert_pause(raw_state, plan_state, expected_plan=expected_current_plan)
+        except CliError as exc:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                str(exc),
+            ) from exc
+
+        session = str(current.chain_session or "").strip()
+        if not session:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion chain session is missing",
+            )
+        nonlocal marker_path
+        marker_path = _resolve_marker(session)
+        try:
+            with marker_runtime_cutover_lock(marker_path):
+                marker_raw = marker_path.read_bytes()
+                marker_sha = _sha256_bytes(marker_raw)
+                if marker_sha != expected_marker_sha256:
+                    raise ChainControlHold(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion marker SHA-256 CAS failed",
+                    )
+                marker = json.loads(marker_raw)
+                if not isinstance(marker, Mapping):
+                    raise ChainControlHold(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion marker is malformed",
+                    )
+                _assert_marker_agrees_with_runtime(
+                    marker,
+                    session=session,
+                    spec_path=spec_path,
+                    guarded_plan=expected_current_plan,
+                    external=external,
+                    old_root=old_root,
+                    expected_marker_sha256=expected_marker_sha256,
+                    marker_sha256=marker_sha,
+                )
+
+                try:
+                    manifest_raw = manifest_path.read_bytes()
+                    manifest_sha = _sha256_bytes(manifest_raw)
+                    if manifest_sha != expected_manifest_sha256:
+                        raise ChainControlHold(
+                            EXECUTION_BINDING_MIGRATE_ERROR,
+                            "legacy runtime promotion manifest SHA-256 CAS failed",
+                        )
+                    manifest = bootstrap_manifest(manifest_path)
+                except (OSError, ManifestError) as exc:
+                    raise ChainControlHold(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        f"legacy runtime promotion manifest is unavailable: {exc}",
+                    ) from exc
+        except (BlockingIOError, TimeoutError) as exc:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion marker lock is contended",
+            ) from exc
+
+        declared_root = str(manifest.epic.get("runtime_root") or "").strip()
+        declared_head = str(manifest.epic.get("expected_head") or "").strip()
+        if (
+            not declared_root
+            or Path(declared_root).expanduser().resolve(strict=False) != old_root
+            or declared_head != str(external.get("source_revision") or "")
+            or str(manifest.epic_id or "") != _chain_epic_slug(spec_path)
+        ):
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion manifest does not match the verified runtime",
+            )
+        current_branch = _git(project_root, "branch", "--show-current")
+        if current_branch != expected_branch:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion checkout branch does not match the guard",
+            )
+
+        active = active_execution_identity(spec_path)
+        if active.get("chain_spec_sha256") != expected_chain_spec_sha256:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion active identity has a different spec SHA-256",
+            )
+        active["runtime"] = dict(external)
+        active["ready"] = True
+        active["errors"] = []
+        old_engine_root = str((metadata.get("execution_environment") or {}).get("engine_root") or "").strip()
+        if old_engine_root and Path(old_engine_root).expanduser().resolve(strict=False) != old_root:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion engine root does not match the verified runtime",
+            )
+        execution_environment = dict(metadata.get("execution_environment") or {})
+        execution_environment["engine_root"] = str(old_root)
+        binding["schema"] = BINDING_SCHEMA
+        binding.setdefault("bound_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        binding["launched_identity"] = active
+        binding["runtime_binding"] = runtime_binding
+        metadata["execution_binding"] = binding
+        metadata["execution_environment"] = execution_environment
+        promoted = ChainState.from_dict(dict(raw_state))
+        promoted.metadata = metadata
+        before_nonmetadata = {key: raw_state.get(key) for key in raw_state if key != "metadata"}
+        after_nonmetadata = {key: value for key, value in promoted.to_dict().items() if key != "metadata"}
+        if before_nonmetadata != after_nonmetadata:
+            raise ChainControlHold(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion changed an operational chain field",
+            )
+        written = adapter.cas_write(promoted.to_dict(), expected_revision=observed_revision)
+        return {
+            "pre_state_digest": state_digest_for(raw_state),
+            "post_state_digest": state_digest_for(written),
+            "actual_revision": (written.get("metadata") or {}).get("_nbf08_revision"),
+            "actual_cursor": written.get("current_milestone_index"),
+            "current_milestone": expected_current_milestone,
+            "current_plan": expected_current_plan,
+            "chain_spec_sha256": expected_chain_spec_sha256,
+            "runtime_identity": {"from": dict(external), "to": dict(external)},
+            "provenance_link": str(receipt_path),
+            "manifest_sha256": expected_manifest_sha256,
+            "marker_sha256": expected_marker_sha256,
+            "execution_binding": active,
+        }
+
+    result = apply_chain_lifecycle(
+        spec_path,
+        project_root,
+        intent_kind="execution-binding-promote",
+        actor={"id": actor, "class": "operator"},
+        operation_id=operation_id,
+        expected_revision=None,
+        expected_cursor=expected_cursor,
+        linked_receipts=[str(receipt_path)],
+        effect=_effect,
+        state_paths=[plan_state_path],
+        committed_event_kind="chain_control.runtime_rebound",
+        intent_context={"legacy_runtime_promotion.v1": runtime_context},
+    )
+    if result.get("outcome") == "committed":
+        effect = result.get("effect") or {}
+        return {
+            "outcome": "committed",
+            "receipt": result.get("result"),
+            "event": result.get("event"),
+            "promotion": effect,
+        }
+    if result.get("outcome") == "replay":
+        return {
+            "outcome": "replay",
+            "receipt": result.get("result"),
+            "event": result.get("result"),
+            "replay_event": result.get("replay_event"),
+        }
+    error = result.get("error")
+    if isinstance(error, ChainControlHold):
+        raise CliError(error.code, str(error), extra=dict(error.details)) from error
+    raise CliError(
+        EXECUTION_BINDING_MIGRATE_ERROR,
+        "legacy runtime promotion did not commit",
+    )

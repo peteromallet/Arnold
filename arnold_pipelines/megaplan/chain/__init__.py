@@ -11454,6 +11454,32 @@ def build_chain_parser(subparsers: Any) -> None:
             "Optional for markers already carrying a runtime identity form."
         ),
     )
+    execution_binding_migrate_parser.add_argument(
+        "--promote-legacy-runtime-only",
+        action="store_true",
+        help=(
+            "Promote an existing legacy runtime-only binding through the "
+            "canonical NBF08 journal/CAS transaction. Requires the exact "
+            "spec, state, marker, and manifest guards below."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-chain-spec-sha256",
+        help="Exact old on-disk and persisted chain-spec SHA-256 for legacy promotion.",
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-state-digest",
+        help="Exact canonical chain-state digest for legacy promotion.",
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expected-state-revision",
+        type=int,
+        help="Exact _nbf08_revision value for legacy promotion.",
+    )
+    execution_binding_migrate_parser.add_argument(
+        "--expect-manifest-sha256",
+        help="Exact active runtime-manifest SHA-256 for legacy promotion.",
+    )
     execution_binding_migrate_parser.add_argument("--reason", required=True)
     execution_binding_migrate_parser.add_argument("--actor", default="operator")
 
@@ -12389,6 +12415,7 @@ def run_chain_cli(
         try:
             from arnold_pipelines.megaplan.chain.execution_binding import (
                 migrate_execution_binding,
+                promote_legacy_runtime_binding,
                 verify_external_runtime_identity,
             )
 
@@ -12404,23 +12431,62 @@ def run_chain_cli(
                     "execution-binding-migrate requires --old-runtime-identity "
                     "and --old-runtime-provenance-receipt together",
                 )
-            external_identity = verify_external_runtime_identity(
-                Path(identity_arg).expanduser().resolve(strict=False),
-                Path(receipt_arg).expanduser().resolve(strict=False),
-            )
-            result = migrate_execution_binding(
-                spec_path,
-                project_root,
-                expected_current_milestone=args.expected_current_milestone,
-                expected_current_plan=args.expected_current_plan,
-                expected_branch=args.expected_branch,
-                reason=args.reason,
-                actor=args.actor,
-                expected_marker_sha256=(
-                    getattr(args, "expect_marker_sha256", None) or None
-                ),
-                verified_external_runtime_identity=external_identity,
-            )
+            if bool(getattr(args, "promote_legacy_runtime_only", False)):
+                identity_path = Path(identity_arg).expanduser().resolve(strict=False)
+                try:
+                    identity_payload = json.loads(identity_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise CliError(
+                        "chain_execution_binding_migrate_refused",
+                        "legacy promotion runtime identity is unreadable",
+                    ) from exc
+                if not isinstance(identity_payload, Mapping):
+                    raise CliError(
+                        "chain_execution_binding_migrate_refused",
+                        "legacy promotion runtime identity must be a JSON object",
+                    )
+                result = promote_legacy_runtime_binding(
+                    spec_path,
+                    project_root,
+                    expected_current_milestone=args.expected_current_milestone,
+                    expected_current_plan=args.expected_current_plan,
+                    expected_branch=args.expected_branch,
+                    expected_chain_spec_sha256=(
+                        getattr(args, "expected_chain_spec_sha256", None) or ""
+                    ),
+                    expected_state_digest=(
+                        getattr(args, "expected_state_digest", None) or ""
+                    ),
+                    expected_state_revision=getattr(args, "expected_state_revision", None),
+                    expected_marker_sha256=(
+                        getattr(args, "expect_marker_sha256", None) or ""
+                    ),
+                    expected_manifest_sha256=(
+                        getattr(args, "expect_manifest_sha256", None) or ""
+                    ),
+                    reason=args.reason,
+                    actor=args.actor,
+                    verified_external_runtime_identity=identity_payload,
+                    verified_external_runtime_receipt=receipt_arg,
+                )
+            else:
+                external_identity = verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                result = migrate_execution_binding(
+                    spec_path,
+                    project_root,
+                    expected_current_milestone=args.expected_current_milestone,
+                    expected_current_plan=args.expected_current_plan,
+                    expected_branch=args.expected_branch,
+                    reason=args.reason,
+                    actor=args.actor,
+                    expected_marker_sha256=(
+                        getattr(args, "expect_marker_sha256", None) or None
+                    ),
+                    verified_external_runtime_identity=external_identity,
+                )
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(
