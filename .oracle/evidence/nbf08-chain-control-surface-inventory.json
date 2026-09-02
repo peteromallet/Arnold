@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "610d1029df590c7e2fde226d5ec8e88f5a5a6d5b",
+  "base_revision": "7bcd6e99707c9c1ca1f34727b89a3d6071dc8fed",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "e6df74f9d32d82b2b76f76c4b80ed0956c272e09b06682e8851eeb872990449a"
+  "inventory_digest": "38f8a181ffc93e988f228ed45cdfa509847bcc6747f89d89f6b364fdc6c40390"
 }
