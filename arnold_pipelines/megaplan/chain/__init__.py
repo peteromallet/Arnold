@@ -11559,6 +11559,22 @@ def build_chain_parser(subparsers: Any) -> None:
     restart_current_attempt_parser.add_argument("--expected-source-head", required=True)
     restart_current_attempt_parser.add_argument("--reason", required=True)
     restart_current_attempt_parser.add_argument("--actor", default="operator")
+    restart_current_attempt_parser.add_argument(
+        "--promote-legacy-receipt",
+        action="store_true",
+        help=(
+            "Promote one exact archived restart receipt into the paused live "
+            "boundary without rerunning the retired attempt."
+        ),
+    )
+    restart_current_attempt_parser.add_argument("--expected-operation-id")
+    restart_current_attempt_parser.add_argument("--archived-journal")
+    restart_current_attempt_parser.add_argument("--expected-archived-journal-sha256")
+    restart_current_attempt_parser.add_argument("--archive-manifest")
+    restart_current_attempt_parser.add_argument("--expected-archive-manifest-sha256")
+    restart_current_attempt_parser.add_argument("--expected-legacy-event-hash")
+    restart_current_attempt_parser.add_argument("--expected-state-digest")
+    restart_current_attempt_parser.add_argument("--expected-physical-sequence-start", type=int)
 
     seed_rematerialize_parser = chain_sub.add_parser(
         "seed-rematerialize",
@@ -12546,27 +12562,70 @@ def run_chain_cli(
         project_root = Path(args.project_dir).expanduser().resolve()
         try:
             from arnold_pipelines.megaplan.chain.restart_current_attempt import (
+                promote_legacy_restart_receipt,
                 restart_current_attempt,
             )
 
-            result = restart_current_attempt(
-                spec_path,
-                project_root,
-                marker_path=Path(args.marker).expanduser().resolve(),
-                expected_session_id=args.expected_session_id,
-                expected_cursor=args.expected_cursor,
-                expected_current_milestone=args.expected_current_milestone,
-                expected_current_plan=args.expected_current_plan,
-                expected_spec_sha256=args.expected_spec_sha256,
-                expected_chain_state_sha256=args.expected_chain_state_sha256,
-                expected_plan_state_sha256=args.expected_plan_state_sha256,
-                expected_state_revision=args.expected_state_revision,
-                expected_marker_sha256=args.expected_marker_sha256,
-                expected_binding_sha256=args.expected_binding_sha256,
-                expected_source_head=args.expected_source_head,
-                reason=args.reason,
-                actor=args.actor,
-            )
+            if args.promote_legacy_receipt:
+                required = {
+                    "--expected-operation-id": args.expected_operation_id,
+                    "--archived-journal": args.archived_journal,
+                    "--expected-archived-journal-sha256": args.expected_archived_journal_sha256,
+                    "--archive-manifest": args.archive_manifest,
+                    "--expected-archive-manifest-sha256": args.expected_archive_manifest_sha256,
+                    "--expected-legacy-event-hash": args.expected_legacy_event_hash,
+                }
+                missing = [name for name, value in required.items() if not str(value or "").strip()]
+                if missing:
+                    raise CliError(
+                        "current_attempt_restart_refused",
+                        "--promote-legacy-receipt requires " + ", ".join(missing),
+                    )
+                result = promote_legacy_restart_receipt(
+                    spec_path,
+                    project_root,
+                    marker_path=Path(args.marker).expanduser().resolve(),
+                    expected_session_id=args.expected_session_id,
+                    expected_cursor=args.expected_cursor,
+                    expected_current_milestone=args.expected_current_milestone,
+                    expected_current_plan=args.expected_current_plan,
+                    expected_spec_sha256=args.expected_spec_sha256,
+                    expected_chain_state_sha256=args.expected_chain_state_sha256,
+                    expected_plan_state_sha256=args.expected_plan_state_sha256,
+                    expected_state_revision=args.expected_state_revision,
+                    expected_marker_sha256=args.expected_marker_sha256,
+                    expected_binding_sha256=args.expected_binding_sha256,
+                    expected_source_head=args.expected_source_head,
+                    expected_operation_id=args.expected_operation_id,
+                    archived_journal_path=Path(args.archived_journal).expanduser().resolve(),
+                    expected_archived_journal_sha256=args.expected_archived_journal_sha256,
+                    archive_manifest_path=Path(args.archive_manifest).expanduser().resolve(),
+                    expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
+                    expected_legacy_event_hash=args.expected_legacy_event_hash,
+                    reason=args.reason,
+                    actor=args.actor,
+                    expected_state_digest=args.expected_state_digest,
+                    expected_physical_sequence_start=args.expected_physical_sequence_start,
+                )
+            else:
+                result = restart_current_attempt(
+                    spec_path,
+                    project_root,
+                    marker_path=Path(args.marker).expanduser().resolve(),
+                    expected_session_id=args.expected_session_id,
+                    expected_cursor=args.expected_cursor,
+                    expected_current_milestone=args.expected_current_milestone,
+                    expected_current_plan=args.expected_current_plan,
+                    expected_spec_sha256=args.expected_spec_sha256,
+                    expected_chain_state_sha256=args.expected_chain_state_sha256,
+                    expected_plan_state_sha256=args.expected_plan_state_sha256,
+                    expected_state_revision=args.expected_state_revision,
+                    expected_marker_sha256=args.expected_marker_sha256,
+                    expected_binding_sha256=args.expected_binding_sha256,
+                    expected_source_head=args.expected_source_head,
+                    reason=args.reason,
+                    actor=args.actor,
+                )
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(

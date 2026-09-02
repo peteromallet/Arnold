@@ -96,6 +96,11 @@ SEMANTIC_KINDS = frozenset(
         "chain_control.runtime_rebound",
         "chain_control.hold_context_attested",
         "chain_control.backend_rebound",
+        # A legacy restart receipt is immutable external evidence.  The
+        # attestation is a real chain-control semantic transition because it
+        # records the modern guard in chain state, but it never replays the
+        # retired attempt.
+        "chain_control.restart_receipt_attested",
     }
 )
 CLAIMLESS_KINDS = frozenset(
@@ -110,6 +115,7 @@ CLAIMLESS_KINDS = frozenset(
         "chain_control.hold_context_attested",
         "chain_control.replay",
         "chain_control.authority_validated",
+        "chain_control.restart_receipt_attested",
     }
 )
 REQUIRES_CLAIM_KINDS = frozenset(
@@ -121,6 +127,7 @@ REQUIRES_CLAIM_KINDS = frozenset(
         "chain_control.config_rebound",
         "chain_control.runtime_rebound",
         "chain_control.backend_rebound",
+        "chain_control.restart_receipt_attested",
         "chain_control.reconciled",
         "chain_control.external_effect_intent",
     }
@@ -720,6 +727,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.runtime_rebound",
         "chain_control.hold_released",
         "chain_control.hold_context_attested",
+        "chain_control.restart_receipt_attested",
     }
 )
 
@@ -1207,6 +1215,7 @@ class ChainControlJournal:
                         "chain_control.hold",
                         "chain_control.hold_released",
                         "chain_control.hold_context_attested",
+                        "chain_control.restart_receipt_attested",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",
                     } or op_id not in operations:

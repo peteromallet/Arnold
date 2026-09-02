@@ -12,8 +12,10 @@ import arnold_pipelines.megaplan.incident.chain_control as chain_control
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.chain.operator_pause import AUTHORITY_SCHEMA
 from arnold_pipelines.megaplan.chain.restart_current_attempt import (
+    LEGACY_ATTESTATION_EVENT_KIND,
     RESTART_ERROR,
     RESTART_SCHEMA,
+    promote_legacy_restart_receipt,
     restart_current_attempt,
 )
 from arnold_pipelines.megaplan.chain.target_rebind import sha256_path, target_rebind
@@ -534,3 +536,98 @@ def test_restart_parser_smoke() -> None:
         ]
     )
     assert args.chain_action == "restart-current-attempt"
+
+
+def _legacy_archive_fixture(tmp_path: Path) -> dict[str, Any]:
+    fixture = _fixture(tmp_path)
+    _restart(fixture)
+    operation_id = _load_json(fixture["state_path"])["metadata"]["current_attempt_restart"]["operation_id"]
+    archive_events = tmp_path / "restart-archive" / ".megaplan" / "incident-ledger" / "events.jsonl"
+    archive_events.parent.mkdir(parents=True)
+    archive_events.write_bytes(fixture["root"].joinpath(".megaplan", "incident-ledger", "events.jsonl").read_bytes())
+    manifest = archive_events.parent / "archive-manifest.json"
+    manifest.write_text(
+        json.dumps({"schema": "legacy-restart-archive.v1", "events_sha256": sha256_path(archive_events)}) + "\n",
+        encoding="utf-8",
+    )
+    live_ledger = fixture["root"] / ".megaplan" / "incident-ledger"
+    (live_ledger / "events.jsonl").unlink()
+    if (live_ledger / ".events.seq").exists():
+        (live_ledger / ".events.seq").unlink()
+    fixture.update({
+        "operation_id": operation_id,
+        "archive_events": archive_events,
+        "archive_manifest": manifest,
+    })
+    # Read the authoritative event from the archived journal through the
+    # public strict replay facade after restoring its original ledger id.
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlJournal
+    from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+    archive_ledger = IncidentLedger(tmp_path / "restart-archive")
+    archive_journal = ChainControlJournal(archive_ledger)
+    first_cc = next(
+        json.loads(line)["payload"]
+        for line in archive_events.read_text().splitlines()
+        if json.loads(line).get("kind", "").startswith("chain_control.")
+    )
+    archive_journal.ledger_id = first_cc["ledger_id"]
+    archived = archive_journal.replay_strict()["accepted"]
+    fixture["archive_event_hash"] = next(
+        event["event_hash"] for event in archived
+        if event.get("operation_id") == operation_id and event.get("event_kind") == "chain_control.committed"
+    )
+    return fixture
+
+
+def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_path: Path) -> None:
+    fixture = _legacy_archive_fixture(tmp_path)
+    chain = _load_json(fixture["state_path"])
+    guards = _guards(fixture)
+    # The old restart advanced revision 3 -> 4; the live projection is now
+    # rev4 and carries the retired-plan boundary but no live receipt.
+    guards.update({
+        "expected_state_revision": 4,
+        "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
+        "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
+    })
+    before_plan = fixture["plan_path"].read_bytes()
+    result = promote_legacy_restart_receipt(
+        fixture["spec"], fixture["root"], marker_path=fixture["marker"],
+        expected_session_id=fixture["root"].name, expected_cursor=6,
+        expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
+        expected_spec_sha256=sha256_path(fixture["spec"]),
+        expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+        expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
+        expected_state_revision=4, expected_marker_sha256=sha256_path(fixture["marker"]),
+        expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
+        expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
+        archived_journal_path=fixture["archive_events"],
+        expected_archived_journal_sha256=sha256_path(fixture["archive_events"]),
+        archive_manifest_path=fixture["archive_manifest"],
+        expected_archive_manifest_sha256=sha256_path(fixture["archive_manifest"]),
+        expected_legacy_event_hash=fixture["archive_event_hash"], reason="attest archived restart", actor="test",
+    )
+    assert result["outcome"] == "committed"
+    after = _load_json(fixture["state_path"])
+    assert after["metadata"]["_nbf08_revision"] == 5
+    assert after["current_plan_name"] is None
+    assert after["metadata"]["current_attempt_restart"]["operation_id"] == fixture["operation_id"]
+    assert after["metadata"]["current_attempt_restart"]["legacy_attestation"]["legacy_event_hash"] == fixture["archive_event_hash"]
+    assert fixture["plan_path"].read_bytes() == before_plan
+    state_bytes = fixture["state_path"].read_bytes()
+    replay = promote_legacy_restart_receipt(
+        fixture["spec"], fixture["root"], marker_path=fixture["marker"],
+        expected_session_id=fixture["root"].name, expected_cursor=6,
+        expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
+        expected_spec_sha256=sha256_path(fixture["spec"]),
+        expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+        expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
+        expected_state_revision=5, expected_marker_sha256=sha256_path(fixture["marker"]),
+        expected_binding_sha256=_binding_digest(after["metadata"]["project_source_binding"]),
+        expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
+        archived_journal_path=fixture["archive_events"], expected_archived_journal_sha256=sha256_path(fixture["archive_events"]),
+        archive_manifest_path=fixture["archive_manifest"], expected_archive_manifest_sha256=sha256_path(fixture["archive_manifest"]),
+        expected_legacy_event_hash=fixture["archive_event_hash"], reason="attest archived restart", actor="test",
+    )
+    assert replay["outcome"] == "replay"
+    assert fixture["state_path"].read_bytes() == state_bytes

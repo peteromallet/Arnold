@@ -426,6 +426,27 @@ def _assert_restart_receipt(
             PROJECT_SOURCE_REBIND_ERROR,
             "post-restart target rebind requires a restart receipt",
         )
+    legacy_attestation = restart.get("legacy_attestation") if isinstance(restart, Mapping) else None
+    if isinstance(legacy_attestation, Mapping):
+        return _assert_legacy_restart_attestation(
+            spec_path=spec_path,
+            project_root=project_root,
+            state_path=state_path,
+            plan_path=plan_path,
+            chain=chain,
+            plan=plan,
+            chain_raw=chain_raw,
+            plan_raw=plan_raw,
+            milestone_index=milestone_index,
+            expected_session_id=expected_session_id,
+            expected_current_milestone=expected_current_milestone,
+            expected_current_plan=expected_current_plan,
+            from_branch=from_branch,
+            from_head=from_head,
+            expected_spec_sha256=expected_spec_sha256,
+            restart=restart,
+            attestation=legacy_attestation,
+        )
     operation_id = str(restart.get("operation_id") or "").strip().lower()
     if _FULL_SHA256_RAW.fullmatch(operation_id) is None:
         raise CliError(
@@ -617,6 +638,103 @@ def _assert_restart_receipt(
     if pre_chain == post_chain or pre_plan == post_plan:
         raise CliError(PROJECT_SOURCE_REBIND_ERROR, "restart receipt does not prove a state transition")
     return {"event_hash": event_hash, "operation_id": operation_id, "event": event, "guard": guard}
+
+
+def _assert_legacy_restart_attestation(
+    *,
+    spec_path: Path,
+    project_root: Path,
+    state_path: Path,
+    plan_path: Path,
+    chain: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    chain_raw: bytes,
+    plan_raw: bytes,
+    milestone_index: int,
+    expected_session_id: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    from_branch: str,
+    from_head: str,
+    expected_spec_sha256: str,
+    restart: Mapping[str, Any],
+    attestation: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Validate the canonical bridge for an archived restart event."""
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        chain_id_for_spec,
+        journal_for,
+        state_digest_for,
+    )
+
+    legacy_operation_id = str(attestation.get("legacy_operation_id") or "").strip().lower()
+    attestation_operation_id = str(attestation.get("operation_id") or "").strip().lower()
+    legacy_event_hash = str(attestation.get("legacy_event_hash") or "").strip().lower()
+    if not all(_FULL_SHA256_RAW.fullmatch(value or "") for value in (legacy_operation_id, attestation_operation_id, legacy_event_hash)):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation identity is malformed")
+    if restart.get("operation_id") != legacy_operation_id or restart.get("restart_guard") != attestation.get("restart_guard"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation projection is inconsistent")
+    archive_journal = attestation.get("archive_journal")
+    archive_manifest = attestation.get("archive_manifest")
+    if not isinstance(archive_journal, Mapping) or not isinstance(archive_manifest, Mapping):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation archive evidence is incomplete")
+    replay = journal_for(project_root).replay_strict()
+    chain_id = chain_id_for_spec(spec_path)
+    events = [
+        event for event in replay.get("accepted", [])
+        if event.get("chain_id") == chain_id and event.get("operation_id") == attestation_operation_id
+    ]
+    commits = [event for event in events if event.get("event_kind") == "chain_control.restart_receipt_attested"]
+    if len(events) != 4 or [event.get("event_kind") for event in events] != [
+        "chain_control.intent", "chain_control.authority_validated", "chain_control.claimed", "chain_control.restart_receipt_attested"
+    ] or len(commits) != 1:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation must have one intent, authority, claim, and commit")
+    event = commits[0]
+    payload = event.get("payload")
+    effect = payload.get("effect") if isinstance(payload, Mapping) else None
+    if not isinstance(payload, Mapping) or payload.get("intent_kind") != "restart_current_attempt_legacy_receipt_attestation" or not isinstance(effect, Mapping):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation committed effect is malformed")
+    if effect.get("legacy_operation_id") != legacy_operation_id or effect.get("legacy_event_hash") != legacy_event_hash:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation legacy identity changed")
+    if effect.get("archive_journal") != dict(archive_journal) or effect.get("archive_manifest") != dict(archive_manifest):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation archive evidence changed")
+    guard = effect.get("restart_guard")
+    legacy_guard = effect.get("legacy_restart_guard")
+    if not isinstance(guard, Mapping) or not isinstance(legacy_guard, Mapping):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation guards are incomplete")
+    required = ("session_id", "spec_sha256", "cursor", "milestone", "retired_plan", "source", "source_binding", "execution_binding")
+    if any(key not in legacy_guard for key in required):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation lacks source guard")
+    if legacy_guard.get("session_id") != expected_session_id or legacy_guard.get("spec_sha256") != expected_spec_sha256:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation session/spec guard does not match")
+    if legacy_guard.get("cursor") != milestone_index or legacy_guard.get("milestone") != expected_current_milestone or legacy_guard.get("retired_plan") != expected_current_plan:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation milestone guard does not match")
+    source = legacy_guard.get("source")
+    binding = chain.get("metadata", {}).get("project_source_binding") if isinstance(chain.get("metadata"), Mapping) else None
+    if not isinstance(source, Mapping) or source.get("branch") != from_branch or source.get("head") != from_head or legacy_guard.get("source_binding") != binding:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation source binding does not match")
+    if legacy_guard.get("execution_binding") != chain.get("metadata", {}).get("execution_binding"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation execution binding changed")
+    if event.get("expected_revision") != legacy_guard.get("attested_state_revision_before") and event.get("expected_revision") != legacy_guard.get("state_revision_before"):
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation expected revision is malformed")
+    observed_revision = chain.get("metadata", {}).get("_nbf08_revision") if isinstance(chain.get("metadata"), Mapping) else None
+    if event.get("actual_revision") != observed_revision or guard.get("attested_state_revision_after") != observed_revision:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation revision evidence does not match")
+    if event.get("actual_cursor") != milestone_index or event.get("expected_cursor") != milestone_index:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation cursor evidence does not match")
+    if event.get("post_state_digest") != state_digest_for(chain) or effect.get("chain_state_sha256") != hashlib.sha256(chain_raw).hexdigest():
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation post-state evidence does not match")
+    if effect.get("plan_state_sha256") != hashlib.sha256(plan_raw).hexdigest():
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation plan-state evidence does not match")
+    retirement = plan.get("meta", {}).get("retirement") if isinstance(plan.get("meta"), Mapping) else None
+    if str(plan.get("current_state") or "").lower() not in {"aborted", "cancelled"} or plan.get("active_step") is not None or not isinstance(retirement, Mapping) or retirement.get("kind") != "retired_for_restart" or retirement.get("operation_id") != legacy_operation_id:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation retired plan is not terminal")
+    marker_path = project_root / ".megaplan" / "cloud-session.json"
+    if marker_path.is_file():
+        _, marker = _load_json_bytes(marker_path, label="session marker")
+        if marker.get("session") != expected_session_id or marker.get("should_run") is not False or _marker_occupied(marker) is not None:
+            raise CliError(PROJECT_SOURCE_REBIND_ERROR, "legacy restart attestation requires a paused, unoccupied marker")
+    return {"event_hash": event.get("event_hash"), "operation_id": legacy_operation_id, "attestation_operation_id": attestation_operation_id, "event": event, "guard": legacy_guard}
 
 
 def _event(
