@@ -435,20 +435,34 @@ def _assert_restart_receipt(
 
     replay = journal_for(project_root).replay_strict()
     chain_id = chain_id_for_spec(spec_path)
-    committed = [
+    operation_events = [
         event
         for event in replay.get("accepted", [])
         if isinstance(event, Mapping)
         and event.get("chain_id") == chain_id
         and event.get("operation_id") == operation_id
-        and event.get("event_kind") == "chain_control.committed"
     ]
-    if len(committed) != 1:
+    committed = [
+        event
+        for event in operation_events
+        if event.get("event_kind") == "chain_control.committed"
+    ]
+    authoritative = [
+        event
+        for event in committed
+        if event.get("intent") == "restart_current_attempt"
+        and isinstance(event.get("payload"), Mapping)
+        and event["payload"].get("intent_kind") == "restart_current_attempt"
+        and isinstance(event["payload"].get("effect"), Mapping)
+        and isinstance(event["payload"]["effect"].get("restart_guard"), Mapping)
+        and event["payload"]["effect"]["restart_guard"].get("schema") == _RESTART_GUARD_SCHEMA
+    ]
+    if len(authoritative) != 1 or len(committed) != 1:
         raise CliError(
             PROJECT_SOURCE_REBIND_ERROR,
-            "restart receipt must resolve to exactly one committed event",
+            "restart receipt must resolve to exactly one authoritative committed event",
         )
-    event = committed[0]
+    event = authoritative[0]
     event_hash = _require_restart_sha(event.get("event_hash"), label="event hash")
     if event.get("intent") != "restart_current_attempt":
         raise CliError(

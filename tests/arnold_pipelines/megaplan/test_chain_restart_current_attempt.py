@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import arnold_pipelines.megaplan.incident.chain_control as chain_control
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.chain.operator_pause import AUTHORITY_SCHEMA
 from arnold_pipelines.megaplan.chain.restart_current_attempt import (
@@ -317,6 +318,56 @@ def test_post_restart_rebind_uses_guarded_source_when_retired_base_is_historical
     # The retired plan remains immutable; the new source is recorded only on
     # the chain boundary and is available to the resumed successor.
     assert _load_json(fixture["plan_path"])["meta"]["chain_policy"]["milestone_base_sha"] == "9" * 40
+
+
+def test_post_restart_rebind_rejects_conflicting_authoritative_commits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _restart(fixture)
+    real_replay = chain_control.journal_for(fixture["root"]).replay_strict()
+    authoritative = next(
+        event
+        for event in real_replay["accepted"]
+        if event.get("event_kind") == "chain_control.committed"
+    )
+    conflicting = dict(authoritative)
+    conflicting["event_hash"] = "a" * 64
+    replay = dict(real_replay)
+    replay["accepted"] = [*real_replay["accepted"], conflicting]
+
+    class FakeJournal:
+        def replay_strict(self) -> dict[str, Any]:
+            return replay
+
+    monkeypatch.setattr(chain_control, "journal_for", lambda _root: FakeJournal())
+    before = {
+        fixture["state_path"]: fixture["state_path"].read_bytes(),
+        fixture["plan_path"]: fixture["plan_path"].read_bytes(),
+    }
+    with pytest.raises(CliError, match="exactly one authoritative committed event"):
+        target_rebind(
+            fixture["spec"],
+            fixture["root"],
+            direction="cutover",
+            expected_session_id=fixture["root"].name,
+            expected_current_milestone=MILESTONE,
+            expected_current_plan=PLAN_NAME,
+            from_branch=SOURCE_BRANCH,
+            from_head=fixture["source"],
+            from_milestone_base=fixture["source"],
+            from_ref=f"refs/heads/{SOURCE_BRANCH}",
+            to_branch=TARGET_BRANCH,
+            to_head=fixture["target"],
+            to_ref=f"refs/heads/{TARGET_BRANCH}",
+            expected_spec_sha256=sha256_path(fixture["spec"]),
+            expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+            expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
+            reason="reject conflicting restart receipt",
+            actor="test",
+        )
+    assert {path: path.read_bytes() for path in before} == before
 
 
 def test_forged_restart_record_with_live_plan_refuses_target_rebind(tmp_path: Path) -> None:
