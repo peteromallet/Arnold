@@ -594,25 +594,82 @@ relaunch_materializer_authority_gate() {
     )
 
 
-def test_watchdog_maps_suppressed_babysitter_to_typed_report_without_schedule() -> None:
-    """The outer watchdog preserves the inner no-launch authority result."""
+def test_watchdog_maps_suppressed_babysitter_to_typed_report_without_schedule(
+    tmp_path: Path,
+) -> None:
+    """The outer watchdog preserves the inner no-launch authority result.
+
+    Exercise the real outer launcher in a subprocess with a child stub that
+    writes the canonical inner suppression receipt.  The outer receipt must
+    retain the typed authority evidence and must not acquire launch/schedule
+    ownership fields.
+    """
+    paths = _prepare_watchdog_superfixer_fixture(tmp_path)
+    child = tmp_path / "suppressed-babysitter.sh"
+    child.write_text(
+        "#!/usr/bin/env bash\n"
+        "run_root=\n"
+        "session=\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    --run-root) run_root=\"$2\"; shift 2 ;;\n"
+        "    --session) session=\"$2\"; shift 2 ;;\n"
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "mkdir -p \"$run_root\"\n"
+        "printf '%s\\n' '{\"schema\":\"arnold.babysitter.launch_receipt.v1\",\"status\":\"suppressed\",\"dispatch_outcome\":{\"kind\":\"no_launch\",\"status\":\"suppressed\",\"reason\":\"canonical_pause\",\"authority_identity\":{\"chain_id\":\"chain\",\"plan_name\":\"plan\",\"marker_identity\":\"marker-identity\"}}}' > \"$run_root/$session.babysitter-launch-receipt.json\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    child.chmod(child.stat().st_mode | stat.S_IXUSR)
     script = "\n\n".join(
         [
             _extract_wrapper_function("babysitter_policy_dispatch"),
+            _extract_wrapper_function("launch_status_trigger_babysitter"),
             "babysitter_effective_mode() { printf 'superfixer\\t'; }",
             "babysitter_occurrence_digest() { printf 'digest'; }",
             "babysitter_running_for_occurrence() { return 1; }",
             "babysitter_after_elapsed() { return 0; }",
-            "launch_status_trigger_babysitter() { return 2; }",
             "babysitter_parked_chain_stall() { return 1; }",
             "log() { :; }",
             "report_item() { printf '%s\\n' \"$4\"; }",
-            "babysitter_policy_dispatch session workspace spec chain plan items reason",
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "export CLOUD_WATCHDOG_BABYSITTER_BIN=" + shlex.quote(str(child)),
+            "export ARNOLD_BABYSITTER_LAUNCH_GRACE_SECS=2",
+            (
+                "babysitter_policy_dispatch "
+                f"{shlex.quote(paths['session'])} {shlex.quote(str(paths['workspace']))} "
+                f"{shlex.quote(str(paths['spec_path']))} plan {shlex.quote(paths['plan_name'])} "
+                f"{shlex.quote(str(tmp_path / 'report.tsv'))} reason"
+            ),
         ]
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "babysitter_suppressed"
+    receipt_path = paths["repair_data_dir"] / f"{paths['session']}.babysitter-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["schema"] == "arnold.superfixer.watchdog_dispatch_receipt.v1"
+    assert receipt["status"] == "suppressed"
+    assert receipt["suppression_reason"] == "automatic babysitter admission authority"
+    assert receipt["dispatch_outcome"] == {
+        "kind": "no_launch",
+        "status": "suppressed",
+        "reason": "canonical_pause",
+        "authority_identity": {
+            "chain_id": "chain",
+            "plan_name": "plan",
+            "marker_identity": "marker-identity",
+        },
+    }
+    assert "babysitter_pid" not in receipt
+    assert "managed_run_id" not in receipt
+    assert "scheduled_receipt" not in receipt
+    assert not list(paths["repair_data_dir"].glob("*scheduled*receipt*"))
 
 
 def test_run_watchdog_shell_strips_ambient_notification_authority(
