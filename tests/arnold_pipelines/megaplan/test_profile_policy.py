@@ -508,7 +508,7 @@ def test_all_muse_expansion_covers_every_nested_route_and_resolver_trace(
     Exercise the real profile expansion so both persisted route maps and the
     resolver trace prove that no canonical DeepSeek fallback was used.
     """
-    muse = "omp:openrouter/meta/muse-spark-1.2-contributor"
+    muse = "omp:openrouter/meta/muse-spark-1.3-contributor"
     from arnold_pipelines.megaplan.profiles import (
         load_profile_metadata,
         load_profiles,

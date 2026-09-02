@@ -2365,7 +2365,7 @@ class TestOverrideFallbackChains:
     def test_set_all_muse_profile_persists_nested_routes_and_trace(
         self, tmp_path: Path
     ) -> None:
-        muse = "omp:openrouter/meta/muse-spark-1.2-contributor"
+        muse = "omp:openrouter/meta/muse-spark-1.3-contributor"
         state = {
             "name": "demo",
             "current_state": "planned",

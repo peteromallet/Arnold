@@ -160,6 +160,10 @@ class TestSpecGrammar:
             validate_omp_catalog_model("anthropic", "claude-opus-4-8")
             == "anthropic/claude-opus-4-8"
         )
+        assert (
+            validate_omp_catalog_model("openrouter", "meta/muse-spark-1.3-contributor")
+            == "openrouter/meta/muse-spark-1.3-contributor"
+        )
 
     def test_rejects_unknown_provider(self):
         with pytest.raises(CliError, match="not in the frozen B1 contract"):
