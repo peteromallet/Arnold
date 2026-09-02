@@ -3414,6 +3414,7 @@ def _write_cloud_marker(
     runtime: dict,
     head: str | None = None,
     form: str = "legacy",
+    chain_slug: str | None = None,
 ) -> Path:
     """Write a cloud-session marker; ``form`` selects the runtime identity
     evidence it carries (T-0101h finding 3):
@@ -3444,6 +3445,8 @@ def _write_cloud_marker(
             f"{spec_path.resolve(strict=False)}"
         ),
     }
+    if chain_slug is not None:
+        marker["chain_slug"] = chain_slug
     if form == "binding":
         marker["runtime_binding"] = {
             "schema": "arnold.megaplan.chain_runtime_binding.v1",
@@ -4587,6 +4590,171 @@ def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayabl
     _state_path_for(spec_path).write_text(json.dumps(tampered) + "\n", encoding="utf-8")
     with pytest.raises(ChainControlTamper, match="diverges from journal"):
         verify_bound_state_matches_journal(spec_path)
+
+
+def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live legacy shape resolves session only from the exact marker."""
+    spec_path, state, previous, _successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    state.chain_session = None
+    state.metadata["_nbf08_revision"] = 0
+    save_chain_state(spec_path, state)
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session="native-build-forward",
+        plan="c2-plan",
+        runtime=previous,
+        chain_slug="demo",
+    )
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=Path(previous["import_root"]),
+        expected_head=previous["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    receipt_path = tmp_path / "verified-runtime-receipt.json"
+    receipt_path.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(previous),
+    )
+    marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    before_fields = load_chain_state(
+        spec_path, verify_execution_binding=False
+    ).to_dict()
+    non_metadata_before = {
+        key: value for key, value in before_fields.items() if key != "metadata"
+    }
+
+    kwargs = {
+        "expected_current_milestone": "c2",
+        "expected_current_plan": "c2-plan",
+        "expected_branch": _git(tmp_path, "branch", "--show-current"),
+        "expected_chain_spec_sha256": expected_spec_sha,
+        "expected_state_digest": state_digest_for(before_fields),
+        "expected_state_revision": 0,
+        "expected_marker_sha256": marker_sha,
+        "expected_manifest_sha256": manifest_sha,
+        "reason": "recover authoritative legacy chain session",
+        "actor": "test-operator",
+        "verified_external_runtime_identity": previous,
+        "verified_external_runtime_receipt": receipt_path,
+    }
+    result = promote_legacy_runtime_binding(spec_path, tmp_path, **kwargs)
+    assert result["outcome"] == "committed"
+    assert result["promotion"]["chain_session"] == "native-build-forward"
+    promoted = load_chain_state(spec_path, verify_execution_binding=False)
+    assert {
+        key: value for key, value in promoted.to_dict().items() if key != "metadata"
+    } == non_metadata_before
+    assert promoted.chain_session is None
+    assert marker_path.read_bytes()  # marker is evidence, never rewritten
+
+    replayed = promote_legacy_runtime_binding(
+        spec_path,
+        tmp_path,
+        **{**kwargs, "reason": "retry with same exact authority"},
+    )
+    assert replayed["outcome"] == "replay"
+    semantic = [
+        event
+        for event in journal_for(tmp_path).replay_strict()["accepted"]
+        if event.get("event_kind") == "chain_control.runtime_rebound"
+    ]
+    assert len(semantic) == 1
+    assert semantic[0]["payload"]["effect"]["chain_session"] == "native-build-forward"
+
+
+@pytest.mark.parametrize("failure", ["absent", "conflict", "malformed"])
+def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_zero_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    spec_path, state, previous, _successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    state.chain_session = None
+    state.metadata["_nbf08_revision"] = 0
+    save_chain_state(spec_path, state)
+    marker_path = _write_cloud_marker(
+        tmp_path,
+        spec_path,
+        session="native-build-forward",
+        plan="c2-plan",
+        runtime=previous,
+        chain_slug="demo",
+    )
+    original_marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    if failure == "absent":
+        marker_path.unlink()
+    elif failure == "conflict":
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["chain_slug"] = "different-epic"
+        marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+    elif failure == "malformed":
+        marker_path.write_text("{not-json}\n", encoding="utf-8")
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=Path(previous["import_root"]),
+        expected_head=previous["source_revision"],
+    )
+    monkeypatch.setenv("ARNOLD_RUNTIME_MANIFEST", str(manifest_path))
+    receipt_path = tmp_path / "verified-runtime-receipt.json"
+    receipt_path.write_text(
+        json.dumps({"schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA, "verified": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.verify_external_runtime_identity",
+        lambda _identity_path, _receipt_path: dict(previous),
+    )
+    marker_sha = (
+        original_marker_sha
+        if failure == "absent"
+        else hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    )
+    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    state_before = _state_path_for(spec_path).read_bytes()
+    spec_before = spec_path.read_bytes()
+    marker_before = marker_path.read_bytes() if marker_path.exists() else None
+    manifest_before = manifest_path.read_bytes()
+    before = load_chain_state(spec_path, verify_execution_binding=False).to_dict()
+
+    with pytest.raises(CliError, match="authoritative|unresolved|conflicts|malformed"):
+        promote_legacy_runtime_binding(
+            spec_path,
+            tmp_path,
+            expected_current_milestone="c2",
+            expected_current_plan="c2-plan",
+            expected_branch=_git(tmp_path, "branch", "--show-current"),
+            expected_chain_spec_sha256=expected_spec_sha,
+            expected_state_digest=state_digest_for(before),
+            expected_state_revision=0,
+            expected_marker_sha256=marker_sha,
+            expected_manifest_sha256=manifest_sha,
+            reason=f"reject missing-session authority: {failure}",
+            actor="test-operator",
+            verified_external_runtime_identity=previous,
+            verified_external_runtime_receipt=receipt_path,
+    )
+    assert _state_path_for(spec_path).read_bytes() == state_before
+    assert spec_path.read_bytes() == spec_before
+    assert (marker_path.read_bytes() if marker_path.exists() else None) == marker_before
+    assert manifest_path.read_bytes() == manifest_before
 
 
 @pytest.mark.parametrize("bad_guard", ["state", "marker", "manifest", "malformed-marker"])

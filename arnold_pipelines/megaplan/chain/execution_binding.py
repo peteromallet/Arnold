@@ -4174,6 +4174,122 @@ def promote_legacy_runtime_binding(
             f"cloud-session marker is missing for session {session!r}",
         )
 
+    def _resolve_marker_from_authoritative_evidence() -> tuple[Path, str]:
+        """Recover a missing legacy session from one exact marker identity.
+
+        Early cloud snapshots can retain the runtime-only binding while
+        omitting ``chain_session``.  The canonical marker still carries the
+        session name, workspace/spec identity, and runtime proof.  Discovery
+        is limited to the configured/canonical marker directories and the
+        caller's exact marker-byte CAS; the marker is read and all checks are
+        repeated while its cutover lock is held below.
+        """
+
+        candidate_dirs: list[Path] = []
+        if env_marker_dir.strip():
+            candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
+        candidate_dirs.extend(
+            (
+                Path("/workspace/.megaplan/cloud-sessions"),
+                project_root / ".megaplan" / "cloud-sessions",
+            )
+        )
+        expected_slug = _chain_epic_slug(spec_path)
+        matches: list[tuple[Path, str]] = []
+        seen_probes: set[Path] = set()
+        for directory in candidate_dirs:
+            try:
+                probes = sorted(directory.glob("*.json"))
+            except OSError as exc:
+                raise CliError(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    f"legacy runtime promotion cannot inspect marker directory {directory}",
+                ) from exc
+            for probe in probes:
+                probe = probe.resolve(strict=False)
+                if probe in seen_probes:
+                    continue
+                seen_probes.add(probe)
+                try:
+                    raw = probe.read_bytes()
+                except OSError as exc:
+                    # Unrelated marker files may disappear during normal
+                    # cleanup.  An unreadable canonical-slug file is
+                    # authoritative enough to fail closed.
+                    if probe.stem == expected_slug:
+                        raise CliError(
+                            EXECUTION_BINDING_MIGRATE_ERROR,
+                            "legacy runtime promotion authoritative marker is unreadable",
+                        ) from exc
+                    continue
+                if _sha256_bytes(raw) != expected_marker_sha256:
+                    continue
+                try:
+                    marker = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion authoritative marker is malformed",
+                    ) from exc
+                if not isinstance(marker, Mapping):
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion authoritative marker is malformed",
+                    )
+                session = str(marker.get("session") or "").strip()
+                if not session or probe.stem != session:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion authoritative marker has no exact session identity",
+                    )
+                marker_slug = str(marker.get("chain_slug") or "").strip()
+                if marker_slug and marker_slug != expected_slug:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion marker chain slug conflicts with the chain spec",
+                    )
+                marker_workspace = str(marker.get("workspace") or "").strip()
+                if not marker_workspace or Path(marker_workspace).expanduser().resolve(strict=False) != project_root:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion marker workspace conflicts with the chain project",
+                    )
+                marker_spec = str(marker.get("remote_spec") or "").strip()
+                if not marker_spec or Path(marker_spec).expanduser().resolve(strict=False) != spec_path:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        "legacy runtime promotion marker spec conflicts with the chain spec",
+                    )
+                try:
+                    _assert_marker_agrees_with_runtime(
+                        marker,
+                        session=session,
+                        spec_path=spec_path,
+                        guarded_plan=expected_current_plan,
+                        external=external,
+                        old_root=old_root,
+                        expected_marker_sha256=expected_marker_sha256,
+                        marker_sha256=expected_marker_sha256,
+                    )
+                except CliError as exc:
+                    raise CliError(
+                        EXECUTION_BINDING_MIGRATE_ERROR,
+                        f"legacy runtime promotion authoritative marker is not agreeing: {exc}",
+                    ) from exc
+                matches.append((probe.resolve(strict=False), session))
+
+        if not matches:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion chain session is unresolved: no authoritative marker matches the exact marker SHA-256",
+            )
+        if len(matches) != 1 or len({item[1] for item in matches}) != 1:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "legacy runtime promotion chain session is ambiguous across authoritative markers",
+            )
+        return matches[0]
+
     runtime_context = {
         "promotion": "legacy-runtime-only",
         "chain_spec_sha256": expected_chain_spec_sha256,
@@ -4307,14 +4423,15 @@ def promote_legacy_runtime_binding(
                 str(exc),
             ) from exc
 
-        session = str(current.chain_session or "").strip()
-        if not session:
-            raise ChainControlHold(
-                EXECUTION_BINDING_MIGRATE_ERROR,
-                "legacy runtime promotion chain session is missing",
-            )
         nonlocal marker_path
-        marker_path = _resolve_marker(session)
+        session = str(current.chain_session or "").strip()
+        try:
+            if session:
+                marker_path = _resolve_marker(session)
+            else:
+                marker_path, session = _resolve_marker_from_authoritative_evidence()
+        except CliError as exc:
+            raise ChainControlHold(exc.code, str(exc), details=dict(exc.extra)) from exc
         try:
             # Global order: chain sequence/scope/state locks, then the
             # runtime-manifest promotion lock, ordinary manifest writer lock,
@@ -4427,6 +4544,8 @@ def promote_legacy_runtime_binding(
                         "provenance_link": str(receipt_path),
                         "manifest_sha256": expected_manifest_sha256,
                         "marker_sha256": expected_marker_sha256,
+                        "chain_session": session,
+                        "marker_path": str(marker_path),
                         "execution_binding": active,
                     }
         except (BlockingIOError, TimeoutError) as exc:
