@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Render the status-trigger babysitter operator contract.
 
-The watchdog status trigger renders this goal and launches ONE detached
-omp:deepseek/deepseek-v4-flash managed agent — the BABYSITTER — whose
+The watchdog status trigger renders this goal and launches ONE detached managed
+OMP agent — the BABYSITTER — whose
 prompt drives the entire recovery flow itself:
 
     (a) deploy a bounded read-only swarm via skills/subagent-launcher/fan.py
         over the failure evidence (one investigator per scoping question)
-    (b) hand the packed context to codex (codex:gpt-5.6-sol, high reasoning)
+    (b) hand the packed context to the configured review route
         for a proper solution proposal
     (c) implement the narrowest source-level fix in the approved editable
         runtime
@@ -16,7 +16,7 @@ prompt drives the entire recovery flow itself:
     (e) prove movement: chain-*.json last_state leaves blocked and the same
         failure_fingerprint does not recur
 
-The single agent IS the orchestrator: the prompt drives the swarm -> codex ->
+The single agent IS the orchestrator: the prompt drives the swarm -> review ->
 implement -> relaunch -> prove flow.  The renderer embeds the concrete
 session/workspace/plan context plus the failure evidence (latest_failure,
 planner_repair) so the babysitter never starts from a bare session name.
@@ -28,7 +28,12 @@ import argparse
 import json
 from pathlib import Path
 
-from arnold_pipelines.megaplan.cloud.babysitter.routing import resolve_babysitter_routing
+from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    CONTINUATION_FIXER_ROLES,
+    CONTINUATION_MUSE_MODEL,
+    CONTINUATION_MUSE_THINKING,
+    resolve_babysitter_routing,
+)
 
 
 def _safe_text(value: object) -> str:
@@ -113,6 +118,7 @@ def _render_prior_fixer_work_block(recovery_dir: str) -> str:
 def render_babysitter_goal(
     target: str,
     *,
+    session: str = "",
     workspace: str = "",
     plan: str = "",
     run_kind: str = "",
@@ -123,9 +129,8 @@ def render_babysitter_goal(
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
-    The goal is the prompt for ONE omp:deepseek/deepseek-v4-flash managed
-    agent that orchestrates the whole recovery itself: swarm -> codex ->
-    implement -> relaunch -> prove.  It includes the session/workspace/plan
+    The goal is the prompt for ONE managed agent that orchestrates the whole
+    recovery itself: swarm -> review -> implement -> relaunch -> prove.  It includes the session/workspace/plan
     context and the durable failure evidence (``latest_failure``,
     ``planner_repair``) so the babysitter never starts from a bare session
     name.  ``recovery_dir`` (the chain's ``.megaplan/plans/.chains/recovery/``
@@ -134,7 +139,7 @@ def render_babysitter_goal(
     continues the lineage instead of re-deriving the same diagnosis from
     scratch.
     """
-    routing = resolve_babysitter_routing()
+    routing = resolve_babysitter_routing(session=session or target)
     encoded_target = json.dumps(target, ensure_ascii=False)
     context_lines = [
         "- target: " + encoded_target,
@@ -184,7 +189,46 @@ def render_babysitter_goal(
         if recovery_dir
         else ""
     )
-    if routing.mode == "codex":
+    if routing.closed:
+        role_list = ", ".join(CONTINUATION_FIXER_ROLES)
+        controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
+{CONTINUATION_MUSE_MODEL} managed controller with thinking={CONTINUATION_MUSE_THINKING}
+and the ORCHESTRATOR of the whole recovery flow.  This continuation is a
+closed-provider run: every fixer role ({role_list}), including swarm,
+investigator, implementer, reviewer, XHARD/oracle, and recommendation, MUST
+use exactly {CONTINUATION_MUSE_MODEL} with thinking={CONTINUATION_MUSE_THINKING}.
+There is no fallback, alternate provider, or ambient model override.  Do the
+job end to end: investigate, decide, implement the narrowest source-level
+fix, relaunch the chain, and prove movement.  You are not an auditor who
+reports back; you drive the chain out of the blocked/failed state."""
+        investigator_step = f"""- STEP 1 — DEPLOY THE MUSE INVESTIGATORS: over the failure evidence, fan out
+  one bounded, read-only investigator per scoping question through
+  `$subagent-launcher / skills/subagent-launcher/fan.py` or
+  `launch_omp_agent.py`, passing exactly
+  `--model={CONTINUATION_MUSE_MODEL}:{CONTINUATION_MUSE_THINKING}`.  Record
+  the actual provider/model/transport in every report.  The same exact route
+  is required for every role: {role_list}.  Do not invoke any alternate
+  provider, and do not configure a fallback."""
+        consult_step = f"""- STEP 2 — REVIEW AND DECIDE WITH MUSE: hand the packed context (evidence
+  pack, swarm index, and every investigator report) to the same exact
+  {CONTINUATION_MUSE_MODEL} route with thinking={CONTINUATION_MUSE_THINKING}
+  and get a proper solution proposal: the shortest safe path to durable
+  movement AND the deepest complete structural fix for the failure category.
+  Persist the proposal before touching the runtime.  Invoke one bounded
+  foreground OMP command with
+  `--model={CONTINUATION_MUSE_MODEL}:{CONTINUATION_MUSE_THINKING}`.  Do not
+  invoke another provider, use an ambient model, or advance a fallback."""
+        tooling_contract = f"""TOOLING (verified, closed route): there is no `megaplan` binary on PATH —
+   invoke the CLI as `cd <workspace> && python3 -m arnold_pipelines.megaplan <cmd> ...`.
+   The only permitted agent launcher is `launch_omp_agent.py` / `fan.py` with
+   `--model={CONTINUATION_MUSE_MODEL}:{CONTINUATION_MUSE_THINKING}`.  Every
+   nested dispatch must carry that exact model and thinking setting; no
+   alternate provider or fallback is permitted.  Missing tools are
+   never a valid verdict without probing these exact forms."""
+        escalation_instruction = (
+            "Escalate back through the same closed Muse route after three distinct"
+        )
+    elif routing.mode == "codex":
         controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
 codex:{routing.controller_model.split(':', 1)[1]} managed controller and the
 ORCHESTRATOR of the whole recovery flow.  This is an explicit temporary Codex
@@ -199,6 +243,28 @@ the chain out of the blocked/failed state."""
   and a read-only sandbox.  Record the actual provider/model/transport in every
   report.  Do not invoke another provider under this
   explicit override."""
+        consult_step = """- STEP 2 — CONSULT CODEX: hand the packed context (evidence pack, swarm index,
+  and every investigator report) to codex (codex:gpt-5.6-sol, high reasoning)
+  and get a proper solution proposal: the shortest safe path to durable
+  movement AND the deepest complete structural fix for the failure category.
+  Persist the proposal before touching the runtime.
+  INVOKE AS ONE BOUNDED FOREGROUND COMMAND — never background ``codex exec``
+  and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
+  the consult hung 65 min at 0% CPU / 0 sockets):
+    codex exec --sandbox danger-full-access --ephemeral \\
+      -m gpt-5.6-sol -c model_reasoning_effort=high \\
+      -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
+      "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null
+  The enclosing worker owns the timeout bound. Do not insert a shell
+  timeout wrapper. A poll loop is not progress. Do not wait unbounded on
+  a child."""
+        tooling_contract = """TOOLING (verified): there is no `megaplan` binary on PATH — invoke the CLI as
+   `cd <workspace> && python3 -m arnold_pipelines.megaplan <cmd> ...`.
+   Codex is available as `codex exec` and the swarm via
+   `python3 skills/subagent-launcher/fan.py` / launch_omp_agent.py from the
+   engine root.  "Missing tools" is never a valid verdict without first
+   running `command -v` / a probe of these exact forms."""
+        escalation_instruction = "Escalate back to codex after three distinct"
     else:
         controller_intro = f"""You are the BABYSITTER for target {encoded_target}: ONE
 omp:deepseek/deepseek-v4-flash managed agent and the ORCHESTRATOR of the
@@ -214,6 +280,28 @@ back; you drive the chain out of the blocked/failed state."""
   model/provider/transport in every report.  If Flash is unavailable, stop at
   that exact gate — do not silently substitute another model for the
   investigator role."""
+        consult_step = """- STEP 2 — CONSULT CODEX: hand the packed context (evidence pack, swarm index,
+  and every investigator report) to codex (codex:gpt-5.6-sol, high reasoning)
+  and get a proper solution proposal: the shortest safe path to durable
+  movement AND the deepest complete structural fix for the failure category.
+  Persist the proposal before touching the runtime.
+  INVOKE AS ONE BOUNDED FOREGROUND COMMAND — never background ``codex exec``
+  and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
+  the consult hung 65 min at 0% CPU / 0 sockets):
+    codex exec --sandbox danger-full-access --ephemeral \\
+      -m gpt-5.6-sol -c model_reasoning_effort=high \\
+      -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
+      "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null
+  The enclosing worker owns the timeout bound. Do not insert a shell
+  timeout wrapper. A poll loop is not progress. Do not wait unbounded on
+  a child."""
+        tooling_contract = """TOOLING (verified): there is no `megaplan` binary on PATH — invoke the CLI as
+   `cd <workspace> && python3 -m arnold_pipelines.megaplan <cmd> ...`.
+   Codex is available as `codex exec` and the swarm via
+   `python3 skills/subagent-launcher/fan.py` / launch_omp_agent.py from the
+   engine root.  "Missing tools" is never a valid verdict without first
+   running `command -v` / a probe of these exact forms."""
+        escalation_instruction = "Escalate back to codex after three distinct"
     return f"""/goal
 {controller_intro}
 
@@ -236,12 +324,7 @@ HARD TURN CONTRACT — read before anything else:
 4. This run's budget allows long work: omp turns up to 7200s, container
    memory 16G.  Time alone is not a reason to stop.
 
-TOOLING (verified): there is no `megaplan` binary on PATH — invoke the CLI as
-   `cd <workspace> && python3 -m arnold_pipelines.megaplan <cmd> ...`.
-   Codex is available as `codex exec` and the swarm via
-   `python3 skills/subagent-launcher/fan.py` / launch_omp_agent.py from the
-   engine root.  "Missing tools" is never a valid verdict without first
-   running `command -v` / a probe of these exact forms.
+{tooling_contract}
 LIVENESS / TRANSPORT CONTRACT:
   A live PID, lease, launch receipt, or nonterminal run status is ownership
   evidence, never progress evidence. Every investigator must emit a terminal
@@ -268,25 +351,12 @@ LIVENESS / TRANSPORT CONTRACT:
 Mandatory flow — follow the five steps exactly:
 
 {investigator_step}
-- STEP 2 — CONSULT CODEX: hand the packed context (evidence pack, swarm index,
-  and every investigator report) to codex (codex:gpt-5.6-sol, high reasoning)
-  and get a proper solution proposal: the shortest safe path to durable
-  movement AND the deepest complete structural fix for the failure category.
-  Persist the proposal before touching the runtime.
-  INVOKE AS ONE BOUNDED FOREGROUND COMMAND — never background ``codex exec``
-  and sleep/tail-poll a supervisor file (I51b: that poll is fake progress and
-  the consult hung 65 min at 0% CPU / 0 sockets):
-    codex exec --sandbox danger-full-access --ephemeral \\
-      -m gpt-5.6-sol -c model_reasoning_effort=high \\
-      -C "$PWD" -o "$EVIDENCE_DIR/codex/sol-stage2-proposal.md" \\
-      "$(cat "$EVIDENCE_DIR/codex/sol-stage2-prompt.md")" </dev/null
-  The enclosing worker owns the timeout bound. Do not insert a shell
-  timeout wrapper. A poll loop is not progress. Do not wait unbounded on
-  a child.
+{consult_step}
 - STEP 3 — IMPLEMENT: apply the narrowest source-level fix for the failure in
   the approved editable runtime.  Run the focused regression, inspect the real
   result, and keep iterating (bounded, with an evidence delta after every
-  failed attempt) until the occurrence advances.  Escalate back to codex after
+  failed attempt) until the occurrence advances.  {escalation_instruction}
+  verified fix attempts.  Continue only within the active routing contract;
   three distinct verified fix attempts.  agent_actionable: false is reserved
   for a genuinely external gate.
   PERSIST AND SHIP THE FIX (do NOT hand the ship back — you finish delivery):
@@ -301,7 +371,7 @@ Mandatory flow — follow the five steps exactly:
       the astrid repo's m1/m2 branch (for astrid-first) -> then
       ``git -C <candidate> fetch origin main && git -C <candidate> reset
       --hard origin/main``;
-      CONCURRENT-PUSH GUARD (grok post-fix verdict 2026-08-16): the shared
+      CONCURRENT-PUSH GUARD (post-fix review 2026-08-16): the shared
       engine moves under you — another epic's fixer may push origin/main while
       you are mid-delivery. After EVERY push/reset, RE-READ the live rev:
       ``git -C <candidate> rev-parse origin/main`` and use THAT as the rebind
@@ -383,12 +453,12 @@ Mandatory flow — follow the five steps exactly:
   just DRIVE (chain start / resume with the canonical env). The drive
   auto-adopts. Only an ACTIVE plan (live worker/step) needs the explicit
   rebind, and only a FRESH failure after the drive deserves investigation.
-  TERMINAL CONTRACT (codex consult 2026-08-17): each terminal call must pass
+  TERMINAL CONTRACT (review consult 2026-08-17): each terminal call must pass
   an explicit ``workdir`` — NEVER issue a standalone ``cd`` as a command. The
   shell is persistent (cwd survives), but a bare cd is treated as non-progress
   and can trip the non-progress breaker. Use absolute paths in commands when
   you need a different directory.
-  EXECUTE-PHASE RESUME LOOP (grok strategy 2026-08-16, astrid m2): if the
+  EXECUTE-PHASE RESUME LOOP (execute strategy 2026-08-16, astrid m2): if the
   resume repeatedly dies mid-execute and restarts from batch 1, the blocker is
   the DEFERRED VALIDATION refusal — the resume agent hits its iteration cap,
   the execute driver then fails the deferred revalidation
@@ -414,7 +484,7 @@ Mandatory flow — follow the five steps exactly:
      loop: the reap decision never reads the heartbeat projection. Do not
      spend this session on it; the one-liner (stop passing ``source_path`` to
      the heartbeat append) is a later cleanup.
-  ENGINE-REPAIR AUTHORITY (grok deep-fix consult 2026-08-16): when the
+  ENGINE-REPAIR AUTHORITY (deep-fix consult 2026-08-16): when the
   diagnosis names an ENGINE-layer defect (shared code: execute/batch.py,
   finalize, validation, watchdog, CAS — NOT the per-epic workspace), the
   accepted repair IS a reviewed engine patch, and workspace-only closure is
@@ -517,6 +587,7 @@ def main() -> int:
         description="Render the status-trigger babysitter goal (single Flash orchestrator: swarm -> codex -> implement -> relaunch -> prove)."
     )
     parser.add_argument("--target", required=True, help="epic or session text")
+    parser.add_argument("--session", default="", help="canonical session identity")
     parser.add_argument("--workspace", default="", help="workspace path")
     parser.add_argument("--plan", default="", help="plan name")
     parser.add_argument("--run-kind", default="", help="chain|plan|epic_chain")
@@ -540,6 +611,7 @@ def main() -> int:
     print(
         render_babysitter_goal(
             args.target,
+            session=args.session or args.target,
             workspace=args.workspace,
             plan=args.plan,
             run_kind=args.run_kind,

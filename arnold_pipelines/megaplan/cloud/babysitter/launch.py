@@ -2,11 +2,12 @@
 """Status-trigger babysitter launch module.
 
 The watchdog's status trigger (``MEGAPLAN_SUPERFIXER_ONLY=1``) Popen's
-``arnold-babysitter``, which executes this module.  The babysitter is ONE
-detached ``omp:deepseek/deepseek-v4-flash`` managed agent whose goal prompt
-drives the entire recovery flow itself — bounded swarm -> codex -> implement
--> relaunch -> prove (see the rendered goal).  There is deliberately NO coded
-multi-stage orchestrator: the single agent IS the orchestrator.
+``arnold-babysitter``, which executes this module.  For ordinary sessions the
+babysitter is one detached managed OMP agent whose goal prompt drives the
+recovery flow itself.  The native-build-forward continuation is closed to one
+exact Muse Spark 1.3 Contributor route with high thinking at every nested
+dispatch.  There is deliberately NO coded multi-stage orchestrator: the single
+agent IS the orchestrator.
 
 Flow (fail closed at every step — the caller's grace poll turns an early
 non-zero rc into a hard abort, never a fallthrough to another repair route):
@@ -24,9 +25,10 @@ non-zero rc into a hard abort, never a fallthrough to another repair route):
        compatible engine-root resolution).
     4. Launch ONE managed Flash agent through
        ``arnold_pipelines.megaplan.managed_agent`` (backend=babysitter); the
-       worker is ``launch_omp_agent.py --model=omp:deepseek/deepseek-v4-flash
-       --toolsets=file,web,terminal --query-file=<goal> --project-dir=<engine>``
-       so the agent can run fan.py and codex exec.  This process stays alive
+       worker is ``launch_omp_agent.py`` with the resolved model route,
+       ``--toolsets=file,web,terminal --query-file=<goal> --project-dir=<engine>``
+       so the agent can run the bounded recovery flow.  Continuation sessions
+       carry the exact Muse model/high-thinking suffix.  This process stays alive
        as the managed-agent supervisor for the whole run, so the watchdog's
        early-rc check and receipt pid liveness are honest.
     5. Write an ``arnold.superfixer.babysitter_launch_receipt.v1`` receipt
@@ -36,7 +38,7 @@ non-zero rc into a hard abort, never a fallthrough to another repair route):
 Env overrides (all optional):
     ARNOLD_BABYSITTER_SESSION / _WORKSPACE / _PLAN / _RUN_KIND / _OCCURRENCE /
     _GOAL_FILE / _MARKER_DIR / _REPAIR_DATA_DIR   watchdog-provided context
-    ARNOLD_BABYSITTER_MODEL       Flash model (default omp:deepseek/deepseek-v4-flash)
+    ARNOLD_BABYSITTER_MODEL       ordinary-session model override
     ARNOLD_BABYSITTER_DIFFICULTY  managed-run difficulty D1-D10 (default 8)
 """
 
@@ -57,6 +59,7 @@ from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     cli_model,
+    CONTINUATION_MUSE_THINKING,
     resolve_babysitter_routing,
 )
 from arnold_pipelines.megaplan.managed_agent import (
@@ -188,9 +191,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m arnold_pipelines.megaplan.cloud.babysitter.launch",
         description=(
-            "Launch ONE detached omp:deepseek/deepseek-v4-flash managed "
-            "babysitter whose goal prompt drives swarm -> codex -> implement "
-            "-> relaunch -> prove."
+            "Launch ONE detached managed OMP babysitter whose goal prompt "
+            "drives investigate -> review -> implement -> relaunch -> prove."
         ),
     )
     parser.add_argument("--goal-file", default="", help="rendered goal prompt file")
@@ -244,7 +246,7 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
     if not run_root_raw and repair_data_dir is not None:
         run_root_raw = str(repair_data_dir / "babysitter-runs" / run_id)
     run_root = Path(run_root_raw) if run_root_raw else _REPO_ROOT / ".babysitter-runs" / run_id
-    routing = resolve_babysitter_routing()
+    routing = resolve_babysitter_routing(session=session)
     return {
         "session": session,
         "workspace": workspace,
@@ -260,9 +262,15 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
         "goal_file_cli": args.goal_file,
         "failure_json": args.failure_json,
         "planner_repair_json": args.planner_repair_json,
-        "model": routing.controller_model
-        if routing.mode == "codex"
-        else os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip() or DEFAULT_MODEL,
+        # Preserve the legacy environment override for ordinary babysitters;
+        # the continuation resolver has already closed its model surface to
+        # the exact Muse route and supplies that model here.
+        "model": (
+            routing.controller_model
+            if routing.closed
+            else os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip()
+            or routing.controller_model
+        ),
         "routing": routing,
         "difficulty": _difficulty_env(),
     }
@@ -547,6 +555,7 @@ def _resolve_goal_file(ctx: dict[str, Any]) -> Path:
         raise RuntimeError("babysitter goal renderer is unavailable")
     goal_text = render(
         ctx["session"],
+        session=ctx["session"],
         workspace=ctx["workspace"],
         plan=ctx["plan"],
         run_kind=ctx["run_kind"],
@@ -616,7 +625,8 @@ def _managed_spec(
             "-u", "ARNOLD_RUNTIME_MANIFEST",
             sys.executable,
             str(launcher),
-            f"--model={ctx['model']}",
+            f"--model={ctx['model']}"
+            + (f":{CONTINUATION_MUSE_THINKING}" if routing.closed else ""),
             f"--toolsets={TOOLSETS}",
             f"--query-file={goal_path}",
             f"--project-dir={engine_root}",
@@ -625,10 +635,17 @@ def _managed_spec(
         backend = BACKEND
         route_class = ROUTE_CLASS
         description = (
-            f"Single Flash babysitter session={ctx['session']} "
+            f"Single OMP babysitter session={ctx['session']} "
             f"occurrence={ctx['occurrence'] or 'unknown'} plan={ctx['plan'] or 'current target'} — "
-            "swarm -> codex -> implement -> relaunch -> prove"
+            "swarm -> review -> implement -> relaunch -> prove"
         )
+        if routing.closed:
+            route_class = "watchdog_babysitter_continuation_muse"
+            description = (
+                f"Single Muse Spark 1.3 babysitter session={ctx['session']} "
+                f"occurrence={ctx['occurrence'] or 'unknown'} plan={ctx['plan'] or 'current target'} — "
+                "all roles Muse/high, no fallback"
+            )
     links: dict[str, Any] = {
         "cloud_session": ctx["session"],
         "occurrence_digest": ctx["occurrence"],
@@ -655,7 +672,9 @@ def _managed_spec(
         task_kind=TASK_KIND,
         difficulty=ctx["difficulty"],
         model=ctx["model"],
-        reasoning_effort=REASONING_EFFORT,
+        reasoning_effort=(
+            CONTINUATION_MUSE_THINKING if routing.closed else REASONING_EFFORT
+        ),
         route_class=route_class,
         backend=backend,
         command_display=(

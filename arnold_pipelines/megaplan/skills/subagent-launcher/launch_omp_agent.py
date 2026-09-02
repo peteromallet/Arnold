@@ -206,7 +206,7 @@ def _translate_model(model: str) -> tuple[str, Optional[str]]:
 
     thinking: Optional[str] = None
     candidate, sep, tail = spec.rpartition(":")
-    if sep and tail in ("low", "medium", "high", "xhigh", "max"):
+    if sep and tail in ("minimal", "low", "medium", "high", "xhigh", "max"):
         spec, thinking = candidate, tail
 
     for prefix, mapped in _PREFIX_MAP.items():

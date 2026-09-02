@@ -18,6 +18,26 @@ import fan  # noqa: E402
 import launch_omp_agent as launcher  # noqa: E402
 
 
+def test_muse_model_suffix_translates_to_high_thinking() -> None:
+    selector, thinking = launcher._translate_model(
+        "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+    )
+    assert selector == "openrouter/meta/muse-spark-1.3-contributor"
+    assert thinking == "high"
+
+
+def test_muse_model_suffix_builds_explicit_high_flag() -> None:
+    command = launcher.build_omp_command(
+        omp_bin="omp",
+        model="openrouter/meta/muse-spark-1.3-contributor",
+        thinking="high",
+        toolsets="file,web,terminal",
+    )
+    assert "--model" in command
+    assert "openrouter/meta/muse-spark-1.3-contributor" in command
+    assert command[command.index("--thinking") + 1] == "high"
+
+
 class _TimedOutChild:
     pid = 9123
     returncode = None

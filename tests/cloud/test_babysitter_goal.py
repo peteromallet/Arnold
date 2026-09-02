@@ -58,6 +58,25 @@ def test_renderer_is_the_single_agent_orchestrator_not_an_external_protocol() ->
         assert forbidden not in goal, f"goal must not contain {forbidden!r}"
 
 
+def test_continuation_goal_closes_all_roles_to_muse_high() -> None:
+    renderer = _load_renderer()
+    goal = renderer.render_babysitter_goal(
+        "native-build-forward-c2-c4b0c102-20260902-r2",
+        session="native-build-forward-c2-c4b0c102-20260902-r2",
+    )
+    assert "omp:openrouter/meta/muse-spark-1.3-contributor" in goal
+    assert "thinking=high" in goal
+    assert "every fixer role" in goal
+    assert "There is no fallback" in goal
+    assert "Do not invoke any alternate" in goal
+    assert "--model=omp:openrouter/meta/muse-spark-1.3-contributor:high" in goal
+    # The generic historical contract must not become an executable alternate
+    # route for this closed continuation goal.
+    assert "STEP 2 — CONSULT CODEX" not in goal
+    assert "codex exec" not in goal
+    assert "omp:deepseek/deepseek-v4-flash" not in goal
+
+
 def test_renderer_coordination_guard_excludes_own_occurrence() -> None:
     renderer = _load_renderer()
     goal = renderer.render_babysitter_goal(

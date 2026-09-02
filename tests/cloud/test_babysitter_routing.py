@@ -4,6 +4,9 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.babysitter import launch
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    CONTINUATION_FIXER_ROLES,
+    CONTINUATION_MUSE_MODEL,
+    CONTINUATION_MUSE_THINKING,
     resolve_babysitter_routing,
 )
 
@@ -32,6 +35,76 @@ def test_unknown_routing_value_fails_closed() -> None:
 
     with pytest.raises(ValueError, match="ARNOLD_BABYSITTER_ROUTING"):
         resolve_babysitter_routing({"ARNOLD_BABYSITTER_ROUTING": "deepseek"})
+
+
+def test_continuation_route_closes_every_fixer_role_to_muse_high() -> None:
+    session = "native-build-forward-c2-c4b0c102-20260902-r2"
+    route = resolve_babysitter_routing({}, session=session)
+    assert route.closed is True
+    assert route.mode == "continuation-muse"
+    assert route.controller_model == CONTINUATION_MUSE_MODEL
+    assert route.investigator_model == CONTINUATION_MUSE_MODEL
+    assert route.thinking == CONTINUATION_MUSE_THINKING == "high"
+    assert route.as_dict()["role_models"] == {
+        role: CONTINUATION_MUSE_MODEL for role in CONTINUATION_FIXER_ROLES
+    }
+
+
+def test_continuation_route_rejects_ambient_alternate_model() -> None:
+    session = "native-build-forward-c2-c4b0c102-20260902-r2"
+    import pytest
+
+    with pytest.raises(ValueError, match="closed to Muse"):
+        resolve_babysitter_routing(
+            {"ARNOLD_BABYSITTER_MODEL": "omp:deepseek/deepseek-v4-flash"},
+            session=session,
+        )
+    with pytest.raises(ValueError, match="closed to Muse"):
+        resolve_babysitter_routing(
+            {"ARNOLD_BABYSITTER_ROUTING": "codex"}, session=session
+        )
+
+
+def test_continuation_route_normalizes_all_thinking_inputs_to_high() -> None:
+    session = "native-build-forward-c2-c4b0c102-20260902-r2"
+    for level in ("auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"):
+        route = resolve_babysitter_routing(
+            {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:{level}"},
+            session=session,
+        )
+        assert route.controller_model == CONTINUATION_MUSE_MODEL
+        assert route.thinking == "high"
+
+
+def test_continuation_managed_spec_pins_nested_omp_dispatch_to_muse_high(
+    tmp_path: Path,
+) -> None:
+    goal = tmp_path / "goal.md"
+    goal.write_text("prove movement", encoding="utf-8")
+    session = "native-build-forward-c2-c4b0c102-20260902-r2"
+    route = resolve_babysitter_routing({}, session=session)
+    ctx = {
+        "engine_root": Path(__file__).resolve().parents[2],
+        "run_root": tmp_path / "run",
+        "session": session,
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "plan": "native-c2",
+        "routing": route,
+        "model": route.controller_model,
+        "difficulty": 8,
+        "remote_spec": "",
+        "workspace": str(tmp_path),
+        "mode": "superfixer",
+    }
+    spec = launch._managed_spec(ctx, goal_path=goal, identity_key="identity")
+    assert spec.backend == "babysitter"
+    assert spec.model == CONTINUATION_MUSE_MODEL
+    assert spec.reasoning_effort == CONTINUATION_MUSE_THINKING == "high"
+    assert f"--model={CONTINUATION_MUSE_MODEL}:{CONTINUATION_MUSE_THINKING}" in spec.argv
+    joined = " ".join(spec.argv).lower()
+    assert all(name not in joined for name in ("deepseek", "codex", "luna", "grok"))
+    assert spec.links["routing"]["thinking"] == CONTINUATION_MUSE_THINKING
 
 
 def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> None:

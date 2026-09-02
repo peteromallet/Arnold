@@ -61,7 +61,8 @@ remain immutable historical evidence and are not reused by this continuation.
 All workflow, preparation, nested tier, execution, critique, and review
 routes resolve through `all-muse-spark-openrouter` to the exact
 `omp:openrouter/meta/muse-spark-1.3-contributor` route. The adapter forces
-`thinking=minimal` for this provider/model because the provider rejects `off`.
+`thinking=high` for this provider/model. The closed continuation contract
+normalizes every caller-supplied thinking value to `high`.
 
 ## Supported launch preconditions
 
