@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.fallback_chains import provider_family
 from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey
 from arnold_pipelines.megaplan.cloud.babysitter.launch import (
     ManagedLaunchUnresolved,
+    _validate_automatic_launch_reservation,
     _admit_managed_launch,
 )
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
@@ -177,6 +178,118 @@ def test_valid_admission_and_integer_command_are_each_once_without_running_recei
     assert [item["event_type"] for item in events].count("admission_reserved") == 1
     assert [item["event_type"] for item in events].count("worker_terminal_outcome") == 1
     assert not any(item.get("event_type") == "babysitter_running_receipt" for item in events)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.pop("schema", None),
+        lambda value: value.update(workspace="/foreign/workspace"),
+        lambda value: value.update(managed_run_id="foreign-run"),
+    ],
+)
+def test_automatic_reservation_validator_rejects_forged_identity(
+    tmp_path: Path, mutation
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    ctx = {
+        "session": "session",
+        "workspace": str(tmp_path),
+        "remote_spec": str(spec_path),
+        "plan": "plan",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "marker_dir": marker_dir,
+    }
+    reservation = {
+        "schema": "arnold.babysitter.launch-reservation.v1",
+        "schema_version": 1,
+        "reservation_id": "reservation",
+        "session": "session",
+        "workspace": str(tmp_path),
+        "spec": str(spec_path),
+        "plan": "plan",
+        "occurrence_digest": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "logical_dispatch_id": "logical",
+        "status": "claimed",
+    }
+    forged = dict(reservation)
+    mutation(forged)
+    (marker_dir / "session.json").write_text(
+        json.dumps(
+            {
+                "session": "session",
+                "workspace": str(tmp_path),
+                "remote_spec": str(spec_path),
+                "plan": "plan",
+                "should_run": True,
+                "babysitter_launch_reservation": forged,
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx["babysitter_launch_reservation"] = reservation
+    with pytest.raises(RuntimeError, match="reservation"):
+        _validate_automatic_launch_reservation(ctx)
+
+
+def test_automatic_reservation_validator_allows_exact_pause_after_claim(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    reservation = {
+        "schema": "arnold.babysitter.launch-reservation.v1",
+        "schema_version": 1,
+        "reservation_id": "reservation",
+        "session": "session",
+        "workspace": str(tmp_path),
+        "spec": str(spec_path),
+        "plan": "plan",
+        "occurrence_digest": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "logical_dispatch_id": "logical",
+        "status": "claimed",
+    }
+    (marker_dir / "session.json").write_text(
+        json.dumps(
+            {
+                "session": "session",
+                "workspace": str(tmp_path),
+                "remote_spec": str(spec_path),
+                "plan": "plan",
+                "should_run": False,
+                "operator_pause": {
+                    "schema_version": "arnold.megaplan.operator-pause.v1",
+                    "active": True,
+                },
+                "babysitter_launch_reservation": reservation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _validate_automatic_launch_reservation(
+        {
+            "session": "session",
+            "workspace": str(tmp_path),
+            "remote_spec": str(spec_path),
+            "plan": "plan",
+            "occurrence": "occurrence",
+            "run_id": "run",
+            "managed_run_id": "managed",
+            "marker_dir": marker_dir,
+            "babysitter_launch_reservation": reservation,
+        }
+    )
 
 
 @pytest.mark.parametrize(

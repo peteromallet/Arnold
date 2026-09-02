@@ -733,6 +733,7 @@ def _automatic_dispatch_preflight(
         )
         from arnold_pipelines.megaplan.incident.chain_control import (
             ChainControlError,
+            ChainStateAdapter,
             ChainControlJournal,
             chain_id_for_spec,
         )
@@ -760,21 +761,38 @@ def _automatic_dispatch_preflight(
         try:
             ledger = IncidentLedger(workspace)
             state_path = chain_spec._state_path_for(spec_path)
-            state = chain_spec.load_chain_state(spec_path)
             chain_id = chain_id_for_spec(spec_path)
-            plan_name = str(ctx.get("plan") or state.current_plan_name or "").strip()
-            plan_dir = find_plan_dir(workspace, plan_name) if plan_name else None
             journal = ChainControlJournal(ledger)
-            expected_revision = (state.metadata or {}).get("_nbf08_revision")
             # Sequence -> chain scope/state -> marker is the global lock order
             # used by chain control and the marker cutover door.
             with journal.transaction(
                 chain_ids=[chain_id],
                 state_paths=[state_path],
-                expected_revision=expected_revision,
+                expected_revision=None,
                 operation_id=receipt.logical_dispatch_id,
                 actor={"id": "babysitter", "class": "automatic"},
-            ):
+            ) as txn:
+                # This is deliberately the first chain read after acquiring
+                # the sequence/scope/state locks.  Never carry a pre-lock
+                # ChainState snapshot across the final admission door.
+                raw_state = ChainStateAdapter(
+                    # Read the exact state path already covered by the
+                    # transaction lock; load_chain_state may select a legacy
+                    # candidate and would reintroduce a pre-lock identity
+                    # race.
+                    txn,
+                    state_path,
+                ).read_expected()
+                if not isinstance(raw_state, dict):
+                    return evidence("canonical chain state is unavailable")
+                state = chain_spec.ChainState.from_dict(raw_state)
+                state_revision = (state.metadata or {}).get("_nbf08_revision")
+                if state_revision is not None and (
+                    isinstance(state_revision, bool) or not isinstance(state_revision, int) or state_revision < 0
+                ):
+                    return evidence("canonical chain state revision is malformed")
+                plan_name = str(ctx.get("plan") or state.current_plan_name or "").strip()
+                plan_dir = find_plan_dir(workspace, plan_name) if plan_name else None
                 with marker_runtime_cutover_lock(marker_path, blocking=False):
                     marker, marker_sha = _load_marker(marker_path)
                     if marker.get("session") != ctx["session"]:
@@ -782,8 +800,12 @@ def _automatic_dispatch_preflight(
                     if Path(str(marker.get("workspace") or "")).expanduser().resolve(strict=False) != workspace:
                         return evidence("marker workspace identity mismatch")
                     marker_spec = str(marker.get("remote_spec") or "").strip()
-                    if marker_spec and Path(marker_spec).expanduser().resolve(strict=False) != spec_path:
-                        return evidence("marker chain spec identity mismatch")
+                    if marker_spec:
+                        marker_spec_path = Path(marker_spec).expanduser()
+                        if not marker_spec_path.is_absolute():
+                            marker_spec_path = workspace / marker_spec_path
+                        if marker_spec_path.resolve(strict=False) != spec_path:
+                            return evidence("marker chain spec identity mismatch")
                     marker_pause = marker.get("operator_pause")
                     if "operator_pause" in marker and (
                         not isinstance(marker_pause, dict)
@@ -850,15 +872,20 @@ def _automatic_dispatch_preflight(
                     if isinstance(reservation, dict):
                         frozen = {
                             key: reservation.get(key)
-                            for key in ("reservation_id", "session", "occurrence_digest", "run_id", "managed_run_id", "logical_dispatch_id")
+                            for key in ("schema", "schema_version", "reservation_id", "session", "occurrence_digest", "run_id", "workspace", "managed_run_id", "logical_dispatch_id", "plan", "spec")
                         }
                         expected = {
+                            "schema": "arnold.babysitter.launch-reservation.v1",
+                            "schema_version": 1,
                             "reservation_id": reservation_id,
                             "session": ctx["session"],
                             "occurrence_digest": ctx["occurrence"],
                             "run_id": ctx["run_id"],
+                            "workspace": str(workspace),
                             "managed_run_id": ctx["managed_run_id"],
                             "logical_dispatch_id": receipt.logical_dispatch_id,
+                            "plan": plan_name,
+                            "spec": str(spec_path),
                         }
                         if frozen != expected:
                             return evidence("marker contains a different launch reservation", marker_sha256=marker_sha)
@@ -875,10 +902,12 @@ def _automatic_dispatch_preflight(
                     if reservation is None:
                         reservation = {
                             "schema": "arnold.babysitter.launch-reservation.v1",
+                            "schema_version": 1,
                             "reservation_id": reservation_id,
                             "session": ctx["session"],
                             "occurrence_digest": ctx["occurrence"],
                             "run_id": ctx["run_id"],
+                            "workspace": str(workspace),
                             "managed_run_id": str(manifest.get("run_id") or ctx["managed_run_id"]),
                             "logical_dispatch_id": receipt.logical_dispatch_id,
                             "status": "claimed",
@@ -914,8 +943,52 @@ def _validate_automatic_launch_reservation(ctx: Mapping[str, Any]) -> None:
     with marker_runtime_cutover_lock(marker_path, blocking=False):
         marker, _sha = _load_marker(marker_path)
         current = marker.get("babysitter_launch_reservation")
-        if not isinstance(current, Mapping) or dict(current) != dict(reservation) or current.get("status") != "claimed":
+        if not isinstance(current, Mapping) or dict(current) != dict(reservation):
             raise RuntimeError("automatic launch reservation changed before physical dispatch")
+        workspace = Path(str(ctx.get("workspace") or "")).resolve(strict=False)
+        expected_spec = Path(str(ctx.get("remote_spec") or ""))
+        if not expected_spec.is_absolute():
+            expected_spec = workspace / expected_spec
+        expected_spec = expected_spec.resolve(strict=False)
+        if (
+            current.get("schema") != "arnold.babysitter.launch-reservation.v1"
+            or current.get("schema_version") != 1
+            or current.get("status") != "claimed"
+            or current.get("session") != ctx.get("session")
+            or current.get("workspace") != str(Path(str(ctx.get("workspace") or "")).resolve(strict=False))
+            or current.get("spec") != str(expected_spec)
+            or current.get("plan") != str(ctx.get("plan") or "")
+            or current.get("occurrence_digest") != ctx.get("occurrence")
+            or current.get("run_id") != ctx.get("run_id")
+            or current.get("managed_run_id") != ctx.get("managed_run_id")
+        ):
+            raise RuntimeError("automatic launch reservation identity is not canonical")
+        if marker.get("session") != ctx.get("session"):
+            raise RuntimeError("automatic launch marker session changed before physical dispatch")
+        if Path(str(marker.get("workspace") or "")).resolve(strict=False) != workspace:
+            raise RuntimeError("automatic launch marker workspace changed before physical dispatch")
+        marker_spec = str(marker.get("remote_spec") or "")
+        if marker_spec:
+            marker_spec_path = Path(marker_spec)
+            if not marker_spec_path.is_absolute():
+                marker_spec_path = workspace / marker_spec_path
+            if marker_spec_path.resolve(strict=False) != expected_spec:
+                raise RuntimeError("automatic launch marker spec changed before physical dispatch")
+        if marker.get("plan") is not None and str(marker.get("plan")) != str(ctx.get("plan") or ""):
+            raise RuntimeError("automatic launch marker plan changed before physical dispatch")
+        marker_pause = marker.get("operator_pause")
+        if "operator_pause" in marker and (
+            not isinstance(marker_pause, Mapping)
+            or marker_pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
+            or marker_pause.get("active") is not True
+        ):
+            raise RuntimeError("automatic launch marker pause authority is malformed")
+        paused = marker.get("should_run") is False and isinstance(marker_pause, Mapping) and marker_pause.get("schema_version") == "arnold.megaplan.operator-pause.v1" and marker_pause.get("active") is True
+        if marker.get("should_run") is not True and not paused:
+            raise RuntimeError("automatic launch marker no longer authorizes dispatch")
+        hold = marker.get("operator_resume_hold")
+        if isinstance(hold, Mapping) and hold.get("active") is True:
+            raise RuntimeError("automatic launch marker has an active resume hold")
 
 
 def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
