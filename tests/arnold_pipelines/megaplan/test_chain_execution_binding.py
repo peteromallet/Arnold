@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -49,6 +50,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     RuntimeManifest,
     write_manifest,
 )
+from arnold_pipelines.megaplan.cloud import runtime_manifest as runtime_manifest_module
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlCasConflict,
@@ -4671,6 +4673,62 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
             and "legacy_runtime_promotion.v1" in event.get("payload", {})
             for event in journal_for(tmp_path).replay_strict()["accepted"]
         )
+
+
+def test_runtime_manifest_promotion_lock_serializes_concurrent_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A promotion holding both manifest locks cannot race generation CAS.
+
+    The fake advancement is deliberately entered only after the canonical
+    promotion lock is acquired.  Starting it while promotion owns the pair is
+    a deterministic barrier: it must remain blocked until promotion releases
+    the locks, proving a generation writer cannot validate a stale manifest
+    during the promotion's final chain-state CAS.
+    """
+    manifest_path = _write_runtime_manifest(
+        tmp_path / "runtime-manifest.json",
+        epic_id="demo",
+        runtime_root=tmp_path,
+        expected_head="a" * 40,
+    )
+    monkeypatch.setattr(
+        runtime_manifest_module,
+        "active_manifest_path",
+        lambda: manifest_path,
+    )
+    monkeypatch.setattr(
+        runtime_manifest_module,
+        "advance_generation",
+        lambda current, _new_commit, **_kwargs: current,
+    )
+    monkeypatch.setattr(runtime_manifest_module, "write_active_pointer", lambda *_args: manifest_path)
+    monkeypatch.setattr(runtime_manifest_module, "refresh_legacy_session_copy", lambda *_args: None)
+
+    finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def advance() -> None:
+        try:
+            runtime_manifest_module.advance_generation_at_path(
+                manifest_path,
+                "b" * 40,
+                reason="concurrent generation probe",
+                expected=("runtime-canary-1", 1, "a" * 40),
+            )
+        except BaseException as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    with runtime_manifest_module.manifest_promotion_lock(manifest_path):
+        with runtime_manifest_module.manifest_write_lock(manifest_path):
+            worker = threading.Thread(target=advance)
+            worker.start()
+            assert not finished.wait(0.1)
+    assert finished.wait(2.0)
+    worker.join(timeout=2.0)
+    assert not errors
 
 
 def test_marker_multiple_identity_forms_must_all_agree() -> None:

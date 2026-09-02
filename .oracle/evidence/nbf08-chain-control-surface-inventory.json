@@ -659,7 +659,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "d325348a81922b8f8655bad4bbbf53379a4c1ea7baf6c88a0ced1b047e1473b4",
-        "f0b0c7d8ddd6a9e17a35decac0d1bccb58b67a0332bb114f38ad83e50034ca31"
+        "d118a316461d01972338c2900a49537fdd66e0587e8f9d74223fa95fc8cd8a11"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "a02fa5c1c4c628bf200fb81b0da6834d11550281c01c6998e7a552e00bc5f742"
+  "inventory_digest": "6c60483b993c79675b6392aa1150a4f7f920613f531b10b8e6635841e4b34ce6"
 }

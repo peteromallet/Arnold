@@ -4045,6 +4045,8 @@ def promote_legacy_runtime_binding(
         ManifestError,
         active_manifest_path,
         bootstrap_manifest,
+        manifest_promotion_lock,
+        manifest_write_lock,
     )
     from arnold_pipelines.megaplan.incident.chain_control import (
         ChainControlCasConflict,
@@ -4201,26 +4203,6 @@ def promote_legacy_runtime_binding(
     )
     manifest_path = active_manifest_path().resolve(strict=False)
 
-    @contextmanager
-    def _manifest_write_lock(path: Path) -> Iterator[int]:
-        """Use the same sibling lock as ``runtime_manifest.write_manifest``.
-
-        The chain-control transaction already owns sequence, chain, and state
-        locks. Promotion extends that order with manifest ``.lock`` then the
-        marker ``.runtime-cutover.lock``; both remain held through the final
-        branch validation and state CAS.
-        """
-        lock_path = path.with_name(path.name + ".lock")
-        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield fd
-        finally:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
-
     def _effect(txn: Any) -> dict[str, Any]:
         adapter = ChainStateAdapter(txn, state_path)
         raw_state = adapter.read_expected()
@@ -4334,10 +4316,12 @@ def promote_legacy_runtime_binding(
         nonlocal marker_path
         marker_path = _resolve_marker(session)
         try:
-            # The chain transaction's sequence/chain/state locks precede this
-            # pair. Keep the canonical manifest write lock first, then the
-            # marker cutover lock, matching the documented order above.
-            with _manifest_write_lock(manifest_path):
+            # Global order: chain sequence/scope/state locks, then the
+            # runtime-manifest promotion lock, ordinary manifest writer lock,
+            # and marker cutover lock.  This matches
+            # ``advance_generation_at_path`` and keeps both canonical
+            # manifest mutation paths serialized through the final CAS.
+            with manifest_promotion_lock(manifest_path), manifest_write_lock(manifest_path):
                 try:
                     manifest_raw = manifest_path.read_bytes()
                     manifest_sha = _sha256_bytes(manifest_raw)

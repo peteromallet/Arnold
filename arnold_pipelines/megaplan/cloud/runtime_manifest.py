@@ -39,10 +39,11 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from arnold_pipelines.megaplan.cloud.shadow_attestation import attest_target_content
 from arnold_pipelines.megaplan.cloud.runtime_provenance import (
@@ -496,6 +497,57 @@ def _write_payload(
     return payload
 
 
+def manifest_lock_path(path: Path, *, promotion: bool = False) -> Path:
+    """Return the canonical mutation-lock path for *path*.
+
+    Runtime-manifest writers use the ordinary sibling ``.lock`` while
+    generation/cutover producers use the sibling ``.promotion.lock``.  Keep
+    both derivations here so cross-subsystem transactions cannot drift to a
+    look-alike lock file.
+    """
+    target = Path(path).expanduser().resolve(strict=False)
+    suffix = ".promotion.lock" if promotion else ".lock"
+    return target.with_name(target.name + suffix)
+
+
+@contextmanager
+def manifest_mutation_lock(
+    path: Path,
+    *,
+    promotion: bool = False,
+    blocking: bool = True,
+) -> Iterator[int]:
+    """Hold one canonical runtime-manifest mutation lock.
+
+    ``promotion=True`` selects the generation promotion lock; otherwise this
+    is the ordinary manifest writer lock.  Callers that need both acquire the
+    promotion lock first, then the ordinary lock, matching
+    :func:`advance_generation_at_path`'s global order.
+    """
+    lock_path = manifest_lock_path(path, promotion=promotion)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(lock_fd, flags)
+        yield lock_fd
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+
+def manifest_write_lock(path: Path, *, blocking: bool = True) -> Iterator[int]:
+    """Canonical context manager for the ordinary ``<manifest>.lock``."""
+    return manifest_mutation_lock(path, blocking=blocking)
+
+
+def manifest_promotion_lock(path: Path, *, blocking: bool = True) -> Iterator[int]:
+    """Canonical context manager for ``<manifest>.promotion.lock``."""
+    return manifest_mutation_lock(path, promotion=True, blocking=blocking)
+
+
 def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     """Serialize *manifest* to *path* atomically under an exclusive flock.
 
@@ -511,16 +563,8 @@ def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     """
     target = Path(path).expanduser().resolve(strict=False)
     target.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = target.with_name(target.name + ".lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    with manifest_write_lock(target):
         _atomic_write(target, _write_payload(manifest, target))
-    finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
 
 
 def load_manifest(path: Path) -> RuntimeManifest:
@@ -757,10 +801,7 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     pointer = Path(path) if path is not None else active_manifest_path()
     pointer = pointer.expanduser().resolve(strict=False)
     pointer.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = pointer.with_name(pointer.name + ".lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    with manifest_write_lock(pointer):
         # Foreign-epic guard (occurrence 0a0ce24c3510 / 0513dbf3f069): the
         # active pointer must NEVER be silently overwritten with a different
         # epic's manifest.  A caller whose ARNOLD_RUNTIME_MANIFEST env (or the
@@ -800,11 +841,6 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
                     )
         _retain_previous_generation(pointer, manifest)
         _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
-    finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
     return pointer
 
 
@@ -1026,10 +1062,7 @@ def advance_generation_at_path(
     ``"current"``.
     """
     path = Path(manifest_path).expanduser().resolve(strict=False)
-    promotion_lock_path = path.with_name(path.name + ".promotion.lock")
-    lock_fd = os.open(promotion_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    with manifest_promotion_lock(path):
         current = load_manifest(path)
         if expected is not None:
             snapshot = (
@@ -1082,11 +1115,6 @@ def advance_generation_at_path(
                 file=sys.stderr,
             )
         return advanced, "advanced"
-    finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
 
 
 def _verify_dependency_generation_binding(
@@ -1756,7 +1784,7 @@ def apply_runtime_manifest_cutover(
             raise CliError(CUTOVER_ERROR, f"{label} is required")
 
     target = Path(manifest_path).expanduser().resolve(strict=False)
-    lock_path = target.with_name(target.name + ".lock")
+    lock_path = manifest_lock_path(target)
     # Rollback-receipt destination is validated BEFORE any mutation: a
     # ``--receipt-out`` realpathing onto the manifest, an identity/provenance
     # guard input, or the transaction lock file is refused (typed, zero
