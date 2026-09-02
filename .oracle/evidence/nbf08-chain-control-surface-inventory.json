@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "d6f403d16bdbb5475c04f0ea519742107a9c814e",
+  "base_revision": "532131b7f8cf8c2e393e0771e2a4fef9e925a90e",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -433,7 +433,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "d325348a81922b8f8655bad4bbbf53379a4c1ea7baf6c88a0ced1b047e1473b4",
-        "4bdbe2b3ab85eb0146afba7486392a30391c9a62cca89746b3e82185c55b15c2"
+        "9763633dd7fd3a0ddca1a5c572088cd787a68a040d433fbc7171f60b979f0351"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -659,7 +659,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "d325348a81922b8f8655bad4bbbf53379a4c1ea7baf6c88a0ced1b047e1473b4",
-        "28c7ee1f5c37b686eaf0fa8c3fa436f65a27150153de4f8b62acfb4a7ffb43ed"
+        "90ed302a491d5d37e140bad16e55bc5de5eb0fe4503498dd2af8eaa15118cef0"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -3934,7 +3934,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "b745da48f44329651f63cdb6d6082843709f0a4e34f2e50a3d3ead245f6fd1e2",
-        "51e4b19f3573d9ab87688db522d4b325bab32196cbb12ac39c4107eae93a4001"
+        "6d9498e2817fe7fc7e05cba0effd090c70fcbb62d30b40b89de5619ef8318df5"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "681b08a82e3441192db1731726d1cff5244384f10cef27e61f59f8f564761e41"
+  "inventory_digest": "58f3beb6f5e1f59261e66d71b8fc729f06b896a74f86b12bf409ca690a03ce66"
 }
