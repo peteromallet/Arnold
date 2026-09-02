@@ -11300,7 +11300,13 @@ def build_chain_parser(subparsers: Any) -> None:
     )
     release_hold_parser.add_argument("--expected-chain-spec-sha256", required=True)
     release_hold_parser.add_argument("--expected-state-digest", required=True)
-    release_hold_parser.add_argument("--expected-state-revision", required=True, type=int)
+    release_revision_group = release_hold_parser.add_mutually_exclusive_group(required=True)
+    release_revision_group.add_argument("--expected-state-revision", type=int)
+    release_revision_group.add_argument(
+        "--expect-missing-state-revision",
+        action="store_true",
+        help="Require the legacy chain state to have no _nbf08_revision value.",
+    )
     release_hold_parser.add_argument("--expected-cursor", required=True, type=int)
     release_hold_parser.add_argument("--expected-current-milestone", required=True)
     release_hold_parser.add_argument("--expected-current-plan", required=True)
@@ -11857,20 +11863,41 @@ def run_chain_cli(
                     "chain_mismatch",
                     "release-hold chain id does not match the spec",
                 )
+            expect_missing_revision = bool(
+                getattr(args, "expect_missing_state_revision", False)
+            )
+            expected_revision = getattr(args, "expected_state_revision", None)
+            if expect_missing_revision and expected_revision is not None:
+                raise CliError(
+                    "revision_expectation_conflict",
+                    "--expect-missing-state-revision cannot be combined with "
+                    "--expected-state-revision",
+                )
+            if not expect_missing_revision and expected_revision is None:
+                raise CliError(
+                    "missing_revision_expectation",
+                    "release-hold requires --expected-state-revision or "
+                    "--expect-missing-state-revision",
+                )
+            release_kwargs = {
+                "chain_id": args.chain_id,
+                "operation_id": args.operation_id,
+                "expected_hold_event_hash": args.expected_hold_event_hash,
+                "expected_chain_spec_sha256": args.expected_chain_spec_sha256,
+                "spec_path": spec_path,
+                "expected_state_digest": args.expected_state_digest,
+                "expected_cursor": args.expected_cursor,
+                "expected_current_milestone": args.expected_current_milestone,
+                "expected_current_plan": args.expected_current_plan,
+                "recovery_evidence": Path(args.recovery_evidence).expanduser().resolve(),
+                "actor": args.actor,
+                "reason": args.reason,
+                "expect_missing_state_revision": expect_missing_revision,
+            }
+            if not expect_missing_revision:
+                release_kwargs["expected_state_revision"] = expected_revision
             result = journal_for(project_root).release_hold(
-                chain_id=args.chain_id,
-                operation_id=args.operation_id,
-                expected_hold_event_hash=args.expected_hold_event_hash,
-                expected_chain_spec_sha256=args.expected_chain_spec_sha256,
-                spec_path=spec_path,
-                expected_state_digest=args.expected_state_digest,
-                expected_state_revision=args.expected_state_revision,
-                expected_cursor=args.expected_cursor,
-                expected_current_milestone=args.expected_current_milestone,
-                expected_current_plan=args.expected_current_plan,
-                recovery_evidence=Path(args.recovery_evidence).expanduser().resolve(),
-                actor=args.actor,
-                reason=args.reason,
+                **release_kwargs,
             )
             receipt_path = Path(args.receipt).expanduser().resolve()
             receipt_path.parent.mkdir(parents=True, exist_ok=True)
