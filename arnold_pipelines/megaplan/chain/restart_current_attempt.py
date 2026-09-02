@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core.io import find_plan_dir
@@ -679,6 +679,60 @@ def _archive_manifest_value(manifest: Mapping[str, Any], names: tuple[str, ...])
     return None
 
 
+def _archive_entries_binding(
+    entries: Any,
+    *,
+    events_path: Path,
+    events_sha: str,
+) -> dict[str, Any]:
+    """Validate the real archive-manifest ``entries`` binding.
+
+    Entries are a closed, relative path/sha/size index.  We validate every
+    row before selecting the one journal row so a duplicate or malformed
+    sibling cannot be silently ignored.
+    """
+    if not isinstance(entries, list) or not entries:
+        raise _refuse("archive manifest entries must be a non-empty list")
+    normalized: list[dict[str, Any]] = []
+    by_path: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(entries):
+        if not isinstance(raw, Mapping):
+            raise _refuse(f"archive manifest entry {index} is malformed")
+        path = raw.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise _refuse(f"archive manifest entry {index} has no path")
+        path = path.strip()
+        if (
+            path.startswith(("/", "\\"))
+            or re.match(r"^[A-Za-z]:", path)
+            or "\\" in path
+            or ".." in PurePosixPath(path).parts
+            or PurePosixPath(path).as_posix() != path
+        ):
+            raise _refuse(f"archive manifest entry {index} has an unsafe path")
+        sha = str(raw.get("sha256") or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+            raise _refuse(f"archive manifest entry {index} has a malformed SHA-256")
+        size = raw.get("size")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise _refuse(f"archive manifest entry {index} has a malformed size")
+        row = {"path": path, "sha256": sha, "size": size}
+        prior = by_path.get(path)
+        if prior is not None:
+            if prior != row:
+                raise _refuse("archive manifest entries contain conflicting duplicate paths")
+            raise _refuse("archive manifest entries contain duplicate paths")
+        by_path[path] = row
+        normalized.append(row)
+    candidates = [row for row in normalized if PurePosixPath(row["path"]).name == events_path.name]
+    if len(candidates) != 1:
+        raise _refuse("archive manifest must contain one unambiguous journal entry")
+    binding = candidates[0]
+    if binding["sha256"] != events_sha or binding["size"] != events_path.stat().st_size:
+        raise _refuse("archive manifest journal entry does not bind the supplied journal")
+    return binding
+
+
 def _archive_journal(
     events_path: Path,
     *,
@@ -715,15 +769,18 @@ def _archive_journal(
         raise _refuse("archive manifest is not valid JSON") from exc
     if not isinstance(manifest, Mapping):
         raise _refuse("archive manifest must be a JSON object")
-    bound_events_sha = _archive_manifest_value(
-        manifest,
-        ("events_sha256", "journal_sha256", "archive_journal_sha256", "events_digest"),
-    )
-    if str(bound_events_sha or "").strip().lower() != events_sha:
-        raise _refuse("archive manifest does not bind the supplied journal")
-    bound_path = _archive_manifest_value(manifest, ("events_path", "journal_path", "archive_journal_path"))
-    if bound_path is not None and Path(str(bound_path)).name != events_path.name:
-        raise _refuse("archive manifest names a different journal")
+    if "entries" in manifest:
+        _archive_entries_binding(manifest["entries"], events_path=events_path, events_sha=events_sha)
+    else:
+        bound_events_sha = _archive_manifest_value(
+            manifest,
+            ("events_sha256", "journal_sha256", "archive_journal_sha256", "events_digest"),
+        )
+        if str(bound_events_sha or "").strip().lower() != events_sha:
+            raise _refuse("archive manifest does not bind the supplied journal")
+        bound_path = _archive_manifest_value(manifest, ("events_path", "journal_path", "archive_journal_path"))
+        if bound_path is not None and Path(str(bound_path)).name != events_path.name:
+            raise _refuse("archive manifest names a different journal")
     for value, label in (
         (expected_operation_id, "legacy restart operation id"),
         (expected_event_hash, "legacy committed event hash"),

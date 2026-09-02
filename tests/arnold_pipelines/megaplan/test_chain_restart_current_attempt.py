@@ -538,7 +538,7 @@ def test_restart_parser_smoke() -> None:
     assert args.chain_action == "restart-current-attempt"
 
 
-def _legacy_archive_fixture(tmp_path: Path) -> dict[str, Any]:
+def _legacy_archive_fixture(tmp_path: Path, *, entries_manifest: bool = False) -> dict[str, Any]:
     fixture = _fixture(tmp_path)
     _restart(fixture)
     operation_id = _load_json(fixture["state_path"])["metadata"]["current_attempt_restart"]["operation_id"]
@@ -546,10 +546,18 @@ def _legacy_archive_fixture(tmp_path: Path) -> dict[str, Any]:
     archive_events.parent.mkdir(parents=True)
     archive_events.write_bytes(fixture["root"].joinpath(".megaplan", "incident-ledger", "events.jsonl").read_bytes())
     manifest = archive_events.parent / "archive-manifest.json"
-    manifest.write_text(
-        json.dumps({"schema": "legacy-restart-archive.v1", "events_sha256": sha256_path(archive_events)}) + "\n",
-        encoding="utf-8",
-    )
+    if entries_manifest:
+        manifest_payload = {
+            "schema": "legacy-restart-archive.v1",
+            "entries": [{
+                "path": "events.jsonl",
+                "sha256": sha256_path(archive_events),
+                "size": archive_events.stat().st_size,
+            }],
+        }
+    else:
+        manifest_payload = {"schema": "legacy-restart-archive.v1", "events_sha256": sha256_path(archive_events)}
+    manifest.write_text(json.dumps(manifest_payload) + "\n", encoding="utf-8")
     live_ledger = fixture["root"] / ".megaplan" / "incident-ledger"
     (live_ledger / "events.jsonl").unlink()
     if (live_ledger / ".events.seq").exists():
@@ -631,3 +639,61 @@ def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_pat
     )
     assert replay["outcome"] == "replay"
     assert fixture["state_path"].read_bytes() == state_bytes
+
+
+def test_legacy_restart_receipt_accepts_real_entries_manifest(tmp_path: Path) -> None:
+    fixture = _legacy_archive_fixture(tmp_path, entries_manifest=True)
+    chain = _load_json(fixture["state_path"])
+    before = {path: path.read_bytes() for path in (fixture["state_path"], fixture["plan_path"], fixture["marker"])}
+    result = promote_legacy_restart_receipt(
+        fixture["spec"], fixture["root"], marker_path=fixture["marker"],
+        expected_session_id=fixture["root"].name, expected_cursor=6,
+        expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
+        expected_spec_sha256=sha256_path(fixture["spec"]),
+        expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+        expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=4,
+        expected_marker_sha256=sha256_path(fixture["marker"]),
+        expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
+        expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
+        archived_journal_path=fixture["archive_events"], expected_archived_journal_sha256=sha256_path(fixture["archive_events"]),
+        archive_manifest_path=fixture["archive_manifest"], expected_archive_manifest_sha256=sha256_path(fixture["archive_manifest"]),
+        expected_legacy_event_hash=fixture["archive_event_hash"], reason="attest entries archive", actor="test",
+    )
+    assert result["outcome"] == "committed"
+    assert fixture["plan_path"].read_bytes() == before[fixture["plan_path"]]
+
+
+@pytest.mark.parametrize("entry_case", ["duplicate", "conflict", "traversal", "malformed"])
+def test_legacy_entries_manifest_rejects_invalid_binding_without_mutation(tmp_path: Path, entry_case: str) -> None:
+    fixture = _legacy_archive_fixture(tmp_path, entries_manifest=True)
+    manifest = json.loads(fixture["archive_manifest"].read_text(encoding="utf-8"))
+    valid = manifest["entries"][0]
+    if entry_case == "duplicate":
+        manifest["entries"].append(dict(valid))
+    elif entry_case == "conflict":
+        conflicting = dict(valid)
+        conflicting["sha256"] = "0" * 64
+        manifest["entries"].append(conflicting)
+    elif entry_case == "traversal":
+        manifest["entries"][0]["path"] = "../events.jsonl"
+    else:
+        del manifest["entries"][0]["size"]
+    fixture["archive_manifest"].write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    chain = _load_json(fixture["state_path"])
+    before = {path: path.read_bytes() for path in (fixture["state_path"], fixture["plan_path"], fixture["marker"])}
+    with pytest.raises(CliError, match="archive manifest"):
+        promote_legacy_restart_receipt(
+            fixture["spec"], fixture["root"], marker_path=fixture["marker"],
+            expected_session_id=fixture["root"].name, expected_cursor=6,
+            expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
+            expected_spec_sha256=sha256_path(fixture["spec"]),
+            expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+            expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=4,
+            expected_marker_sha256=sha256_path(fixture["marker"]),
+            expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
+            expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
+            archived_journal_path=fixture["archive_events"], expected_archived_journal_sha256=sha256_path(fixture["archive_events"]),
+            archive_manifest_path=fixture["archive_manifest"], expected_archive_manifest_sha256=sha256_path(fixture["archive_manifest"]),
+            expected_legacy_event_hash=fixture["archive_event_hash"], reason="reject invalid entries", actor="test",
+        )
+    assert {path: path.read_bytes() for path in before} == before
