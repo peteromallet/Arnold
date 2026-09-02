@@ -283,6 +283,43 @@ def test_target_rebind_accepts_retired_plan_without_mutating_it(tmp_path: Path) 
     assert binding["current"]["head"] == fixture["source"]
 
 
+def test_forged_restart_record_with_live_plan_refuses_target_rebind(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    chain = _load_json(fixture["state_path"])
+    chain["current_plan_name"] = None
+    chain["metadata"]["current_attempt_restart"] = {
+        "schema": RESTART_SCHEMA,
+        "retired_plan": PLAN_NAME,
+        "cursor": 6,
+        "milestone": MILESTONE,
+        "operation_id": "forged",
+    }
+    _write_json(fixture["state_path"], chain)
+    before = fixture["plan_path"].read_bytes()
+    with pytest.raises(CliError, match="retired plan to be terminal"):
+        target_rebind(
+            fixture["spec"],
+            fixture["root"],
+            direction="cutover",
+            expected_session_id=fixture["root"].name,
+            expected_current_milestone=MILESTONE,
+            expected_current_plan=PLAN_NAME,
+            from_branch=SOURCE_BRANCH,
+            from_head=fixture["source"],
+            from_milestone_base=fixture["source"],
+            from_ref=f"refs/heads/{SOURCE_BRANCH}",
+            to_branch=TARGET_BRANCH,
+            to_head=fixture["target"],
+            to_ref=f"refs/heads/{TARGET_BRANCH}",
+            expected_spec_sha256=sha256_path(fixture["spec"]),
+            expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+            expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
+            reason="must refuse live plan",
+            actor="test",
+        )
+    assert fixture["plan_path"].read_bytes() == before
+
+
 def test_live_c2_before_restart_refuses_and_is_unchanged(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     before = {path: path.read_bytes() for path in (fixture["state_path"], fixture["plan_path"], fixture["marker"])}
@@ -345,6 +382,41 @@ def test_restart_rejections_are_zero_mutation(tmp_path: Path, case: str) -> None
     assert caught.value.code == RESTART_ERROR
     assert {path: path.read_bytes() for path in before} == before
     assert _ledger_bytes(fixture) is None
+
+
+def test_restart_completes_after_plan_retired_before_chain_cas(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    guards = _guards(fixture)
+    from arnold_pipelines.megaplan.incident.chain_control import _stable_id, chain_id_for_spec
+
+    operation_id = _stable_id(
+        "restart-current-attempt",
+        chain_id_for_spec(fixture["spec"]),
+        "3",
+        "6",
+        PLAN_NAME,
+        guards["expected_plan_state_sha256"],
+    )
+    plan = _load_json(fixture["plan_path"])
+    plan["current_state"] = "aborted"
+    plan["active_step"] = None
+    plan.setdefault("meta", {})["retirement"] = {
+        "kind": "retired_for_restart",
+        "retired_at": "2026-08-01T00:00:00Z",
+        "actor": "test",
+        "reason": "restart unfinished C2 attempt",
+        "cursor": 6,
+        "milestone": MILESTONE,
+        "operation_id": operation_id,
+    }
+    _write_json(fixture["plan_path"], plan)
+    result = restart_current_attempt(fixture["spec"], fixture["root"], **guards)
+    assert result["outcome"] == "committed"
+    chain = _load_json(fixture["state_path"])
+    assert chain["current_plan_name"] is None
+    assert chain["current_milestone_index"] == 6
+    assert chain["metadata"]["current_attempt_restart"]["operation_id"] == operation_id
+    assert (fixture["plan_dir"] / "finalize.json").read_bytes() == fixture["finalize"]
 
 
 def test_restart_race_revision_refuses_without_terminalizing_plan(tmp_path: Path) -> None:

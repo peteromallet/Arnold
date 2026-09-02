@@ -742,7 +742,7 @@ def target_rebind(
             chain,
             expected_label=expected_current_milestone,
         )
-        restart_boundary = not bool(chain.get("current_plan_name"))
+        restart_boundary = chain.get("current_plan_name") is None
         if restart_boundary:
             metadata = chain.get("metadata")
             restart = metadata.get("current_attempt_restart") if isinstance(metadata, Mapping) else None
@@ -768,6 +768,23 @@ def target_rebind(
                 raise CliError(
                     PROJECT_SOURCE_REBIND_ERROR,
                     "post-restart target rebind requires an active durable chain pause",
+                )
+            plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else None
+            retirement = plan_meta.get("retirement") if isinstance(plan_meta, Mapping) else None
+            if (
+                str(plan.get("current_state") or "").strip().lower() != "aborted"
+                or plan.get("active_step") is not None
+                or not (
+                    isinstance(retirement, Mapping)
+                    and retirement.get("kind") == "retired_for_restart"
+                    and retirement.get("cursor") == milestone_index
+                    and retirement.get("milestone") == expected_current_milestone
+                )
+            ):
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "post-restart target rebind requires the retired plan to be "
+                    "terminal with matching retirement metadata",
                 )
         elif chain.get("current_plan_name") != expected_current_plan:
             raise CliError(PROJECT_SOURCE_REBIND_ERROR, "current plan does not match the guard")

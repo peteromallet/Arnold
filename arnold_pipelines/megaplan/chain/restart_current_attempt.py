@@ -99,6 +99,48 @@ def _current_head(root: Path) -> str:
     return value
 
 
+def _matching_retirement(
+    plan: Mapping[str, Any],
+    *,
+    operation_id: str,
+    expected_current_plan: str,
+    expected_cursor: int,
+    expected_current_milestone: str,
+) -> bool:
+    if str(plan.get("current_state") or "").strip().lower() != "aborted":
+        return False
+    if plan.get("name") not in {None, expected_current_plan}:
+        return False
+    meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else None
+    retirement = meta.get("retirement") if isinstance(meta, Mapping) else None
+    return (
+        isinstance(retirement, Mapping)
+        and retirement.get("kind") == "retired_for_restart"
+        and retirement.get("operation_id") == operation_id
+        and retirement.get("cursor") == expected_cursor
+        and retirement.get("milestone") == expected_current_milestone
+    )
+
+
+def _matching_restart_record(
+    metadata: Mapping[str, Any],
+    *,
+    operation_id: str,
+    expected_current_plan: str,
+    expected_cursor: int,
+    expected_current_milestone: str,
+) -> bool:
+    restart = metadata.get("current_attempt_restart")
+    return (
+        isinstance(restart, Mapping)
+        and restart.get("schema") == RESTART_SCHEMA
+        and restart.get("operation_id") == operation_id
+        and restart.get("retired_plan") == expected_current_plan
+        and restart.get("cursor") == expected_cursor
+        and restart.get("milestone") == expected_current_milestone
+    )
+
+
 def _assert_spec_and_paths(spec_path: Path, project_root: Path) -> tuple[Path, Path]:
     spec_path = spec_path.expanduser().resolve(strict=False)
     project_root = project_root.expanduser().resolve(strict=False)
@@ -106,8 +148,6 @@ def _assert_spec_and_paths(spec_path: Path, project_root: Path) -> tuple[Path, P
         spec_path.relative_to(project_root)
     except ValueError as exc:
         raise _refuse("chain spec must be inside the guarded project/session root") from exc
-    if project_root.name != _require_text(project_root.name, "session"):
-        raise _refuse("project session root has no name")
     return spec_path, project_root
 
 
@@ -141,9 +181,26 @@ def _assert_snapshot(
     plan_hash = _guard_sha256(expected_plan_state_sha256, label="plan-state SHA-256")
     marker_hash = _guard_sha256(expected_marker_sha256, label="marker SHA-256")
     binding_hash = _guard_sha256(expected_binding_sha256, label="project-source binding SHA-256")
-    if hashlib.sha256(chain_raw).hexdigest() != chain_hash:
+    metadata = chain.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise _refuse("chain metadata is missing")
+    matching_retirement = _matching_retirement(
+        plan,
+        operation_id=operation_id,
+        expected_current_plan=expected_current_plan,
+        expected_cursor=expected_cursor,
+        expected_current_milestone=expected_current_milestone,
+    )
+    matching_restart = _matching_restart_record(
+        metadata,
+        operation_id=operation_id,
+        expected_current_plan=expected_current_plan,
+        expected_cursor=expected_cursor,
+        expected_current_milestone=expected_current_milestone,
+    )
+    if not matching_restart and hashlib.sha256(chain_raw).hexdigest() != chain_hash:
         raise _conflict("chain state changed since the restart guards were computed")
-    if hashlib.sha256(plan_raw).hexdigest() != plan_hash:
+    if not matching_retirement and hashlib.sha256(plan_raw).hexdigest() != plan_hash:
         raise _conflict("plan state changed since the restart guards were computed")
     if hashlib.sha256(marker_raw).hexdigest() != marker_hash:
         raise _conflict("session marker changed since the restart guards were computed")
@@ -162,9 +219,6 @@ def _assert_snapshot(
     if plan.get("active_step") is not None:
         raise _refuse("current-attempt restart requires no active plan step")
 
-    metadata = chain.get("metadata")
-    if not isinstance(metadata, Mapping):
-        raise _refuse("chain metadata is missing")
     pause = metadata.get(AUTHORITY_KEY)
     if not (
         isinstance(pause, Mapping)
@@ -177,7 +231,7 @@ def _assert_snapshot(
         raise _refuse("durable operator pause does not name the guarded current plan")
 
     revision = metadata.get("_nbf08_revision")
-    if isinstance(revision, bool) or revision != expected_state_revision:
+    if not matching_restart and (isinstance(revision, bool) or revision != expected_state_revision):
         raise _conflict(
             f"chain state revision does not match the guard: observed {revision!r}, expected {expected_state_revision}"
         )
@@ -187,7 +241,8 @@ def _assert_snapshot(
             f"current milestone cursor does not match the guard: observed {cursor!r}, expected {expected_cursor}"
         )
     if chain.get("current_plan_name") != expected_current_plan:
-        raise _conflict("current plan does not match the restart guard")
+        if not (matching_restart and not chain.get("current_plan_name")):
+            raise _conflict("current plan does not match the restart guard")
     if plan.get("name") not in {None, expected_current_plan}:
         raise _refuse("plan state name does not match the restart guard")
 
@@ -205,11 +260,11 @@ def _assert_snapshot(
         raise _refuse("current milestone is already completed")
 
     restart = metadata.get("current_attempt_restart")
-    if restart is not None:
+    if restart is not None and not matching_restart:
         raise _refuse("chain already carries a different current-attempt restart record")
 
     current_state = str(plan.get("current_state") or "").strip().lower()
-    if current_state in {"done", "aborted", "cancelled"}:
+    if current_state in {"done", "aborted", "cancelled"} and not matching_retirement:
         raise _refuse(f"current plan is already terminal ({current_state})")
 
     history = plan.get("history")
@@ -314,6 +369,17 @@ def restart_current_attempt(
     expected_source_head = _require_text(expected_source_head, "expected source head").lower()
     if _FULL_SHA.fullmatch(expected_source_head) is None:
         raise _refuse("expected source head must be a full 40-character Git SHA")
+    expected_spec_sha256 = _guard_sha256(expected_spec_sha256, label="spec SHA-256")
+    expected_chain_state_sha256 = _guard_sha256(
+        expected_chain_state_sha256, label="chain-state SHA-256"
+    )
+    expected_plan_state_sha256 = _guard_sha256(
+        expected_plan_state_sha256, label="plan-state SHA-256"
+    )
+    expected_marker_sha256 = _guard_sha256(expected_marker_sha256, label="marker SHA-256")
+    expected_binding_sha256 = _guard_sha256(
+        expected_binding_sha256, label="project-source binding SHA-256"
+    )
     spec_path, project_root = _assert_spec_and_paths(spec_path, project_root)
     marker_path = marker_path.expanduser().resolve(strict=False)
     state_path = chain_spec._state_path_for(spec_path)
@@ -435,21 +501,47 @@ def restart_current_attempt(
             expected_source_head=expected_source_head,
             operation_id=operation_id,
         )
-        retired = dict(plan_now)
-        retired["current_state"] = "aborted"
-        retired["active_step"] = None
-        meta = dict(retired.get("meta") or {})
-        meta["retirement"] = {
-            "kind": "retired_for_restart",
-            "retired_at": _now_z(),
-            "actor": actor,
-            "reason": reason,
-            "cursor": expected_cursor,
-            "milestone": expected_current_milestone,
-            "operation_id": operation_id,
-        }
-        retired["meta"] = meta
-        write_plan_state(plan_dir, mode="replace", state=retired)
+        if not _matching_retirement(
+            plan_now,
+            operation_id=operation_id,
+            expected_current_plan=expected_current_plan,
+            expected_cursor=expected_cursor,
+            expected_current_milestone=expected_current_milestone,
+        ):
+            retired = dict(plan_now)
+            retired["current_state"] = "aborted"
+            retired["active_step"] = None
+            meta = dict(retired.get("meta") or {})
+            meta["retirement"] = {
+                "kind": "retired_for_restart",
+                "retired_at": _now_z(),
+                "actor": actor,
+                "reason": reason,
+                "cursor": expected_cursor,
+                "milestone": expected_current_milestone,
+                "operation_id": operation_id,
+            }
+            retired["meta"] = meta
+            write_plan_state(plan_dir, mode="replace", state=retired)
+
+        chain_metadata = chain_now.get("metadata") if isinstance(chain_now.get("metadata"), Mapping) else {}
+        if _matching_restart_record(
+            chain_metadata if isinstance(chain_metadata, Mapping) else {},
+            operation_id=operation_id,
+            expected_current_plan=expected_current_plan,
+            expected_cursor=expected_cursor,
+            expected_current_milestone=expected_current_milestone,
+        ):
+            return {
+                "pre_state_digest": expected_chain_state_sha256,
+                "post_state_digest": sha256_path(state_path),
+                "actual_revision": (chain_now.get("metadata") or {}).get("_nbf08_revision"),
+                "actual_cursor": expected_cursor,
+                "retired_plan": expected_current_plan,
+                "milestone": expected_current_milestone,
+                "plan_state_sha256": sha256_path(plan_path),
+                "chain_state_sha256": sha256_path(state_path),
+            }
 
         next_chain = dict(chain_now)
         next_metadata = dict(next_chain.get("metadata") or {})
