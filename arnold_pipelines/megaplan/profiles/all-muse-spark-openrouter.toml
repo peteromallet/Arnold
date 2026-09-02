@@ -1,8 +1,7 @@
-# Muse Spark 1.2 Contributor via OpenRouter — every slot on the same model.
+# Muse Spark 1.2 Contributor via OpenRouter — every route on the same model.
 # Created per user directive 2026-08-28: main run on Muse Spark 1.2 Contributor
-# via OpenRouter; fallback to partnered-codex if provider degrades.
-# Every phase uses the identical model; tiered execute/critique not needed
-# because the model is uniform. Profile is intentionally flat.
+# via OpenRouter. Nested preparation and complexity ladders are explicit so
+# resolver defaults cannot silently route any reachable work to another model.
 
 [profiles.all-muse-spark-openrouter]
 plan     = "omp:openrouter/meta/muse-spark-1.2-contributor"
@@ -19,3 +18,32 @@ loop_execute = "omp:openrouter/meta/muse-spark-1.2-contributor"
 review   = "omp:openrouter/meta/muse-spark-1.2-contributor"
 tiebreaker_researcher = "omp:openrouter/meta/muse-spark-1.2-contributor"
 tiebreaker_challenger = "omp:openrouter/meta/muse-spark-1.2-contributor"
+
+[profiles.all-muse-spark-openrouter.prep_models]
+triage = "omp:openrouter/meta/muse-spark-1.2-contributor"
+fanout = "omp:openrouter/meta/muse-spark-1.2-contributor"
+distill = "omp:openrouter/meta/muse-spark-1.2-contributor"
+
+[profiles.all-muse-spark-openrouter.tier_models.execute]
+1 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+2 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+3 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+4 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+5 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+6 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+7 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+8 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+9 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+10 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+
+[profiles.all-muse-spark-openrouter.tier_models.critique]
+1 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+2 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+3 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+4 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+5 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+6 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+7 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+8 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+9 = "omp:openrouter/meta/muse-spark-1.2-contributor"
+10 = "omp:openrouter/meta/muse-spark-1.2-contributor"

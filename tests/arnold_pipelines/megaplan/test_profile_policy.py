@@ -496,3 +496,72 @@ def test_profile_expansion_selects_first_explicit_prep_chain_for_stage_models(tm
         "fanout": "omp:moonshot/kimi-k2.7-code",
         "distill": "omp:moonshot/kimi-k2.7-code",
     }
+
+
+def test_all_muse_expansion_covers_every_nested_route_and_resolver_trace(
+    tmp_path: Path,
+) -> None:
+    """The all-Muse profile must pin flat and nested routes alike.
+
+    A flat ``prep`` phase does not control triage/fanout/distill, and an
+    absent tier table leaves execute/critique complexity routing to defaults.
+    Exercise the real profile expansion so both persisted route maps and the
+    resolver trace prove that no canonical DeepSeek fallback was used.
+    """
+    muse = "omp:openrouter/meta/muse-spark-1.2-contributor"
+    from arnold_pipelines.megaplan.profiles import (
+        load_profile_metadata,
+        load_profiles,
+        _resolve_tier_models_with_inheritance,
+    )
+
+    profiles = load_profiles()
+    metadata = load_profile_metadata()
+    profile = profiles["all-muse-spark-openrouter"]
+    assert len(profile) == 14
+    assert set(profile.values()) == {muse}
+
+    tier_models = _resolve_tier_models_with_inheritance(
+        "all-muse-spark-openrouter",
+        system_profiles=profiles,
+        system_metadata=metadata,
+        pipeline_local_profiles={},
+        pipeline_local_metadata={},
+    )
+    assert set(tier_models) == {"execute", "critique"}
+    assert set(tier_models["execute"]) == set(range(1, 11))
+    assert set(tier_models["critique"]) == set(range(1, 11))
+    assert all(
+        isinstance(spec, str) and spec == muse
+        for tiers in tier_models.values()
+        for spec in tiers.values()
+    )
+
+    args = Namespace(
+        profile="all-muse-spark-openrouter",
+        phase_model=[],
+        tier_models=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+    )
+    apply_profile_expansion(args, tmp_path)
+
+    assert args.prep_models == {stage: muse for stage in ("triage", "fanout", "distill")}
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": False,
+        "distill": False,
+    }
+    assert args.tier_models == tier_models
+    assert all(
+        isinstance(spec, str) and spec == muse
+        for value in args.tier_models.values()
+        for spec in value.values()
+    )
+    assert all(
+        entry.split("=", 1)[1] == muse
+        for entry in args.phase_model
+        if isinstance(entry, str) and "=" in entry
+    )

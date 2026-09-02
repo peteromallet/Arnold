@@ -2362,6 +2362,53 @@ class TestOverrideFallbackChains:
         assert state["config"]["tier_models"]["execute"]["4"]
         assert state["config"]["tier_models"]["critique"]["4"]
 
+    def test_set_all_muse_profile_persists_nested_routes_and_trace(
+        self, tmp_path: Path
+    ) -> None:
+        muse = "omp:openrouter/meta/muse-spark-1.2-contributor"
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(
+            profile="all-muse-spark-openrouter",
+            reason="pin every profile route",
+        )
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        config = state["config"]
+        assert config["profile"] == "all-muse-spark-openrouter"
+        assert config["prep_models"] == {
+            stage: muse for stage in ("triage", "fanout", "distill")
+        }
+        assert config["prep_model_resolver_trace"]["canonical_fallback_used"] == {
+            "triage": False,
+            "fanout": False,
+            "distill": False,
+        }
+        assert set(config["tier_models"]["execute"]) == {
+            str(tier) for tier in range(1, 11)
+        }
+        assert set(config["tier_models"]["critique"]) == {
+            str(tier) for tier in range(1, 11)
+        }
+        assert all(
+            spec == muse
+            for tiers in config["tier_models"].values()
+            for spec in tiers.values()
+        )
+        assert all(
+            entry.split("=", 1)[1] == muse
+            for entry in config["phase_model"]
+            if "=" in entry
+        )
+
     def test_set_profile_clears_stale_vendor_for_non_premium_profile(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
