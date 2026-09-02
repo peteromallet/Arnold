@@ -132,7 +132,8 @@ def _validate_continuation_muse_routes(
     }
 
 
-_MUSE_PREFLIGHT_QUERY = "Reply with exactly: ARNOLD_MUSE_PREFLIGHT_OK"
+_MUSE_PREFLIGHT_MARKER = "ARNOLD_MUSE_PREFLIGHT_OK"
+_MUSE_PREFLIGHT_QUERY = f"Reply with exactly: {_MUSE_PREFLIGHT_MARKER}"
 
 
 def _omp_openrouter_capability_check(
@@ -203,7 +204,7 @@ def _omp_openrouter_capability_check(
     ):
         status = "resolution_failed"
         reason = "omp_model_resolution_failed"
-    elif returncode == 0 and _MUSE_PREFLIGHT_QUERY.split()[-1] not in stdout:
+    elif returncode == 0 and stdout.rstrip() != _MUSE_PREFLIGHT_MARKER:
         status = "probe_failed"
         reason = "omp_probe_response_mismatch"
     elif returncode == 0:

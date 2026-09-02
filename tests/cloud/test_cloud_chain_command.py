@@ -496,6 +496,20 @@ def test_r4_omp_capability_probe_returns_sanitized_evidence() -> None:
     assert "OPENROUTER_API_KEY" not in result
 
 
+def test_r4_omp_capability_probe_rejects_marker_embedded_in_garbage() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
+
+    class Provider:
+        def ssh_exec(self, command):
+            return subprocess.CompletedProcess(
+                [], 0, "prefix ARNOLD_MUSE_PREFLIGHT_OK suffix\n", ""
+            )
+
+    result = _omp_openrouter_capability_check(Provider())
+    assert result["status"] == "probe_failed"
+    assert result["reason"] == "omp_probe_response_mismatch"
+
+
 def test_r4_omp_capability_probe_auth_failure_is_typed_and_redacted() -> None:
     from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
 
