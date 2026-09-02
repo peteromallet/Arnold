@@ -66,10 +66,10 @@ the operator must:
 
 1. publish this branch (or an equivalent content-addressed commit) and make
    the remote `main`/`megaplan.ref` resolve the exact canonical source;
-2. replace the temporary `UNSET_REQUIRED_BEFORE_LAUNCH` revision pin in the
-   chain driver with the exact Git commit containing this initiative, then
-   verify the chain spec, North Star, all 16 briefs, and the bound Muse profile
-   resolve byte-for-byte at that revision;
+2. verify that the chain driver's content-addressed revision pin
+   (`eda7b014bc87b2f6d8d578ae799f4f2adfbafdb9`) and the remote checkout agree,
+   then verify the chain spec, North Star, all 16 briefs, and the bound Muse
+   profile resolve byte-for-byte at that revision;
 3. run the supported `cloud preflight` against `cloud.yaml`, then
    `chain verify`/`doctor` as available, and confirm the new workspace,
    session, marker, and clean editable runtime are unique and not
