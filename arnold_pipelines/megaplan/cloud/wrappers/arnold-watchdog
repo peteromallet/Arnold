@@ -3304,14 +3304,15 @@ sync_editable_source_branch() {
     elif [[ -n "$(cd "$SRC_DIR" && git status --porcelain)" ]]; then
       log "promotion refused: checkout is not clean"
     else
-      promotion_lock="${ARNOLD_RUNTIME_MANIFEST:-}.promotion.lock"
-      (
-        flock -x 9 || { log "promotion refused: could not acquire promotion lock"; exit 1; }
-        PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$ARNOLD_RUNTIME_MANIFEST" "$candidate_full" "$SRC_DIR" "$before" "$after" <<'PY' >> "$LOG" 2>&1
-import json, sys
+      # The Python mutation seam owns the canonical promotion+ordinary lock
+      # pair.  Do not hold the promotion lock in this shell while spawning
+      # Python: the child would inherit the descriptor and deadlock trying to
+      # acquire the same canonical lock for its fresh read/CAS/write.
+      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$ARNOLD_RUNTIME_MANIFEST" "$candidate_full" "$SRC_DIR" "$before" "$after" <<'PY' >> "$LOG" 2>&1
+import sys
 from pathlib import Path
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
-    ManifestError, advance_generation, load_manifest, write_active_pointer, active_manifest_path,
+    advance_generation_at_path, load_manifest,
 )
 from arnold_pipelines.megaplan.cloud.install_sync import ensure_dependency_generation
 
@@ -3325,30 +3326,22 @@ if str(manifest.epic.get("expected_head") or "") == new_commit:
 # candidate checkout's frozen spec BEFORE advancing (fail-closed).
 generations_root = Path(__import__("os").environ.get("ARNOLD_GENERATIONS_ROOT", "/workspace/.megaplan/generations"))
 proof = ensure_dependency_generation(runtime_root, generations_root)
-advanced = advance_generation(manifest, new_commit, reason=f"promotion after engine sync ({before} -> {after})", dependency_generation=proof)
-pointer = active_manifest_path()
-if Path(manifest_path).expanduser().resolve(strict=False) == pointer.expanduser().resolve(strict=False):
-    write_active_pointer(advanced, pointer)
-else:
-    write_active_pointer(advanced, pointer)
-    from arnold_pipelines.megaplan.cloud.runtime_manifest import write_manifest
-    write_manifest(advanced, Path(manifest_path))
-try:
-    from arnold_pipelines.megaplan.cloud.runtime_manifest import refresh_legacy_session_copy
-    refreshed = refresh_legacy_session_copy(advanced, Path(manifest_path))
-    if refreshed is not None:
-        print("refreshed legacy session copy:", refreshed)
-except OSError as exc:
-    print("warning: legacy session copy refresh failed:", exc)
-print("promotion advanced to generation", advanced.generation, "head", new_commit)
+advanced, status = advance_generation_at_path(
+    Path(manifest_path),
+    new_commit,
+    reason=f"promotion after engine sync ({before} -> {after})",
+    dependency_generation=proof,
+    expected=(str(manifest.runtime_id), int(manifest.generation), str(manifest.epic.get("expected_head") or "")),
+    idempotent_when_pinned=True,
+)
+print("promotion", status, "generation", advanced.generation, "head", new_commit)
 PY
-        rc=$?
-        if [[ $rc -eq 0 ]]; then
-          log "manifest promotion succeeded after engine sync ($before -> $after)"
-        else
-          log "manifest promotion FAILED (rc=$rc) after engine sync; old generation stays dispatchable"
-        fi
-      ) 9>"${promotion_lock}"
+      rc=$?
+      if [[ $rc -eq 0 ]]; then
+        log "manifest promotion succeeded after engine sync ($before -> $after)"
+      else
+        log "manifest promotion FAILED (rc=$rc) after engine sync; old generation stays dispatchable"
+      fi
     fi
   fi
 }

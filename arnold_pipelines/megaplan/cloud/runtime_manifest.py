@@ -7,9 +7,9 @@ promotion history. Something outside the manifest must locate the manifest —
 that is the **stable bootstrap path** resolved by :func:`bootstrap_manifest`
 (see its docstring for the exact semantics). One authoritative writer: all
 writes go through :func:`write_manifest`, which serializes atomically
-(tmp file + ``os.replace``) under an exclusive ``flock`` on a sibling
-``<name>.lock`` file, so a concurrent reader never observes a partial file and
-two writers cannot interleave.
+(tmp file + ``os.replace``) under the canonical ``<name>.promotion.lock`` then
+``<name>.lock`` pair, so a concurrent reader never observes a partial file and
+no promotion or ordinary writer can interleave.
 
 Invariants from the design brief
 --------------------------------
@@ -39,7 +39,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -548,12 +548,56 @@ def manifest_promotion_lock(path: Path, *, blocking: bool = True) -> Iterator[in
     return manifest_mutation_lock(path, promotion=True, blocking=blocking)
 
 
+@contextmanager
+def manifest_transaction_lock(
+    *paths: Path, blocking: bool = True
+) -> Iterator[tuple[Path, ...]]:
+    """Hold the canonical lock pair for every manifest in *paths*.
+
+    Every promotion-capable manifest mutation takes the promotion lock before
+    the ordinary writer lock.  When a transaction touches more than one
+    manifest (the active pointer plus a per-runtime manifest), all paths are
+    sorted first and all promotion locks are acquired before any ordinary
+    locks.  That gives the whole mutation domain one deadlock-free order while
+    allowing locked helpers below to avoid re-entering either lock.
+    """
+    targets = tuple(
+        sorted(
+            {Path(path).expanduser().resolve(strict=False) for path in paths},
+            key=str,
+        )
+    )
+    with ExitStack() as stack:
+        for target in targets:
+            stack.enter_context(
+                manifest_promotion_lock(target, blocking=blocking)
+            )
+        for target in targets:
+            stack.enter_context(manifest_write_lock(target, blocking=blocking))
+        yield targets
+
+
+@contextmanager
+def _single_manifest_transaction_lock(path: Path) -> Iterator[None]:
+    """Hold one canonical pair for the cutover's whole transaction."""
+    with manifest_promotion_lock(path):
+        with manifest_write_lock(path):
+            yield
+
+
+def _write_manifest_locked(manifest: RuntimeManifest, target: Path) -> None:
+    """Write *manifest* assuming *target*'s canonical pair is held."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(target, _write_payload(manifest, target))
+
+
 def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     """Serialize *manifest* to *path* atomically under an exclusive flock.
 
-    A sibling ``<name>.lock`` file is created (and kept) next to *path*;
-    writers take ``flock(LOCK_EX)`` around the tmp+rename so concurrent
-    writers serialize and readers never observe a partial file.
+    Sibling ``<name>.promotion.lock`` and ``<name>.lock`` files are created
+    (and kept) next to *path*; writers take both canonical locks around the
+    tmp+rename so concurrent writers serialize and readers never observe a
+    partial file.
 
     Demotion invariant (G2 second re-run): when *path* IS the active-
     generation pointer path and the existing file there is a
@@ -562,9 +606,8 @@ def write_manifest(manifest: RuntimeManifest, path: Path) -> None:
     never re-admit a demoted pointer.
     """
     target = Path(path).expanduser().resolve(strict=False)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with manifest_write_lock(target):
-        _atomic_write(target, _write_payload(manifest, target))
+    with manifest_transaction_lock(target):
+        _write_manifest_locked(manifest, target)
 
 
 def load_manifest(path: Path) -> RuntimeManifest:
@@ -778,15 +821,55 @@ def _retain_previous_generation(pointer: Path, manifest: RuntimeManifest) -> Non
         _atomic_write(retention, previous.to_dict())
 
 
+def _write_active_pointer_locked(manifest: RuntimeManifest, pointer: Path) -> None:
+    """Write the active pointer assuming its canonical lock pair is held."""
+    # Foreign-epic guard (occurrence 0a0ce24c3510 / 0513dbf3f069): the
+    # active pointer must NEVER be silently overwritten with a different
+    # epic's manifest.  A caller whose ARNOLD_RUNTIME_MANIFEST env (or the
+    # absence of it) resolves to the shared default pointer while advancing
+    # ANOTHER epic's manifest would clobber the active epic's generation
+    # (astrid-first's gen-78 advance overwrote the megaplan-maintenance
+    # pointer at 02:07:42Z with no retention because 78 < 119 skipped the
+    # rollback copy).  A ``compatibility_only`` pointer is non-authoritative
+    # telemetry (G2) and may be replaced; an invalid pointer is left to
+    # ``_retain_previous_generation``'s existing fail-closed check.
+    if pointer.exists():
+        try:
+            _current_pointer_manifest = load_manifest(pointer)
+        except ManifestError:
+            _current_pointer_manifest = None
+        if (
+            _current_pointer_manifest is not None
+            and not _current_pointer_manifest.compatibility_only
+        ):
+            _current_epic_branch = str(
+                (_current_pointer_manifest.epic or {}).get("branch") or ""
+            )
+            _incoming_epic_branch = str((manifest.epic or {}).get("branch") or "")
+            if (
+                _current_epic_branch
+                and _incoming_epic_branch
+                and _current_epic_branch != _incoming_epic_branch
+            ):
+                raise ManifestError(
+                    "active pointer holds a different epic's manifest "
+                    f"({_current_epic_branch!r}); refusing to overwrite it "
+                    f"with {_incoming_epic_branch!r} "
+                    "(fail-closed foreign-epic pointer guard)"
+                )
+    _retain_previous_generation(pointer, manifest)
+    _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
+
+
 def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) -> Path:
     """Atomically switch the active-generation pointer to *manifest*.
 
     The pointer is the manifest file AT the stable bootstrap path (see
     :func:`active_manifest_path`) — the file itself IS the active generation.
-    Under an exclusive flock on a sibling ``<name>.lock``: the previous
-    generation (when the pointer already holds an earlier one) is retained at
-    ``<path>.previous-<N>.json`` for rollback, then *manifest* is written to
-    *path* via atomic tmp+rename. Returns the pointer path.
+    Under the canonical ``<name>.promotion.lock`` then ``<name>.lock`` pair:
+    the previous generation (when the pointer already holds an earlier one) is
+    retained at ``<path>.previous-<N>.json`` for rollback, then *manifest* is
+    written to *path* via atomic tmp+rename. Returns the pointer path.
 
     The pointer's ``compatibility_only`` demotion is DURABLE (G2 second
     re-run): once the pointer holds a ``compatibility_only`` manifest (as
@@ -800,47 +883,9 @@ def write_active_pointer(manifest: RuntimeManifest, path: Path | None = None) ->
     """
     pointer = Path(path) if path is not None else active_manifest_path()
     pointer = pointer.expanduser().resolve(strict=False)
-    pointer.parent.mkdir(parents=True, exist_ok=True)
-    with manifest_write_lock(pointer):
-        # Foreign-epic guard (occurrence 0a0ce24c3510 / 0513dbf3f069): the
-        # active pointer must NEVER be silently overwritten with a different
-        # epic's manifest.  A caller whose ARNOLD_RUNTIME_MANIFEST env (or the
-        # absence of it) resolves to the shared default pointer while
-        # advancing ANOTHER epic's manifest would clobber the active epic's
-        # generation (astrid-first's gen-78 advance overwrote the
-        # megaplan-maintenance pointer at 02:07:42Z with no retention because
-        # 78 < 119 skipped the rollback copy).  A ``compatibility_only``
-        # pointer is non-authoritative telemetry (G2) and may be replaced;
-        # an invalid pointer is left to ``_retain_previous_generation``'s
-        # existing fail-closed check.
-        if pointer.exists():
-            try:
-                _current_pointer_manifest = load_manifest(pointer)
-            except ManifestError:
-                _current_pointer_manifest = None
-            if (
-                _current_pointer_manifest is not None
-                and not _current_pointer_manifest.compatibility_only
-            ):
-                _current_epic_branch = str(
-                    (_current_pointer_manifest.epic or {}).get("branch") or ""
-                )
-                _incoming_epic_branch = str(
-                    (manifest.epic or {}).get("branch") or ""
-                )
-                if (
-                    _current_epic_branch
-                    and _incoming_epic_branch
-                    and _current_epic_branch != _incoming_epic_branch
-                ):
-                    raise ManifestError(
-                        "active pointer holds a different epic's manifest "
-                        f"({_current_epic_branch!r}); refusing to overwrite it "
-                        f"with {_incoming_epic_branch!r} "
-                        "(fail-closed foreign-epic pointer guard)"
-                    )
-        _retain_previous_generation(pointer, manifest)
-        _atomic_write(pointer, _write_payload(manifest, pointer, pointer_write=True))
+    with manifest_transaction_lock(pointer):
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        _write_active_pointer_locked(manifest, pointer)
     return pointer
 
 
@@ -1038,8 +1083,10 @@ def advance_generation_at_path(
 
     Discipline (single writer seam, Sol stage-2 d51891b51841):
 
-    1. Acquire ``<manifest_path>.promotion.lock`` exclusively — the same
-       lock the module CLI, cutover, and watchdog promotion paths take.
+    1. Acquire the canonical lock pair for the manifest (and active pointer
+       when distinct), with every ``.promotion.lock`` acquired before any
+       ordinary ``.lock``. The module CLI, cutover, watchdog promotion, and
+       ordinary writers therefore share one mutation fence.
     2. Re-load the manifest INSIDE the lock.
     3. CAS-check ``(runtime_id, generation, expected_head)`` against the
        caller's *expected* snapshot when given: a concurrent advance
@@ -1062,7 +1109,8 @@ def advance_generation_at_path(
     ``"current"``.
     """
     path = Path(manifest_path).expanduser().resolve(strict=False)
-    with manifest_promotion_lock(path):
+    pointer = active_manifest_path().expanduser().resolve(strict=False)
+    with manifest_transaction_lock(path, pointer):
         current = load_manifest(path)
         if expected is not None:
             snapshot = (
@@ -1091,30 +1139,29 @@ def advance_generation_at_path(
             reason=reason,
             dependency_generation=dependency_generation,
         )
-        pointer = active_manifest_path()
         if path == pointer.expanduser().resolve(strict=False):
             # The caller passed the pointer itself — the switch IS the write.
-            write_active_pointer(advanced, pointer)
+            _write_active_pointer_locked(advanced, pointer)
         else:
             # Pointer switch FIRST (atomic, retains the previous generation
             # for rollback), then the per-path manifest: a retry after a
             # mid-write failure re-reads the pre-advance manifest and lands
             # on the same generation + commit (idempotent).
-            write_active_pointer(advanced, pointer)
-            write_manifest(advanced, path)
-        try:
-            refreshed = refresh_legacy_session_copy(advanced, path)
-            if refreshed is not None:
-                print(
-                    f"refreshed legacy session copy: {refreshed}",
-                    file=sys.stderr,
-                )
-        except OSError as exc:  # hygiene failure must not mask the advance
+            _write_active_pointer_locked(advanced, pointer)
+            _write_manifest_locked(advanced, path)
+    try:
+        refreshed = refresh_legacy_session_copy(advanced, path)
+        if refreshed is not None:
             print(
-                f"warning: legacy session copy refresh failed: {exc}",
+                f"refreshed legacy session copy: {refreshed}",
                 file=sys.stderr,
             )
-        return advanced, "advanced"
+    except OSError as exc:  # hygiene failure must not mask the advance
+        print(
+            f"warning: legacy session copy refresh failed: {exc}",
+            file=sys.stderr,
+        )
+    return advanced, "advanced"
 
 
 def _verify_dependency_generation_binding(
@@ -1751,7 +1798,8 @@ def apply_runtime_manifest_cutover(
       ``receipt_post_verify_failed`` AFTER the manifest write, so the command
       never reports success without durable rollback evidence
 
-    On success, under one exclusive flock covering the whole read-CAS-write:
+    On success, under the canonical promotion-then-ordinary lock pair covering
+    the whole read-CAS-write:
     the receipted TO-runtime facts are moved into the manifest
     (:func:`cutover_runtime_manifest` — generation + 1, promotion record,
     root-relative field relocation, ``timestamps.updated``), a rollback
@@ -1800,9 +1848,9 @@ def apply_runtime_manifest_cutover(
         lock_path=lock_path,
     )
     target.parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    transaction_lock = _single_manifest_transaction_lock(target)
+    transaction_lock.__enter__()
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             before_bytes = target.read_bytes()
         except OSError as exc:
@@ -2028,10 +2076,7 @@ def apply_runtime_manifest_cutover(
                 },
             ) from exc
     finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
+        transaction_lock.__exit__(*sys.exc_info())
     return {
         "manifest_path": str(target),
         "generation_before": manifest.generation,

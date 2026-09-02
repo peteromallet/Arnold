@@ -9,6 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -35,6 +36,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     load_manifest_by_epic,
     main,
     manifest_present,
+    manifest_promotion_lock,
     refresh_legacy_session_copy,
     set_state,
     validate_dependency_generation,
@@ -264,13 +266,38 @@ def test_write_is_atomic_and_leaves_valid_json_on_disk(tmp_path: Path) -> None:
     loaded = json.loads(raw)
     assert loaded["runtime_id"] == "second"
     assert RuntimeManifest.from_dict(loaded).runtime_id == "second"
-    # no partial/tmp files left behind (only the persistent sibling lock file)
+    # no partial/tmp files left behind (only the persistent canonical lock pair)
     leftovers = [
         p.name
         for p in path.parent.glob(f"{path.name}.*")
-        if p.name != f"{path.name}.lock"
+        if p.name
+        not in {f"{path.name}.lock", f"{path.name}.promotion.lock"}
     ]
     assert leftovers == []
+
+
+def test_promotion_lock_fences_ordinary_manifest_writer(tmp_path: Path) -> None:
+    """An ordinary writer cannot enter while the promotion fence is held."""
+    path = tmp_path / "runtime-manifest.json"
+    manifest = _make_manifest_obj()
+    write_manifest(manifest, path)
+
+    started = Event()
+    completed = Event()
+
+    def ordinary_writer() -> None:
+        started.set()
+        write_manifest(manifest, path)
+        completed.set()
+
+    with manifest_promotion_lock(path):
+        thread = Thread(target=ordinary_writer)
+        thread.start()
+        assert started.wait(1), "ordinary writer did not start"
+        assert not completed.wait(0.1), "ordinary writer entered promotion fence"
+    thread.join(timeout=2)
+    assert not thread.is_alive(), "ordinary writer remained blocked after release"
+    assert completed.is_set()
 
 
 # ── index ───────────────────────────────────────────────────────────────────
