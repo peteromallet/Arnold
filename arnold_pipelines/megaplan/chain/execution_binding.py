@@ -2392,7 +2392,7 @@ def attest_hold_context(
         actor={"id": actor, "class": "operator"},
         operation_id=operation_id,
         expected_revision=None,
-        expected_cursor=expected_current_milestone,
+        expected_cursor=expected_cursor,
         linked_receipts=[str(release_path), str(receipt_path), str(recovery_evidence.resolve())],
         effect=_effect,
         state_paths=[plan_state_path],

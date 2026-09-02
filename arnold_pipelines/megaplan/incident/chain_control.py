@@ -1521,6 +1521,7 @@ class ChainControlJournal:
                 claim_class=claim_class,
                 actor=actor,
                 intent=intent_kind,
+                expected_cursor=expected_cursor,
                 parent_chain_id=parent_chain_id,
             )
             claimed = self.append_under_lock(
@@ -1535,6 +1536,7 @@ class ChainControlJournal:
                 claim_class=claim_class,
                 actor=actor,
                 intent=intent_kind,
+                expected_cursor=expected_cursor,
                 parent_chain_id=parent_chain_id,
             )
             try:
@@ -1554,6 +1556,7 @@ class ChainControlJournal:
                     outcome="cas_conflict",
                     failure_class="cas_conflict",
                     expected_revision=expected_revision,
+                    expected_cursor=expected_cursor,
                     parent_chain_id=parent_chain_id,
                 )
                 return {"outcome": "cas_conflict", "result": conflict, "error": exc}
@@ -1572,6 +1575,7 @@ class ChainControlJournal:
                     actor=actor,
                     outcome="tamper" if tamper else "hold",
                     failure_class=exc.code,
+                    expected_cursor=expected_cursor,
                     parent_chain_id=parent_chain_id,
                 )
                 return {"outcome": "tamper" if tamper else "hold", "result": hold, "error": exc}
