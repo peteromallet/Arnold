@@ -436,7 +436,7 @@ class TestSshProviderGatedDirectTransport:
 
         cloud_yaml = (
             Path(__file__).parents[2]
-            / ".megaplan/initiatives/native-build-forward-continuation-20260902-r3/cloud.yaml"
+            / ".megaplan/initiatives/native-build-forward-continuation-20260902-r4/cloud.yaml"
         )
         spec = load_spec(cloud_yaml)
         provider = _provider_for_action(

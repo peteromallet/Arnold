@@ -38,7 +38,7 @@ def test_unknown_routing_value_fails_closed() -> None:
 
 
 def test_continuation_route_closes_every_fixer_role_to_muse_high() -> None:
-    session = "native-build-forward-c2-ec69ede3-20260902-r3"
+    session = "native-build-forward-c2-bb000694-20260903-r4"
     route = resolve_babysitter_routing({}, session=session)
     assert route.closed is True
     assert route.mode == "continuation-muse"
@@ -51,7 +51,7 @@ def test_continuation_route_closes_every_fixer_role_to_muse_high() -> None:
 
 
 def test_continuation_route_rejects_ambient_alternate_model() -> None:
-    session = "native-build-forward-c2-ec69ede3-20260902-r3"
+    session = "native-build-forward-c2-bb000694-20260903-r4"
     import pytest
 
     with pytest.raises(ValueError, match="closed to Muse"):
@@ -66,7 +66,7 @@ def test_continuation_route_rejects_ambient_alternate_model() -> None:
 
 
 def test_continuation_route_normalizes_all_thinking_inputs_to_high() -> None:
-    session = "native-build-forward-c2-ec69ede3-20260902-r3"
+    session = "native-build-forward-c2-bb000694-20260903-r4"
     for level in ("auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"):
         route = resolve_babysitter_routing(
             {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:{level}"},
@@ -81,7 +81,7 @@ def test_continuation_managed_spec_pins_nested_omp_dispatch_to_muse_high(
 ) -> None:
     goal = tmp_path / "goal.md"
     goal.write_text("prove movement", encoding="utf-8")
-    session = "native-build-forward-c2-ec69ede3-20260902-r3"
+    session = "native-build-forward-c2-bb000694-20260903-r4"
     route = resolve_babysitter_routing({}, session=session)
     ctx = {
         "engine_root": Path(__file__).resolve().parents[2],

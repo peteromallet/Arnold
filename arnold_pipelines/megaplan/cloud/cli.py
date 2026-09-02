@@ -27,6 +27,9 @@ from typing import Any, Mapping
 import yaml
 
 from arnold_pipelines.megaplan.cloud.auth import (
+    ON_BOX_GIT_CREDENTIAL_FILE,
+    ON_BOX_GIT_CREDENTIAL_FILE_ENV,
+    on_box_git_credential_env,
     seed_codex_oauth,
     seed_isolated_git_credentials,
 )
@@ -3079,7 +3082,20 @@ def _tail_text(text: str, *, max_lines: int = 20, max_chars: int = 4000) -> str:
 
 
 def _git_ref_probe_env(url: str) -> dict[str, str]:
+    """Build the hermetic Git environment used by fresh-launch probes.
+
+    AgentBox has a durable, path-only credential helper on the control
+    volume.  Reuse the same builder as ``OnBoxProvider`` for ``ls-remote`` and
+    commit probes so the engine-ref gate cannot run ahead of the authenticated
+    clone/fetch path.  Local callers without that helper retain the existing
+    public-repository/token behavior; an explicitly configured helper fails
+    closed through the typed auth error when it is missing.
+    """
     env = dict(os.environ)
+    configured = env.get(ON_BOX_GIT_CREDENTIAL_FILE_ENV)
+    default_helper = Path(ON_BOX_GIT_CREDENTIAL_FILE)
+    if configured or default_helper.is_file():
+        return on_box_git_credential_env(env=env, required=True)
     token = os.environ.get("GITHUB_TOKEN")
     if (
         token

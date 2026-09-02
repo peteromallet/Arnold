@@ -1,0 +1,164 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: native-c2-completion-evaluation
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-c2-completion-evaluation.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-c2-completion-evaluation
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+- label: native-s2r-durable-primitives
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s2r-durable-primitives.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s2r-durable-primitives
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-c2-completion-evaluation
+- label: native-s3a-plan-quality-cutover
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s3a-plan-quality-cutover.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s3a-plan-quality-cutover
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s2r-durable-primitives
+- label: native-s3b-gate-revise-cutover
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s3b-gate-revise-cutover.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s3b-gate-revise-cutover
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s3a-plan-quality-cutover
+- label: native-s4-tiebreaker-finalize-reentry
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s4-tiebreaker-finalize-reentry.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s4-tiebreaker-finalize-reentry
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s3b-gate-revise-cutover
+- label: native-s5a-delivery-shadow
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s5a-delivery-shadow.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s5a-delivery-shadow
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s4-tiebreaker-finalize-reentry
+- label: native-s5b-live-delivery
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s5b-live-delivery.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s5b-live-delivery
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s5a-delivery-shadow
+- label: native-s6-control-plane
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s6-control-plane.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s6-control-plane
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s5b-live-delivery
+- label: native-s7-conformance
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/native-s7-conformance.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/native-s7-conformance
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s6-control-plane
+- label: platform-s1-inventory
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s1-inventory.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s1-inventory
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - native-s7-conformance
+- label: platform-s2a-runtime-authority
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s2a-runtime-authority.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s2a-runtime-authority
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s1-inventory
+- label: platform-s2b-authoring-core
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s2b-authoring-core.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s2b-authoring-core
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s2a-runtime-authority
+- label: platform-s3-developer-tooling
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s3-developer-tooling.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s3-developer-tooling
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s2b-authoring-core
+- label: platform-s4-recomposition
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s4-recomposition.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s4-recomposition
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s3-developer-tooling
+- label: platform-s5-second-consumer
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s5-second-consumer.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s5-second-consumer
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s4-recomposition
+- label: platform-s6-certification
+  idea: .megaplan/initiatives/native-build-forward-continuation-20260902-r4/briefs/platform-s6-certification.md
+  branch: megaplan/native-build-forward-continuation-20260902-r4/platform-s6-certification
+  profile: all-muse-spark-openrouter
+  robustness: full
+  depth: high
+  with_prep: true
+  depends_on:
+  - platform-s5-second-consumer
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 90
+  poll_sleep: 8.0
+  execution_binding: required
+  initiative_path: .megaplan/initiatives/native-build-forward-continuation-20260902-r4
+  intended_initiative_revision: bb00069421aa5a8a1c7d73bd7c258477958fd462
+  require_editable_runtime_match: true
+  execution_binding_assets:
+    - arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml

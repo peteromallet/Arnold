@@ -2693,6 +2693,74 @@ def test_verify_configured_megaplan_ref_accepts_fetchable_commit(monkeypatch: py
     }
 
 
+def test_fresh_launch_git_probes_use_the_path_only_on_box_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Engine ref probes share the authenticated on-box Git environment."""
+    from arnold_pipelines.megaplan.cloud.auth import on_box_git_credential_env
+    from arnold_pipelines.megaplan.cloud.cli import _git_ref_probe_env
+
+    helper = tmp_path / "git-credentials"
+    secret = "ghp_probe_secret_must_not_escape"
+    helper.write_text(f"https://x-access-token:{secret}@github.com\n", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(helper))
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-token-must-not-be-forwarded")
+
+    env = _git_ref_probe_env("https://github.com/peteromallet/Arnold.git")
+    expected = on_box_git_credential_env(env=dict(os.environ), required=True)
+    assert env == expected
+    assert env["GIT_CONFIG_VALUE_0"] == f"store --file={helper}"
+    assert secret not in repr(env)
+    assert "ambient-token-must-not-be-forwarded" not in repr(env)
+
+
+def test_fresh_launch_git_probe_reports_missing_explicit_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _git_ref_probe_env
+
+    monkeypatch.setenv(
+        "ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(tmp_path / "missing-credentials")
+    )
+    with pytest.raises(CliError) as caught:
+        _git_ref_probe_env("https://github.com/peteromallet/Arnold.git")
+    assert caught.value.code == "on_box_git_auth_unavailable"
+
+
+def test_fresh_bootstrap_git_probe_sequence_propagates_helper_to_each_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both advertised-ref and commit-fetch probes use the same helper path."""
+    from arnold_pipelines.megaplan.cloud import cli as cloud_cli
+
+    helper = tmp_path / "git-credentials"
+    helper.write_text("https://x-access-token:fixture-secret@github.com\n", encoding="utf-8")
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(helper))
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        if argv[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(argv, 0, "abc\trefs/heads/main\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(cloud_cli.subprocess, "run", fake_run)
+    cloud_cli._ls_remote_refs("https://github.com/example/app.git", ["refs/heads/main"])
+    cloud_cli._probe_remote_commit("https://github.com/example/app.git", "a" * 40)
+
+    git_transports = [
+        (argv, kwargs)
+        for argv, kwargs in calls
+        if argv[:2] == ["git", "ls-remote"] or argv[:2] == ["git", "-C"] and "fetch" in argv
+    ]
+    assert len(git_transports) == 2
+    for _argv, kwargs in git_transports:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        assert env["GIT_CONFIG_VALUE_0"] == f"store --file={helper}"
+        assert "fixture-secret" not in repr(env)
+
+
 def test_verify_configured_megaplan_ref_rejects_unfetchable_commit(monkeypatch: pytest.MonkeyPatch) -> None:
     commit = "b" * 40
     monkeypatch.setattr(
