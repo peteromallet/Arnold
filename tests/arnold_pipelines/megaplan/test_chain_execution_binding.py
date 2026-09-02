@@ -51,6 +51,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     write_manifest,
 )
 from arnold_pipelines.megaplan.cloud import runtime_manifest as runtime_manifest_module
+from arnold_pipelines.megaplan.cloud import runtime_attestation as runtime_attestation_module
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlCasConflict,
@@ -3415,6 +3416,7 @@ def _write_cloud_marker(
     head: str | None = None,
     form: str = "legacy",
     chain_slug: str | None = None,
+    marker_root: Path | None = None,
 ) -> Path:
     """Write a cloud-session marker; ``form`` selects the runtime identity
     evidence it carries (T-0101h finding 3):
@@ -3428,7 +3430,7 @@ def _write_cloud_marker(
       relaunch naming exactly one ``/workspace/runtime-candidates``-style root
     - ``"none"``: no runtime identity evidence at all (real-root relaunch)
     """
-    marker_dir = root / ".megaplan" / "cloud-sessions"
+    marker_dir = (marker_root or root) / ".megaplan" / "cloud-sessions"
     marker_dir.mkdir(parents=True, exist_ok=True)
     marker_path = marker_dir / f"{session}.json"
     marker = {
@@ -3480,6 +3482,18 @@ def _write_cloud_marker(
         encoding="utf-8",
     )
     return marker_path
+
+
+def _use_canonical_marker_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    root = tmp_path / "canonical-marker-root"
+    monkeypatch.setattr(
+        runtime_attestation_module,
+        "CLOUD_SESSION_MARKER_DIR_DEFAULT",
+        root / ".megaplan" / "cloud-sessions",
+    )
+    return root
 
 
 def _write_runtime_manifest(
@@ -4481,6 +4495,7 @@ def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayabl
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The explicit promotion upgrades only binding metadata through NBF08."""
+    canonical_marker_root = _use_canonical_marker_root(tmp_path, monkeypatch)
     spec_path, state, previous, successor, expected_spec_sha = (
         _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
     )
@@ -4493,6 +4508,7 @@ def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayabl
         session=state.chain_session,
         plan="c2-plan",
         runtime=previous,
+        marker_root=canonical_marker_root,
     )
     manifest_path = _write_runtime_manifest(
         tmp_path / "runtime-manifest.json",
@@ -4597,6 +4613,7 @@ def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_se
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The live legacy shape resolves session only from the exact marker."""
+    canonical_marker_root = _use_canonical_marker_root(tmp_path, monkeypatch)
     spec_path, state, previous, _successor, expected_spec_sha = (
         _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
     )
@@ -4606,10 +4623,11 @@ def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_se
     marker_path = _write_cloud_marker(
         tmp_path,
         spec_path,
-        session="native-build-forward",
+        session="demo",
         plan="c2-plan",
         runtime=previous,
         chain_slug="demo",
+        marker_root=canonical_marker_root,
     )
     manifest_path = _write_runtime_manifest(
         tmp_path / "runtime-manifest.json",
@@ -4653,7 +4671,7 @@ def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_se
     }
     result = promote_legacy_runtime_binding(spec_path, tmp_path, **kwargs)
     assert result["outcome"] == "committed"
-    assert result["promotion"]["chain_session"] == "native-build-forward"
+    assert result["promotion"]["chain_session"] == "demo"
     promoted = load_chain_state(spec_path, verify_execution_binding=False)
     assert {
         key: value for key, value in promoted.to_dict().items() if key != "metadata"
@@ -4673,15 +4691,16 @@ def test_execution_binding_promote_legacy_runtime_only_recovers_missing_chain_se
         if event.get("event_kind") == "chain_control.runtime_rebound"
     ]
     assert len(semantic) == 1
-    assert semantic[0]["payload"]["effect"]["chain_session"] == "native-build-forward"
+    assert semantic[0]["payload"]["effect"]["chain_session"] == "demo"
 
 
-@pytest.mark.parametrize("failure", ["absent", "conflict", "malformed"])
+@pytest.mark.parametrize("failure", ["absent", "conflict", "malformed", "decoy"])
 def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_zero_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
+    canonical_marker_root = _use_canonical_marker_root(tmp_path, monkeypatch)
     spec_path, state, previous, _successor, expected_spec_sha = (
         _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
     )
@@ -4691,12 +4710,14 @@ def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_z
     marker_path = _write_cloud_marker(
         tmp_path,
         spec_path,
-        session="native-build-forward",
+        session="demo",
         plan="c2-plan",
         runtime=previous,
         chain_slug="demo",
+        marker_root=canonical_marker_root,
     )
     original_marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    decoy_paths: list[Path] = []
     if failure == "absent":
         marker_path.unlink()
     elif failure == "conflict":
@@ -4705,6 +4726,30 @@ def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_z
         marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
     elif failure == "malformed":
         marker_path.write_text("{not-json}\n", encoding="utf-8")
+    elif failure == "decoy":
+        marker_path.unlink()
+        project_decoy = _write_cloud_marker(
+            tmp_path,
+            spec_path,
+            session="demo",
+            plan="c2-plan",
+            runtime=previous,
+            chain_slug="demo",
+        )
+        env_decoy_root = tmp_path / "env-decoy-root"
+        env_decoy = _write_cloud_marker(
+            env_decoy_root,
+            spec_path,
+            session="demo",
+            plan="c2-plan",
+            runtime=previous,
+            chain_slug="demo",
+        )
+        monkeypatch.setenv(
+            "ARNOLD_CHAIN_SESSION_MARKER_DIR",
+            str(env_decoy_root / ".megaplan" / "cloud-sessions"),
+        )
+        decoy_paths = [project_decoy, env_decoy]
     manifest_path = _write_runtime_manifest(
         tmp_path / "runtime-manifest.json",
         epic_id="demo",
@@ -4725,6 +4770,8 @@ def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_z
     marker_sha = (
         original_marker_sha
         if failure == "absent"
+        else hashlib.sha256(decoy_paths[-1].read_bytes()).hexdigest()
+        if failure == "decoy"
         else hashlib.sha256(marker_path.read_bytes()).hexdigest()
     )
     manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
@@ -4732,9 +4779,10 @@ def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_z
     spec_before = spec_path.read_bytes()
     marker_before = marker_path.read_bytes() if marker_path.exists() else None
     manifest_before = manifest_path.read_bytes()
+    decoy_before = {path: path.read_bytes() for path in decoy_paths}
     before = load_chain_state(spec_path, verify_execution_binding=False).to_dict()
 
-    with pytest.raises(CliError, match="authoritative|unresolved|conflicts|malformed"):
+    with pytest.raises(CliError, match="authoritative|unresolved|conflicts|malformed|canonical path|unavailable"):
         promote_legacy_runtime_binding(
             spec_path,
             tmp_path,
@@ -4755,6 +4803,8 @@ def test_execution_binding_promote_missing_chain_session_rejects_bad_authority_z
     assert spec_path.read_bytes() == spec_before
     assert (marker_path.read_bytes() if marker_path.exists() else None) == marker_before
     assert manifest_path.read_bytes() == manifest_before
+    for decoy_path in decoy_paths:
+        assert decoy_path.read_bytes() == decoy_before[decoy_path]
 
 
 @pytest.mark.parametrize("bad_guard", ["state", "marker", "manifest", "malformed-marker"])
@@ -4763,6 +4813,7 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
     monkeypatch: pytest.MonkeyPatch,
     bad_guard: str,
 ) -> None:
+    canonical_marker_root = _use_canonical_marker_root(tmp_path, monkeypatch)
     spec_path, state, previous, _successor, expected_spec_sha = (
         _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
     )
@@ -4775,6 +4826,7 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
         session=state.chain_session,
         plan="c2-plan",
         runtime=previous,
+        marker_root=canonical_marker_root,
     )
     manifest_path = _write_runtime_manifest(
         tmp_path / "runtime-manifest.json",
