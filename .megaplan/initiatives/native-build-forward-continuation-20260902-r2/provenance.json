@@ -7,10 +7,10 @@
     "branch": "fixer/native-build-forward-c2-c4b0c102-20260902-r2"
   },
   "artifacts": {
-    "chain.yaml": "629ddaecf5f5cbab50213dde80f5622eadafc417c3d712a0278fdd89f0d03481",
-    "HANDOFF.md": "28618d2da4b4b4608528d6328385f04399533245c127ec19368cf4ecb783577a",
+    "chain.yaml": "6e5ae55ca39e10ee115192ee2d4ed93915baf0502e3a9bb60b26105e91b98bf6",
+    "HANDOFF.md": "3cadf1cda9a0ae183ff511f0ffdc71068b6a6e05c08ef4429ddc3bb32ad53a64",
     "NORTHSTAR.md": "5edf0673142580ea922849c27538cb0c18e20983c5af4c26d9b9d5efd791699d",
-    "cloud.yaml": "5677c57debacca3f1d0de22b263f5790616d641799525d407a6d23b7c39016bd",
+    "cloud.yaml": "f735368323caba98f4a6dcb67d319a320d6ea24954a55b9baf815c3091d5fd6e",
     "arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml": "99f6f336ac561cb58b389252ebab1e3652b8f1da8b0eb835eae05c45c0158b1a"
   },
   "predecessor": {
