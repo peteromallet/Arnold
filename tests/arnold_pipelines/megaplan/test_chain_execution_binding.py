@@ -16,6 +16,7 @@ import yaml
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.chain.execution_binding import (
     active_execution_identity,
+    attest_hold_context,
     assert_execution_binding,
     bind_execution_identity,
     binding_policy,
@@ -1274,6 +1275,23 @@ def test_optional_runtime_rebind_replaces_identity_without_operational_mutation(
     assert state.metadata["execution_binding"]["launched_identity"] == before[
         "metadata"
     ]["execution_binding"]["launched_identity"]
+    runtime_intent = next(
+        event for event in journal_for(tmp_path).replay_strict()["accepted"]
+        if event.get("event_kind") == "chain_control.intent"
+        and event.get("intent") == "runtime-rebind"
+    )
+    context = runtime_intent["payload"]["runtime_rebind_context.v1"]
+    assert context == {
+        "chain_id": chain_id_for_spec(spec_path),
+        "policy": "optional",
+        "direction": "cutover",
+        "chain_spec_sha256": expected_spec_sha,
+        "cursor": 1,
+        "current_milestone": "c2",
+        "current_plan": "c2-plan",
+        "from_runtime_sha256": previous["content_sha256"],
+        "to_runtime_sha256": successor["content_sha256"],
+    }
 
 
 def test_optional_runtime_rebind_legacy_uses_frozen_23_milestone_sequence(
@@ -1799,6 +1817,129 @@ raise SystemExit(chain_module.run_chain_cli(Path(sys.argv[2]), args))
     assert "launched_identity" not in state.metadata["execution_binding"]
 
 
+def test_legacy_contextless_release_can_be_attested_then_consumed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, previous, successor, expected_spec_sha = (
+        _optional_runtime_rebind_case(tmp_path, monkeypatch, legacy_binding=True)
+    )
+    from arnold_pipelines.megaplan.chain.spec import _state_path_for
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+    plan_state_path = tmp_path / ".megaplan" / "plans" / "c2-plan" / "state.json"
+    operation_id = "a" * 64
+
+    def legacy_effect(_txn: Any) -> dict[str, Any]:
+        raise ChainControlHold("legacy_runtime_drift", "legacy contextless hold")
+
+    journal = journal_for(tmp_path)
+    journal.ensure_genesis(
+        chain_id=chain_id_for_spec(spec_path),
+        actor={"id": "legacy", "class": "operator"},
+        spec_identity=str(spec_path),
+    )
+    held = journal.mutate(
+        chain_id=chain_id_for_spec(spec_path),
+        operation_id=operation_id,
+        intent_kind="runtime-rebind",
+        actor={"id": "legacy", "class": "operator"},
+        expected_revision=None,
+        expected_cursor="c2",
+        state_paths=[_state_path_for(spec_path), plan_state_path],
+        effect=legacy_effect,
+    )
+    assert held["outcome"] == "hold"
+    hold = journal.operation_result(operation_id)
+    assert hold is not None and hold["event_kind"] == "chain_control.hold"
+    persisted = load_chain_state(spec_path, verify_execution_binding=False)
+    evidence = tmp_path / "attestation-evidence.txt"
+    evidence.write_text("operator attested legacy runtime context\n", encoding="utf-8")
+    release = journal.release_hold(
+        chain_id=chain_id_for_spec(spec_path),
+        operation_id=operation_id,
+        expected_hold_event_hash=hold["event_hash"],
+        expected_chain_spec_sha256=expected_spec_sha,
+        spec_path=spec_path,
+        expected_state_digest=state_digest_for(persisted.to_dict()),
+        expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+        expected_cursor=1,
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        recovery_evidence=evidence,
+        actor="operator",
+        reason="release legacy contextless hold",
+        expect_missing_state_revision=True,
+    )
+    release_receipt = tmp_path / "release.json"
+    release_receipt.write_text(
+        json.dumps({"schema": "nbf08-chain-control-hold-release-v1", "event": release["event"]}),
+        encoding="utf-8",
+    )
+    before = _state_path_for(spec_path).read_bytes()
+    attested = attest_hold_context(
+        spec_path,
+        state,
+        released_hold_receipt=str(release_receipt),
+        expected_chain_id=chain_id_for_spec(spec_path),
+        expected_operation_id=operation_id,
+        expected_hold_event_hash=hold["event_hash"],
+        expected_release_event_hash=release["event"]["event_hash"],
+        expected_chain_spec_sha256=expected_spec_sha,
+        expected_state_digest=state_digest_for(persisted.to_dict()),
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        expected_cursor=1,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        direction="cutover",
+        runtime_identity=successor,
+        runtime_provenance_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+        recovery_evidence=evidence,
+        reason="attest legacy context",
+        actor="operator",
+        expected_state_revision=persisted.metadata.get("_nbf08_revision"),
+        expect_missing_state_revision=True,
+    )
+    assert attested["outcome"] == "committed"
+    assert _state_path_for(spec_path).read_bytes() == before
+    attested_receipt = tmp_path / "attested.json"
+    attested_receipt.write_text(
+        json.dumps({"schema": "nbf08-chain-control-hold-context-attestation-v1", "event": attested["event"]}),
+        encoding="utf-8",
+    )
+    result = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        reason="consume attested legacy context",
+        verified_external_runtime_identity=successor,
+        verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+        allow_optional_policy=True,
+        expected_chain_spec_sha256=expected_spec_sha,
+        attested_hold_context_receipt=str(attested_receipt),
+    )
+    assert result["outcome"] == "committed"
+    replay = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=previous["content_sha256"],
+        expected_active_runtime_sha256=successor["content_sha256"],
+        expected_current_milestone="c2",
+        expected_current_plan="c2-plan",
+        reason="different metadata must replay",
+        verified_external_runtime_identity=successor,
+        verified_external_runtime_receipt=str(tmp_path / "verified-runtime-receipt.json"),
+        allow_optional_policy=True,
+        expected_chain_spec_sha256=expected_spec_sha,
+        attested_hold_context_receipt=str(attested_receipt),
+    )
+    assert replay["outcome"] == "replay"
+
+
 def test_optional_runtime_rebind_requires_verified_receipt_without_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2192,6 +2333,30 @@ def test_release_hold_revision_parser_requires_one_expectation() -> None:
         parser.parse_args(common)
     with pytest.raises(SystemExit):
         parser.parse_args([*common, "--expected-state-revision", "0", "--expect-missing-state-revision"])
+
+
+def test_attest_hold_context_parser_requires_exact_inputs() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_module.build_chain_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "chain", "attest-hold-context", "--spec", "chain.yaml",
+            "--project-dir", "/tmp/project", "--chain-id", "chain-demo",
+            "--operation-id", "a" * 64, "--expected-hold-event-hash", "b" * 64,
+            "--released-hold-receipt", "release.json", "--expected-release-event-hash", "c" * 64,
+            "--expected-chain-spec-sha256", "d" * 64, "--expected-state-digest", "e" * 64,
+            "--expect-missing-state-revision", "--expected-cursor", "1",
+            "--expected-current-milestone", "c2", "--expected-current-plan", "c2-plan",
+            "--from-runtime-sha256", "f" * 64, "--to-runtime-sha256", "0" * 64,
+            "--runtime-identity", "runtime.json", "--runtime-provenance-receipt", "runtime-receipt.json",
+            "--recovery-evidence", "evidence.txt", "--receipt", "attested.json",
+            "--reason", "parser coverage",
+        ]
+    )
+    assert args.chain_action == "attest-hold-context"
+    assert args.expect_missing_state_revision is True
+    assert args.expected_release_event_hash == "c" * 64
 
 
 def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(
