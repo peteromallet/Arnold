@@ -1,10 +1,10 @@
 {
   "schema": "native-build-forward-continuation-handoff.v1",
-  "initiative": "native-build-forward-continuation-20260902",
+  "initiative": "native-build-forward-continuation-20260902-r2",
   "source": {
     "ref": "main",
-    "head": "a8286d28a80f8b7f00e414947f6287804b2b6b5c",
-    "branch": "fixer/native-build-forward-c2-a8286d28-20260902"
+    "head": "c4b0c102e3c72ac8a28ff85f9af6e1a4728e2d52",
+    "branch": "fixer/native-build-forward-c2-c4b0c102-20260902-r2"
   },
   "artifacts": {
     "chain.yaml": "629ddaecf5f5cbab50213dde80f5622eadafc417c3d712a0278fdd89f0d03481",

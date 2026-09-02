@@ -44,15 +44,19 @@ at launch; no caller-supplied abbreviated value is authoritative.
 
 ## New continuation identity
 
-Canonical source is `main@a8286d28a80f8b7f00e414947f6287804b2b6b5c`.
-The intended branch is `fixer/native-build-forward-c2-a8286d28-20260902`.
+Canonical source is `main@c4b0c102e3c72ac8a28ff85f9af6e1a4728e2d52`.
+The intended branch is `fixer/native-build-forward-c2-c4b0c102-20260902-r2`.
 The cloud workspace, runtime candidate, and session all use the unique
-namespace `native-build-forward-c2-a8286d28-20260902`:
+namespace `native-build-forward-c2-c4b0c102-20260902-r2`:
 
-- runtime candidate: `/workspace/runtime-candidates/native-build-forward-c2-a8286d28-20260902`
-- chain session: `native-build-forward-c2-a8286d28-20260902`
-- supported marker directory: `/workspace/.megaplan/cloud-sessions`; expected marker filename: `native-build-forward-c2-a8286d28-20260902.json`
-- chain spec: `.megaplan/initiatives/native-build-forward-continuation-20260902/chain.yaml`
+- runtime candidate: `/workspace/runtime-candidates/native-build-forward-c2-c4b0c102-20260902-r2`
+- chain session: `native-build-forward-c2-c4b0c102-20260902-r2`
+- supported marker directory: `/workspace/.megaplan/cloud-sessions`; expected marker filename: `native-build-forward-c2-c4b0c102-20260902-r2.json`
+- chain spec: `.megaplan/initiatives/native-build-forward-continuation-20260902-r2/chain.yaml`
+
+The earlier unlaunched identity and any failed partial runtime under
+`/workspace/runtime-candidates/native-build-forward-c2-a8286d28-20260902`
+remain immutable historical evidence and are not reused by this continuation.
 
 All workflow, preparation, nested tier, execution, critique, and review
 routes resolve through `all-muse-spark-openrouter` to the exact
@@ -76,7 +80,7 @@ the operator must:
    `/workspace/arnold`;
 4. confirm the new chain has no persisted state and starts at C2, while the
    old chain's pause and durable hold remain unchanged. Only then is the exact
-   next action supported: `uv run python -m arnold_pipelines.megaplan cloud chain .megaplan/initiatives/native-build-forward-continuation-20260902/chain.yaml --cloud-yaml .megaplan/initiatives/native-build-forward-continuation-20260902/cloud.yaml`.
+   next action supported: `uv run python -m arnold_pipelines.megaplan cloud chain .megaplan/initiatives/native-build-forward-continuation-20260902-r2/chain.yaml --cloud-yaml .megaplan/initiatives/native-build-forward-continuation-20260902-r2/cloud.yaml`.
 
 No `chain_completed` predecessor marker is invented, no old state is copied,
 and no old hold is released by this handoff.

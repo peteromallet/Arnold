@@ -5,7 +5,7 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: main
-  workspace: /workspace/runtime-candidates/native-build-forward-c2-a8286d28-20260902
+  workspace: /workspace/runtime-candidates/native-build-forward-c2-c4b0c102-20260902-r2
 
 agents:
   default: codex
@@ -17,17 +17,17 @@ codex:
   model: gpt-5.6-sol
   reasoning: high
 
-chain_session: native-build-forward-c2-a8286d28-20260902
+chain_session: native-build-forward-c2-c4b0c102-20260902-r2
 mode: idle
 
 chain:
-  spec: /workspace/runtime-candidates/native-build-forward-c2-a8286d28-20260902/.megaplan/initiatives/native-build-forward-continuation-20260902/chain.yaml
+  spec: /workspace/runtime-candidates/native-build-forward-c2-c4b0c102-20260902-r2/.megaplan/initiatives/native-build-forward-continuation-20260902-r2/chain.yaml
 
 megaplan:
   ref: main
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/runtime-candidates/native-build-forward-c2-a8286d28-20260902-arnold
+  src_path: /workspace/runtime-candidates/native-build-forward-c2-c4b0c102-20260902-r2-arnold
 
 resources:
   volume: agent-volume
@@ -45,4 +45,4 @@ secrets: []
 
 # Supported marker location is fixed by the AgentBox runtime. The unique
 # chain_session yields this non-colliding marker:
-# /workspace/.megaplan/cloud-sessions/native-build-forward-c2-a8286d28-20260902.json
+# /workspace/.megaplan/cloud-sessions/native-build-forward-c2-c4b0c102-20260902-r2.json

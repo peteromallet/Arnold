@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -114,17 +115,23 @@ def test_on_box_provider_records_process_adapter_wbc(
     monkeypatch,
 ) -> None:
     workspace = tmp_path / "workspace"
-    workspace.mkdir()
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run",
         lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "ok\n", ""),
     )
 
     provider = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh"))
+    assert not workspace.exists()
     provider.ssh_exec("echo ok")
+    assert not workspace.exists()
 
     sidecar = process_adapter_wbc_dir(
-        workspace,
+        provider._process_adapter_evidence_root(),
         producer_family="cloud_provider_adapter",
         adapter_name="OnBoxProvider",
     )
@@ -132,6 +139,43 @@ def test_on_box_provider_records_process_adapter_wbc(
 
     assert [record["payload"]["boundary_event"] for record in records] == ["started", "terminal"]
     assert records[-1]["payload"]["status"] == "completed"
+
+
+def test_on_box_checkout_clones_after_external_wbc_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The first on-box receipt must not precreate the clone destination."""
+    from arnold_pipelines.megaplan.cloud.cli import _ensure_repo_checkout
+
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", "--bare", str(source)], check=True, capture_output=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "init", "-b", "main", str(seed)], check=True, capture_output=True)
+    (seed / "README").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(seed), "add", "README"], check=True)
+    subprocess.run(
+        ["git", "-C", str(seed), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(source)], check=True)
+    subprocess.run(["git", "-C", str(seed), "push", "origin", "main"], check=True, capture_output=True)
+
+    workspace = tmp_path / "workspace"
+    spec = _cloud_spec(tmp_path, provider="ssh")
+    spec = replace(spec, repo=replace(spec.repo, url=str(source), workspace=str(workspace)))
+    provider = OnBoxProvider(spec)
+    provider.ssh_exec("echo before-clone")
+    assert not workspace.exists()
+    _ensure_repo_checkout(spec, provider, relay=False)
+    assert (workspace / ".git").is_dir()
+    assert (workspace / "README").read_text(encoding="utf-8") == "seed\n"
 
 
 def test_ssh_provider_ssh_exec_records_process_adapter_wbc(

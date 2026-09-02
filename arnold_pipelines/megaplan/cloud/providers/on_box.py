@@ -7,6 +7,8 @@ instead of bouncing through SSH and ``docker exec``.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +19,10 @@ from arnold_pipelines.megaplan.types import CliError
 from .base import Provider
 
 
+_ON_BOX_CONTROL_ROOT = Path("/workspace/.megaplan/cloud-sessions")
+_SCOPE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
 class OnBoxProvider(Provider):
     supports_session = True
 
@@ -24,7 +30,21 @@ class OnBoxProvider(Provider):
         self._spec = spec
 
     def _process_adapter_evidence_root(self) -> Path:
-        return Path(self._spec.repo.workspace)
+        """Return an external, deterministic control-plane evidence root.
+
+        Process-adapter evidence is control-plane state, not repository
+        checkout state.  Keeping it beside the chain/session marker means the
+        first on-box command can safely create its receipt before
+        ``_ensure_repo_checkout`` clones the repository.  The hash preserves
+        isolation for callers that accidentally reuse the default session
+        name across different workspaces/specs.
+        """
+        session = str(self._spec.chain_session or "megaplan-chain").strip()
+        slug = _SCOPE_SLUG_RE.sub("-", session).strip("-.") or "megaplan-chain"
+        chain_spec = self._spec.chain.spec if self._spec.chain is not None else ""
+        scope = "\0".join((session, str(chain_spec), self._spec.repo.workspace))
+        digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
+        return _ON_BOX_CONTROL_ROOT / f"{slug}-{digest}" / "process-adapter-wbc"
 
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
         attempt = self._begin_process_adapter_attempt(
