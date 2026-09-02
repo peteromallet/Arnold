@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
 
-from arnold_pipelines.megaplan.cloud import worker_dispatch
+from arnold_pipelines.megaplan.cloud import operator_control, worker_dispatch
 from arnold_pipelines.megaplan.fallback_chains import provider_family
 from arnold_pipelines.megaplan.incident.schema import ProviderFailureKey
 from arnold_pipelines.megaplan.cloud.babysitter.launch import (
@@ -21,7 +23,9 @@ from arnold_pipelines.megaplan.cloud.babysitter.launch import (
     _validate_automatic_launch_reservation,
     _admit_managed_launch,
 )
+from arnold_pipelines.megaplan.chain.spec import _state_path_for
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+from arnold_pipelines.megaplan.incident.chain_control import state_digest_for
 from arnold_pipelines.megaplan.incident.schema import (
     CauseKind,
     DispositionMode,
@@ -277,12 +281,14 @@ def test_automatic_reservation_validator_allows_exact_pause_after_claim(
         ),
         encoding="utf-8",
     )
+    # The context predates the canonical chain-state read.  It must not veto
+    # the exact claimed reservation whose plan was captured under lock.
     _validate_automatic_launch_reservation(
         {
             "session": "session",
             "workspace": str(tmp_path),
             "remote_spec": str(spec_path),
-            "plan": "plan",
+            "plan": "stale-plan",
             "occurrence": "occurrence",
             "run_id": "run",
             "managed_run_id": "managed",
@@ -290,6 +296,150 @@ def test_automatic_reservation_validator_allows_exact_pause_after_claim(
             "babysitter_launch_reservation": reservation,
         }
     )
+
+
+def test_automatic_reservation_validator_uses_fresh_chain_plan_not_stale_context(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    state_path = _state_path_for(spec_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_state = {
+        "schema_version": 1,
+        "current_milestone_index": 0,
+        "current_plan_name": "canonical-plan",
+        "last_state": "running",
+        "completed": [],
+        "metadata": {"_nbf08_revision": 3},
+    }
+    state_path.write_text(json.dumps(raw_state), encoding="utf-8")
+    reservation = {
+        "schema": "arnold.babysitter.launch-reservation.v1",
+        "schema_version": 1,
+        "reservation_id": "reservation",
+        "session": "session",
+        "workspace": str(tmp_path),
+        "spec": str(spec_path),
+        "plan": "canonical-plan",
+        "occurrence_digest": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "logical_dispatch_id": "logical",
+        "status": "claimed",
+        "chain_state_revision": 3,
+        "chain_state_digest": state_digest_for(raw_state),
+    }
+    (marker_dir / "session.json").write_text(
+        json.dumps(
+            {
+                "session": "session",
+                "workspace": str(tmp_path),
+                "remote_spec": str(spec_path),
+                "plan": "canonical-plan",
+                "should_run": True,
+                "babysitter_launch_reservation": reservation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The context predates the canonical chain-state read.  It must not veto
+    # the exact claimed reservation whose plan was captured under lock.
+    _validate_automatic_launch_reservation(
+        {
+            "session": "session",
+            "workspace": str(tmp_path),
+            "remote_spec": str(spec_path),
+            "plan": "stale-plan",
+            "occurrence": "occurrence",
+            "run_id": "run",
+            "managed_run_id": "managed",
+            "marker_dir": marker_dir,
+            "babysitter_launch_reservation": reservation,
+        }
+    )
+
+
+def test_automatic_reservation_validator_waits_for_pause_after_claim(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    marker_path = marker_dir / "session.json"
+    reservation = {
+        "schema": "arnold.babysitter.launch-reservation.v1",
+        "schema_version": 1,
+        "reservation_id": "reservation",
+        "session": "session",
+        "workspace": str(tmp_path),
+        "spec": str(spec_path),
+        "plan": "plan",
+        "occurrence_digest": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "logical_dispatch_id": "logical",
+        "status": "claimed",
+    }
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "session",
+                "workspace": str(tmp_path),
+                "remote_spec": str(spec_path),
+                "plan": "plan",
+                "should_run": True,
+                "babysitter_launch_reservation": reservation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = {
+        "session": "session",
+        "workspace": str(tmp_path),
+        "remote_spec": str(spec_path),
+        "plan": "stale-plan",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "managed_run_id": "managed",
+        "marker_dir": marker_dir,
+        "babysitter_launch_reservation": reservation,
+    }
+    done = threading.Event()
+    failures: list[BaseException] = []
+
+    def validate() -> None:
+        try:
+            _validate_automatic_launch_reservation(ctx)
+        except BaseException as exc:  # pragma: no cover - assertion below
+            failures.append(exc)
+        finally:
+            done.set()
+
+    with operator_control.marker_runtime_cutover_lock(marker_path):
+        thread = threading.Thread(target=validate)
+        thread.start()
+        # The validator has a bounded blocking marker wait and cannot pass
+        # while the operator owns the cutover lock.
+        time.sleep(0.05)
+        assert not done.is_set()
+        current, marker_sha = operator_control._load_marker(marker_path)
+        current["operator_pause"] = {
+            "schema_version": "arnold.megaplan.operator-pause.v1",
+            "active": True,
+        }
+        current["should_run"] = False
+        operator_control._write_marker_locked(
+            marker_path,
+            current,
+            expected_sha256=marker_sha,
+        )
+    thread.join(timeout=2)
+    assert done.is_set()
+    assert failures == []
 
 
 @pytest.mark.parametrize(

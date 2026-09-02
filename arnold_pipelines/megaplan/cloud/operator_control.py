@@ -543,21 +543,50 @@ def _write_marker(
 
 
 @contextmanager
-def marker_runtime_cutover_lock(path: Path, *, blocking: bool = True):
+def marker_runtime_cutover_lock(
+    path: Path,
+    *,
+    blocking: bool = True,
+    timeout_s: float | None = None,
+):
     """Hold the canonical lock for all marker read/CAS cutover operations.
 
     Babysitter admission and operator pause share this exact lock.  The
     non-blocking form is intentionally exposed so an automatic dispatch can
     report a typed suppression instead of waiting behind an operator action.
+    A caller with an already-claimed reservation may use bounded blocking to
+    let an in-flight pause finish before validating that claim.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".runtime-cutover.lock")
     with lock_path.open("a+", encoding="utf-8") as lock:
+        if timeout_s is not None:
+            if not blocking or isinstance(timeout_s, bool) or timeout_s < 0:
+                raise ValueError("lock timeout requires blocking=True and a non-negative number")
+            deadline = time.monotonic() + float(timeout_s)
+        else:
+            deadline = None
         flags = fcntl.LOCK_EX
-        if not blocking:
+        if not blocking or deadline is not None:
             flags |= fcntl.LOCK_NB
-        fcntl.flock(lock.fileno(), flags)
+        while True:
+            try:
+                fcntl.flock(lock.fileno(), flags)
+                break
+            except BlockingIOError:
+                if not blocking:
+                    raise
+                if deadline is None:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"timed out acquiring marker runtime-cutover lock: {lock_path}"
+                    )
+                # flock has no portable timed-blocking form.  Sleeping keeps
+                # the bounded retry from spinning while pause reaches its CAS.
+                time.sleep(min(0.05, remaining))
         try:
             yield lock
         finally:
