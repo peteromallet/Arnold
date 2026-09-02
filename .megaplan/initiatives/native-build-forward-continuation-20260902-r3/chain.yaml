@@ -158,7 +158,7 @@ driver:
   poll_sleep: 8.0
   execution_binding: required
   initiative_path: .megaplan/initiatives/native-build-forward-continuation-20260902-r3
-  intended_initiative_revision: ec69ede38323f4eb17d47ff3c94972c5d959b504
+  intended_initiative_revision: f814d8fe660e9b96ab6d7eb4c3263eb94cc22ed6
   require_editable_runtime_match: true
   execution_binding_assets:
     - arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml
