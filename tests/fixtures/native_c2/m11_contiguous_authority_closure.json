@@ -1,0 +1,30 @@
+{
+  "schema": "arnold.native_c2.m11_contiguous_authority_closure.v1",
+  "case": "missing-interior-manifest",
+  "description": "A complete capture containing only manifests 1 and 39 must not pass as the contiguous 1..39 authority closure.",
+  "expected_manifest_ids": [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 32, 33, 34, 35, 36, 37, 38, 39
+  ],
+  "captured_manifest_ids": [1, 39],
+  "complete_capture": true,
+  "required_tasks": ["T1", "T39"],
+  "accepted_attempts": [
+    {"task_id": "T1", "attempt_id": "attempt:T1:1", "outcome": "accepted"},
+    {"task_id": "T39", "attempt_id": "attempt:T39:1", "outcome": "accepted"}
+  ],
+  "dependency_closure": {"T1": [], "T39": ["T1"]},
+  "expected": {
+    "status": "rejected",
+    "causal_occurrence_count": 1,
+    "repair_frontier_count": 1,
+    "missing_manifest_ids": [
+      2, 3, 4, 5, 6, 7, 8, 9, 10,
+      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+      31, 32, 33, 34, 35, 36, 37, 38
+    ]
+  }
+}

@@ -110,6 +110,13 @@ class CompletionSubject:
     identifier: str
     name: str = ""
     kind: SubjectKind | None = None
+    admission_inputs: Mapping[str, Any] = field(default_factory=dict)
+    admission_context: Mapping[str, Any] = field(default_factory=dict)
+    declared_evidence_kinds: tuple[str, ...] = ()
+    candidate_outcome: Any = None
+    primary_evidence: Any = ()
+    capture_receipts: Any = ()
+    verifier_provenance: Any = None
 
     def __post_init__(self) -> None:
         if not self.artifact_type:
@@ -129,6 +136,17 @@ class CompletionSubject:
                 "CompletionSubject.kind must match MEGAPLAN_KIND_MAPPING for "
                 f"{self.artifact_type!r}"
             )
+        object.__setattr__(self, "admission_inputs", dict(self.admission_inputs or {}))
+        object.__setattr__(self, "admission_context", dict(self.admission_context or {}))
+        object.__setattr__(
+            self, "declared_evidence_kinds", tuple(str(item) for item in self.declared_evidence_kinds)
+        )
+
+    def to_admission_context(self) -> dict[str, Any]:
+        """Return the merged, product-owned inputs carried into C2 binding."""
+        context = dict(self.admission_context)
+        context.update(self.admission_inputs)
+        return context
 
     def to_source_declaration(self) -> SourceDeclaration:
         """Convert this subject to a :class:`SourceDeclaration`.
@@ -143,6 +161,8 @@ class CompletionSubject:
             source_id=f"megaplan:{self.artifact_type}:{self.identifier}",
             kind=self.kind,
             canonical_name=self.name or self.identifier,
+            template_ref=f"megaplan:{self.artifact_type}",
+            metadata={"artifact_type": self.artifact_type, "identifier": self.identifier},
         )
 
     def to_subject_declaration(
@@ -176,6 +196,8 @@ class CompletionSubject:
                 declaration_id
                 or f"megaplan:{self.artifact_type}:{self.identifier}:decl"
             ),
+            declared_evidence_kinds=self.declared_evidence_kinds,
+            admission_context=self.to_admission_context(),
         )
 
 
@@ -208,6 +230,24 @@ class SubjectInventory:
 
     def __len__(self) -> int:
         return len(self.subjects)
+
+    def to_admission_contexts(self) -> tuple[dict[str, Any], ...]:
+        """Return declaration-aligned product inputs for a shadow pass."""
+        return tuple(subject.to_admission_context() for subject in self.subjects)
+
+    def to_evaluation_inputs(self) -> dict[str, Any]:
+        """Return optional subject-owned C2 inputs keyed by generated declaration."""
+        declarations = self.to_declarations()
+        result: dict[str, Any] = {}
+        for name in ("candidate_outcome", "primary_evidence", "capture_receipts", "verifier_provenance"):
+            values = {
+                declaration.declaration_id: getattr(subject, name)
+                for subject, declaration in zip(self.subjects, declarations)
+                if getattr(subject, name) is not None and getattr(subject, name) != ()
+            }
+            if values:
+                result[name] = values
+        return result
 
 
 def megaplan_subject_inventory(
@@ -264,6 +304,14 @@ def megaplan_subject_inventory(
                 artifact_type=artifact_type,
                 identifier=identifier,
                 name=name,
+                admission_inputs=artifact.get(
+                    "admission_inputs", artifact.get("admission_context", {})
+                ),
+                declared_evidence_kinds=artifact.get("declared_evidence_kinds", ()),
+                candidate_outcome=artifact.get("candidate_outcome", artifact.get("outcome")),
+                primary_evidence=artifact.get("primary_evidence", artifact.get("evidence", ())),
+                capture_receipts=artifact.get("capture_receipts", ()),
+                verifier_provenance=artifact.get("verifier_provenance"),
             )
         )
     return tuple(subject.to_subject_declaration() for subject in subjects)
@@ -312,7 +360,19 @@ class S2FShadowRunner:
         self.last_gap_report = report
         return report
 
-    def run_shadow(self) -> ShadowEvaluation:
+    def run_shadow(
+        self,
+        *,
+        allow_incomplete: bool = False,
+        candidate_outcome: Any = None,
+        outcome: Any = None,
+        primary_evidence: Any = None,
+        evidence: Any = None,
+        capture_receipts: Any = None,
+        capture_evidence: Any = None,
+        verifier_provenance: Any = None,
+        **kwargs: Any,
+    ) -> ShadowEvaluation:
         """Run a full shadow evaluation using S2F discovery.
 
         Discovers S2F templates, parses them into declarations, and
@@ -330,13 +390,35 @@ class S2FShadowRunner:
             schema_markers=self.schema_markers,
         )
         self.last_gap_report = report
-        if not report.discovered_files:
+        if not report.discovered_files and not allow_incomplete:
             raise S2FTemplatesUnavailable(report)
-        return evaluate_shadow(report.parsed_declarations)
+        if not report.discovered_files:
+            return evaluate_shadow((), discovery_report=report)
+        return evaluate_shadow(
+            report.parsed_declarations,
+            candidate_outcome="success" if candidate_outcome is None else candidate_outcome,
+            outcome=outcome,
+            primary_evidence=primary_evidence,
+            evidence=evidence,
+            capture_receipts=capture_receipts,
+            capture_evidence=capture_evidence,
+            verifier_provenance=verifier_provenance,
+            discovery_report=report,
+            **kwargs,
+        )
 
     def run_shadow_with_inventory(
         self,
         inventory: SubjectInventory,
+        *,
+        candidate_outcome: Any = None,
+        outcome: Any = None,
+        primary_evidence: Any = None,
+        evidence: Any = None,
+        capture_receipts: Any = None,
+        capture_evidence: Any = None,
+        verifier_provenance: Any = None,
+        **kwargs: Any,
     ) -> ShadowEvaluation:
         """Run shadow evaluation against a given :class:`SubjectInventory`.
 
@@ -351,7 +433,26 @@ class S2FShadowRunner:
             The shadow evaluation results with specs, bindings, and
             verdicts.
         """
-        return evaluate_shadow(inventory.to_declarations())
+        evaluation_inputs = inventory.to_evaluation_inputs()
+        if candidate_outcome is None:
+            candidate_outcome = evaluation_inputs.get("candidate_outcome", "success")
+        if primary_evidence is None and evidence is None:
+            primary_evidence = evaluation_inputs.get("primary_evidence", ())
+        if capture_receipts is None and capture_evidence is None:
+            capture_receipts = evaluation_inputs.get("capture_receipts", ())
+        if verifier_provenance is None:
+            verifier_provenance = evaluation_inputs.get("verifier_provenance")
+        return evaluate_shadow(
+            inventory.to_declarations(),
+            candidate_outcome=candidate_outcome,
+            outcome=outcome,
+            primary_evidence=primary_evidence,
+            evidence=evidence,
+            capture_receipts=capture_receipts,
+            capture_evidence=capture_evidence,
+            verifier_provenance=verifier_provenance,
+            **kwargs,
+        )
 
 
 def shadow_runner(

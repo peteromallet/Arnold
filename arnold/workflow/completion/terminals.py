@@ -7,10 +7,16 @@ cannot accept, complete, or otherwise authorize a completion claim.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from arnold.workflow.completion.hashing import hash_canonical
 from arnold.workflow.completion.outcomes import CandidateOutcome
+
+
+def _sequence(value: Any, field: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TypeError(f"NamedExit.{field} must be an ordered sequence")
+    return tuple(str(item) for item in value)
 
 
 def _named_exit_hash_payload(
@@ -92,6 +98,12 @@ class NamedExit:
         for field_name, value in required_values.items():
             if not value:
                 raise ValueError(f"NamedExit.{field_name} must be non-empty")
+        intervening_bindings = _sequence(self.intervening_bindings, "intervening_bindings")
+        ordered_unwind_set = _sequence(self.ordered_unwind_set, "ordered_unwind_set")
+        superseded_spec_hashes = _sequence(self.superseded_spec_hashes, "superseded_spec_hashes")
+        object.__setattr__(self, "intervening_bindings", intervening_bindings)
+        object.__setattr__(self, "ordered_unwind_set", ordered_unwind_set)
+        object.__setattr__(self, "superseded_spec_hashes", superseded_spec_hashes)
         if not self.intervening_bindings:
             raise ValueError("NamedExit.intervening_bindings must be non-empty")
         if not self.ordered_unwind_set:
@@ -102,6 +114,10 @@ class NamedExit:
             raise ValueError("NamedExit.ordered_unwind_set cannot contain empty instances")
         if len(set(self.ordered_unwind_set)) != len(self.ordered_unwind_set):
             raise ValueError("NamedExit.ordered_unwind_set cannot contain duplicates")
+        if len(self.ordered_unwind_set) != len(self.intervening_bindings):
+            raise ValueError("NamedExit.ordered_unwind_set must cover every intervening binding")
+        if any(not value for value in self.superseded_spec_hashes):
+            raise ValueError("NamedExit.superseded_spec_hashes cannot contain empty hashes")
         if not self.exit_hash:
             object.__setattr__(
                 self,
@@ -118,6 +134,17 @@ class NamedExit:
             )
         if not self.exit_hash.startswith("sha256:"):
             raise ValueError("NamedExit.exit_hash must start with 'sha256:'")
+        expected_hash = compute_exit_hash(
+            self.exit_name,
+            self.target_loop_id,
+            self.source_declaration_ref,
+            self.intervening_bindings,
+            self.ordered_unwind_set,
+            self.superseded_spec_hashes,
+            self.previous_exit_hash,
+        )
+        if self.exit_hash != expected_hash:
+            raise ValueError("NamedExit exit_hash mismatch")
 
     def to_dict(self) -> dict[str, Any]:
         """Return a complete deterministic representation."""
@@ -164,6 +191,9 @@ class NamedExitVerdict:
 def superseded_by_named_exit(
     named_exit: NamedExit,
     prior_bindings: tuple[str, ...],
+    *,
+    expected_target_loop_id: str | None = None,
+    expected_unwind_order: tuple[str, ...] | None = None,
 ) -> NamedExitVerdict:
     """Validate a named exit and return its shadow-only supersession verdict.
 
@@ -171,12 +201,67 @@ def superseded_by_named_exit(
     before the exit.  A subset would erase custody information and is
     rejected as supersession laundering.
     """
-    if tuple(prior_bindings) != named_exit.intervening_bindings:
-        raise ValueError(
-            "Named-exit supersession rejected: intervening bindings do not "
-            "match the complete prior binding sequence"
-        )
+    validate_named_exit(
+        named_exit,
+        expected_target_loop_id=expected_target_loop_id,
+        expected_intervening_bindings=tuple(prior_bindings),
+        expected_unwind_order=expected_unwind_order,
+    )
     return NamedExitVerdict(named_exit=named_exit)
+
+
+def validate_named_exit(
+    named_exit: NamedExit,
+    *,
+    expected_target_loop_id: str | None = None,
+    expected_intervening_bindings: tuple[str, ...] | None = None,
+    expected_unwind_order: tuple[str, ...] | None = None,
+) -> None:
+    """Validate exact target, complete binding custody, and unwind order."""
+    if not isinstance(named_exit, NamedExit):
+        raise TypeError("named_exit must be a NamedExit")
+    if expected_target_loop_id is not None and named_exit.target_loop_id != expected_target_loop_id:
+        raise ValueError("Named-exit supersession rejected: exit target does not match exactly")
+    if expected_intervening_bindings is not None and tuple(expected_intervening_bindings) != named_exit.intervening_bindings:
+        raise ValueError("Named-exit supersession rejected: intervening bindings are incomplete or reordered")
+    if expected_unwind_order is not None and tuple(expected_unwind_order) != named_exit.ordered_unwind_set:
+        raise ValueError("Named-exit supersession rejected: unwind order does not match exactly")
+
+
+def unwind_named_exit(
+    named_exit: NamedExit,
+    current_bindings: tuple[str, ...] | list[str],
+    *,
+    target_loop_id: str | None = None,
+    unwind_order: tuple[str, ...] | None = None,
+    expected_intervening_bindings: tuple[str, ...] | None = None,
+    expected_unwind_order: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Apply a validated LIFO exit without mutating the caller's bindings.
+
+    Validation happens before deriving the returned stack.  Consequently a
+    rejected target, sequence, or unwind order cannot drop bindings from a
+    mutable list supplied by a caller.
+    """
+    snapshot = _sequence(current_bindings, "current_bindings")
+    if unwind_order is not None and expected_unwind_order is not None and tuple(unwind_order) != tuple(expected_unwind_order):
+        raise ValueError("Named-exit supersession rejected: conflicting unwind orders")
+    selected_unwind_order = expected_unwind_order if expected_unwind_order is not None else unwind_order
+    validate_named_exit(
+        named_exit,
+        expected_target_loop_id=target_loop_id,
+        expected_intervening_bindings=expected_intervening_bindings,
+        expected_unwind_order=selected_unwind_order,
+    )
+    if len(snapshot) < len(named_exit.intervening_bindings):
+        raise ValueError("Named-exit supersession rejected: binding stack is incomplete or reordered")
+    suffix = snapshot[-len(named_exit.intervening_bindings):]
+    if suffix != named_exit.intervening_bindings:
+        raise ValueError("Named-exit supersession rejected: binding stack is not an exact suffix")
+    return snapshot[:-len(named_exit.intervening_bindings)]
+
+
+apply_named_exit = unwind_named_exit
 
 
 def validate_named_exit_chain(named_exits: tuple[NamedExit, ...]) -> None:
@@ -201,3 +286,243 @@ def validate_named_exit_chain(named_exits: tuple[NamedExit, ...]) -> None:
                 f"{record.previous_exit_hash!r}"
             )
         previous_hash = record.exit_hash
+
+
+@dataclass(frozen=True)
+class CaptureSetResult:
+    """Complete-capture set-equality result used by the M11 fixture."""
+
+    expected_ids: tuple[str, ...]
+    captured_ids: tuple[str, ...]
+    complete_capture: bool
+    status: str
+    missing_ids: tuple[str, ...]
+    extra_ids: tuple[str, ...]
+    duplicate_ids: tuple[str, ...]
+    causal_occurrences: tuple[str, ...]
+    repair_frontier: tuple[str, ...]
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "accepted"
+
+    @property
+    def unknown(self) -> bool:
+        return self.status == "unknown"
+
+    @property
+    def missing_manifest_occurrence(self) -> str | None:
+        return self.causal_occurrences[0] if self.causal_occurrences else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "accepted": self.accepted,
+            "complete_capture": self.complete_capture,
+            "expected_ids": list(self.expected_ids),
+            "captured_ids": list(self.captured_ids),
+            "missing_ids": list(self.missing_ids),
+            "extra_ids": list(self.extra_ids),
+            "duplicate_ids": list(self.duplicate_ids),
+            "causal_occurrences": list(self.causal_occurrences),
+            "repair_frontier": list(self.repair_frontier),
+        }
+
+
+def evaluate_complete_capture_set_equality(
+    expected_ids: tuple[Any, ...] | list[Any],
+    captured_ids: tuple[Any, ...] | list[Any],
+    *,
+    complete_capture: bool = True,
+) -> CaptureSetResult:
+    """Compare complete captured identities and retain one repair cause."""
+    expected_raw = tuple(str(value) for value in expected_ids)
+    captured_raw = tuple(str(value) for value in captured_ids)
+    expected = tuple(sorted(set(expected_raw), key=_natural_id_key))
+    captured = tuple(sorted(set(captured_raw), key=_natural_id_key))
+    duplicate_ids = tuple(
+        sorted(
+            {
+                value
+                for values in (expected_raw, captured_raw)
+                for value in values
+                if values.count(value) > 1
+            },
+            key=_natural_id_key,
+        )
+    )
+    missing = tuple(value for value in expected if value not in captured)
+    extra = tuple(value for value in captured if value not in expected)
+    if not complete_capture:
+        return CaptureSetResult(expected, captured, False, "unknown", missing, extra, duplicate_ids, ("incomplete-capture",), ("capture:complete",))
+    if duplicate_ids:
+        first = duplicate_ids[0]
+        return CaptureSetResult(expected, captured, True, "rejected", missing, extra, duplicate_ids, (f"duplicate-manifest:{first}",), (f"manifest:{first}",))
+    if not missing and not extra:
+        return CaptureSetResult(expected, captured, True, "accepted", (), (), (), (), ())
+    if missing:
+        first = missing[0]
+        return CaptureSetResult(expected, captured, True, "rejected", missing, extra, (), (f"missing-manifest:{first}",), (f"manifest:{first}",))
+    return CaptureSetResult(expected, captured, True, "rejected", missing, extra, (), ("unexpected-manifest-set",), ("manifest:set",))
+
+
+def _natural_id_key(value: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(value))
+    except ValueError:
+        return (1, value)
+
+
+@dataclass(frozen=True)
+class DependencyClosureResult:
+    """Accepted-attempt and dependency-closure result."""
+
+    accepted: bool
+    missing_attempts: tuple[str, ...]
+    unresolved_dependencies: tuple[str, ...]
+    causal_occurrences: tuple[str, ...]
+    repair_frontier: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "accepted": self.accepted,
+            "missing_attempts": list(self.missing_attempts),
+            "unresolved_dependencies": list(self.unresolved_dependencies),
+            "causal_occurrences": list(self.causal_occurrences),
+            "repair_frontier": list(self.repair_frontier),
+        }
+
+
+@dataclass(frozen=True)
+class M11AuthorityClosureResult:
+    """Single-cause result for the captured contiguous-authority fixture."""
+
+    accepted: bool
+    status: str
+    capture: CaptureSetResult
+    dependency: DependencyClosureResult
+    causal_occurrences: tuple[str, ...]
+    repair_frontier: tuple[str, ...]
+
+    @property
+    def missing_manifest_occurrence(self) -> str | None:
+        return self.causal_occurrences[0] if self.causal_occurrences else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "accepted": self.accepted,
+            "status": self.status,
+            "capture": self.capture.to_dict(),
+            "dependency": self.dependency.to_dict(),
+            "causal_occurrences": list(self.causal_occurrences),
+            "repair_frontier": list(self.repair_frontier),
+        }
+
+
+def evaluate_m11_authority_closure(fixture: Mapping[str, Any]) -> M11AuthorityClosureResult:
+    """Evaluate complete capture before accepted-attempt closure.
+
+    A missing interior manifest is the causal frontier.  Downstream missing
+    attempts are retained as diagnostics but never multiplied into additional
+    repair occurrences for the same captured failure.
+    """
+    expected, captured, complete = _fixture_manifest_sets(fixture)
+    capture = evaluate_complete_capture_set_equality(expected, captured, complete_capture=complete)
+    required, accepted = _fixture_attempts(fixture)
+    dependencies = _fixture_dependencies(fixture)
+    missing_attempts = tuple(task for task in required if task not in accepted)
+    unresolved = tuple(f"{task}->{dependency}" for task, deps in dependencies.items() for dependency in deps if dependency not in accepted)
+    closure_ok = not missing_attempts and not unresolved
+    dependency = DependencyClosureResult(closure_ok, missing_attempts, unresolved, (), ())
+    if capture.status == "unknown":
+        status, causes, frontier = "unknown", capture.causal_occurrences, capture.repair_frontier
+    elif not capture.accepted:
+        status, causes, frontier = "rejected", capture.causal_occurrences, capture.repair_frontier
+    elif not closure_ok:
+        cause = _closure_cause(missing_attempts, unresolved)
+        task = _closure_task(missing_attempts, unresolved)
+        dependency = DependencyClosureResult(False, missing_attempts, unresolved, (cause,), (f"task:{task}",))
+        status, causes, frontier = "rejected", dependency.causal_occurrences, dependency.repair_frontier
+    else:
+        status, causes, frontier = "accepted", (), ()
+    return M11AuthorityClosureResult(status == "accepted", status, capture, dependency, causes, frontier)
+
+
+evaluate_m11_fixture = evaluate_m11_authority_closure
+
+
+def _fixture_manifest_sets(fixture: Mapping[str, Any]) -> tuple[tuple[Any, ...], tuple[Any, ...], bool]:
+    capture = fixture.get("capture") if isinstance(fixture.get("capture"), Mapping) else fixture
+    expected = _first_sequence(capture, "expected_manifest_ids", "expected_manifests", "required_manifests", "expected_set")
+    captured = _first_sequence(capture, "captured_manifest_ids", "captured_manifests", "observed_manifest_ids", "present_manifests", "captured_set")
+    if not expected and isinstance(capture.get("manifest_range"), Sequence):
+        bounds = tuple(capture["manifest_range"])
+        if len(bounds) == 2:
+            expected = tuple(range(int(bounds[0]), int(bounds[1]) + 1))
+    complete = bool(capture.get("complete_capture", capture.get("capture_complete", True)))
+    return expected, captured, complete
+
+
+def _fixture_attempts(fixture: Mapping[str, Any]) -> tuple[tuple[str, ...], set[str]]:
+    raw = fixture.get("accepted_attempts", fixture.get("accepted_attempt_ids", ()))
+    accepted: set[str] = set()
+    if isinstance(raw, Mapping):
+        for task, value in raw.items():
+            if _is_accepted_attempt(value):
+                accepted.add(str(task))
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        accepted.update(_accepted_sequence(raw))
+    required_raw = _first_sequence(fixture, "required_tasks", "task_ids", "subjects")
+    dependencies = _fixture_dependencies(fixture)
+    required = tuple(dict.fromkeys(str(item) for item in (*required_raw, *dependencies.keys())))
+    return required, accepted
+
+
+def _fixture_dependencies(fixture: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    raw = fixture.get("dependency_closure", fixture.get("dependencies", {}))
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, tuple[str, ...]] = {}
+    for task, deps in raw.items():
+        result[str(task)] = tuple(str(item) for item in deps) if isinstance(deps, Sequence) and not isinstance(deps, (str, bytes)) else ()
+    return result
+
+
+def _closure_cause(missing: tuple[str, ...], unresolved: tuple[str, ...]) -> str:
+    return f"no-accepted-attempt:{missing[0]}" if missing else f"dependency-unresolved:{unresolved[0]}"
+
+
+def _closure_task(missing: tuple[str, ...], unresolved: tuple[str, ...]) -> str:
+    if missing:
+        return missing[0]
+    return unresolved[0].split("->", 1)[0]
+
+
+def _accepted_sequence(raw: Sequence[Any]) -> set[str]:
+    accepted: set[str] = set()
+    for item in raw:
+        if isinstance(item, Mapping):
+            task = item.get("task_id", item.get("subject_id", item.get("id")))
+            if task is not None and _is_accepted_attempt(item):
+                accepted.add(str(task))
+        elif item is not None:
+            accepted.add(str(item))
+    return accepted
+
+
+def _first_sequence(mapping: Mapping[str, Any], *keys: str) -> tuple[Any, ...]:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return tuple(value)
+    return ()
+
+
+def _is_accepted_attempt(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, Mapping):
+        if value.get("accepted") is True:
+            return True
+        return str(value.get("outcome", value.get("status", ""))).lower() in {"accepted", "done", "completed"}
+    return bool(value)

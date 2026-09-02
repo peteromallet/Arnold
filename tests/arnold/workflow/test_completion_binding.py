@@ -13,10 +13,18 @@ from __future__ import annotations
 import pytest
 
 from arnold.workflow.completion.binding import (
+    AdmissionDisposition,
+    AmbiguousBindingError,
+    CANONICAL_BINDING_SCHEMA_VERSION,
     CompletionBinding,
+    LEGACY_BINDING_SCHEMA_VERSION,
+    ResumeDisposition,
+    admit_binding,
     bind,
     compute_binding_hash,
+    resume_binding,
 )
+from arnold.workflow.completion.evidence import EvidenceScope, EvidenceWindow, ScalarCursor
 from arnold.workflow.completion.spec import (
     SubjectKind,
     make_completion_spec,
@@ -277,3 +285,159 @@ class TestEvidenceWindow:
         run_1a = bind(sample_spec, "instance:run-003", "", "")
         run_1b = bind(sample_spec, "instance:run-003", "", "")
         assert run_1a.binding_hash == run_1b.binding_hash
+
+
+def _canonical_scope(**changes):
+    values = {
+        "subject_id": "subject:binding",
+        "occurrence_id": "occurrence:binding",
+        "attempt_id": "attempt:1",
+        "generation": 0,
+        "source_lock": "source:v1",
+        "runtime_lock": "runtime:v1",
+        "dependency_lock": "dependency:v1",
+        "store_id": "store:primary",
+        "store_incarnation": "store-incarnation:1",
+        "restore_id": "restore:1",
+        "restore_generation": 0,
+        "evidence_window": EvidenceWindow(ScalarCursor(1), ScalarCursor(9)),
+        "custody": {"target": "run/binding", "epoch": 2},
+        "authority_fence": {"token": 3, "epoch": 2},
+        "epoch": 2,
+        "wbc_version": "wbc:v1",
+        "admitted_child_set_digest": "sha256:" + "b" * 64,
+    }
+    values.update(changes)
+    return EvidenceScope(**values)
+
+
+def _canonical_binding(spec, **changes):
+    fields = {
+        "evidence_scope": _canonical_scope(),
+        "semantic_path": "workflow/step/0",
+        "component_lock": "component:v1",
+        "graph_lock": "graph:v1",
+        "installed_artifact_digest": "artifact:v1",
+        "prompt_asset_digest": "prompt:v1",
+        "tool_asset_digest": "tool:v1",
+        "policy_asset_digest": "policy:v1",
+        "prompt_tool_bindings_digest": "calls:v1",
+        "call_site_policy_digest": "call-policy:v1",
+        "admission_receipt": {"id": "receipt:1", "digest": "receipt:v1"},
+        "product_contract_digest": "contract:v1",
+        "asset_digests": {"source": "source-asset:v1"},
+        "bound_artifacts": ("artifact:output:v1",),
+    }
+    fields.update(changes)
+    return bind(spec, "instance:c2", **fields)
+
+
+def test_canonical_binding_uses_scope_and_round_trips(sample_spec) -> None:
+    binding = _canonical_binding(sample_spec)
+    assert binding.is_canonical
+    assert binding.schema_version == CANONICAL_BINDING_SCHEMA_VERSION
+    assert binding.evidence_scope == _canonical_scope()
+    assert binding.evidence_window is None
+    encoded = binding.to_dict()
+    assert "evidence_scope" in encoded
+    assert "evidence_window" not in encoded
+    assert CompletionBinding.from_dict(encoded) == binding
+
+
+def test_canonical_hash_covers_semantic_and_artifact_locks(sample_spec) -> None:
+    base = _canonical_binding(sample_spec)
+    for field, value in {
+        "semantic_path": "workflow/other",
+        "component_lock": "component:v2",
+        "graph_lock": "graph:v2",
+        "installed_artifact_digest": "artifact:v2",
+        "prompt_asset_digest": "prompt:v2",
+        "tool_asset_digest": "tool:v2",
+        "policy_asset_digest": "policy:v2",
+        "prompt_tool_bindings_digest": "calls:v2",
+        "call_site_policy_digest": "call-policy:v2",
+        "admission_receipt": {"id": "receipt:2"},
+        "product_contract_digest": "contract:v2",
+        "asset_digests": {"source": "source-asset:v2"},
+        "bound_artifacts": ("artifact:output:v2",),
+    }.items():
+        changed = _canonical_binding(sample_spec, **{field: value})
+        assert changed.binding_hash != base.binding_hash, field
+
+
+def test_admission_is_idempotent_and_conflicts_are_explicit(sample_spec) -> None:
+    binding = _canonical_binding(sample_spec)
+    assert admit_binding(binding).disposition is AdmissionDisposition.ADMITTED
+    repeat = admit_binding(CompletionBinding.from_dict(binding.to_dict()), [binding])
+    assert repeat.disposition is AdmissionDisposition.IDEMPOTENT
+    assert repeat.binding == binding
+    conflict = _canonical_binding(sample_spec, semantic_path="workflow/changed")
+    result = admit_binding(conflict, [binding])
+    assert result.disposition is AdmissionDisposition.CONFLICT
+    assert not result.accepted
+
+
+def test_resume_requires_explicit_disposition_for_changed_binding(sample_spec) -> None:
+    pinned = _canonical_binding(sample_spec)
+    changed = _canonical_binding(sample_spec, semantic_path="workflow/changed")
+    blocked = resume_binding(pinned, changed)
+    assert blocked.disposition is ResumeDisposition.REQUIRES_EXPLICIT
+    assert not blocked.accepted
+    migrated = resume_binding(pinned, changed, disposition="migration")
+    assert migrated.disposition is ResumeDisposition.MIGRATION
+    assert migrated.accepted
+    assert resume_binding(pinned, pinned).pinned
+
+
+def test_c1_shape_is_legacy_unknown_without_coordinate_reinterpretation(sample_spec) -> None:
+    legacy = bind(sample_spec, "instance:legacy", "cursor-start", "cursor-end")
+    assert legacy.schema_version == LEGACY_BINDING_SCHEMA_VERSION
+    assert legacy.is_legacy
+    assert legacy.evidence_scope is None
+    assert legacy.evidence_window == ("cursor-start", "cursor-end")
+    decoded = CompletionBinding.from_dict(legacy.to_dict())
+    assert decoded.compatibility_status == "legacy/unknown"
+    assert decoded.evidence_window_record is None
+    assert admit_binding(decoded).disposition is AdmissionDisposition.LEGACY_UNKNOWN
+    explicit = resume_binding(decoded, decoded, disposition="quarantine")
+    assert explicit.disposition is ResumeDisposition.QUARANTINE
+    assert explicit.accepted
+
+
+def test_mixed_coordinate_shapes_and_future_versions_are_rejected(sample_spec) -> None:
+    binding = _canonical_binding(sample_spec)
+    mixed = binding.to_dict()
+    mixed["evidence_window"] = ["old-start", "old-end"]
+    with pytest.raises(AmbiguousBindingError):
+        CompletionBinding.from_dict(mixed)
+    future = binding.to_dict()
+    future["schema_version"] = "arnold.workflow.completion_binding.v99"
+    with pytest.raises(ValueError, match="unsupported"):
+        CompletionBinding.from_dict(future)
+
+
+def test_canonical_aliases_and_one_shot_artifacts_are_bound(sample_spec) -> None:
+    scope = _canonical_scope()
+    binding = bind(
+        sample_spec,
+        "instance:aliases",
+        evidence_window=scope,
+        semantic_lock={"path": "workflow/step/0"},
+        artifact_locks=("artifact-lock:v1",),
+        bound_artifacts=(item for item in ("output:v1",)),
+    )
+    restored = CompletionBinding.from_dict(binding.to_dict())
+    assert restored == binding
+    assert binding.artifact_locks == ["artifact-lock:v1"]
+    assert binding.bound_artifacts == ("output:v1",)
+
+
+def test_required_disposition_alias_and_coordinate_schema_are_explicit(sample_spec) -> None:
+    scope = _canonical_scope()
+    binding = _canonical_binding(sample_spec)
+    conflict = _canonical_binding(sample_spec, semantic_path="workflow/conflict")
+    result = admit_binding(conflict, [binding], disposition="new_attempt_required")
+    assert result.disposition is AdmissionDisposition.NEW_ATTEMPT
+    assert result.accepted
+    with pytest.raises(AmbiguousBindingError):
+        bind(sample_spec, "instance:bad-schema", evidence_scope=scope, schema_version=LEGACY_BINDING_SCHEMA_VERSION)

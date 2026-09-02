@@ -1,0 +1,96 @@
+{
+  "schema": "arnold.native_c2.decoder_matrix.v1",
+  "description": "Internal shadow wire behavior; not a public compatibility promise.",
+  "record_kinds": [
+    "spec",
+    "binding",
+    "verdict",
+    "shadow_acceptance_reference"
+  ],
+  "cases": [
+    {
+      "id": "known-v1-spec",
+      "record_kind": "spec",
+      "writer": "new",
+      "reader": "new",
+      "expected": "decoded"
+    },
+    {
+      "id": "known-v2-binding",
+      "record_kind": "binding",
+      "writer": "new",
+      "reader": "new",
+      "expected": "decoded"
+    },
+    {
+      "id": "known-v1-verdict",
+      "record_kind": "verdict",
+      "writer": "new",
+      "reader": "new",
+      "expected": "decoded"
+    },
+    {
+      "id": "known-v1-acceptance-reference",
+      "record_kind": "shadow_acceptance_reference",
+      "writer": "new",
+      "reader": "new",
+      "expected": "decoded"
+    },
+    {
+      "id": "legacy-ambiguous-binding",
+      "record_kind": "binding",
+      "writer": "old",
+      "reader": "new",
+      "mutation": "legacy_ambiguous",
+      "expected": "legacy/unknown"
+    },
+    {
+      "id": "corrupt-envelope",
+      "record_kind": "verdict",
+      "writer": "old",
+      "reader": "new",
+      "mutation": "corrupt_json",
+      "expected": "corrupt"
+    },
+    {
+      "id": "unknown-future-spec",
+      "record_kind": "spec",
+      "writer": "future",
+      "reader": "new",
+      "mutation": "future_version",
+      "expected": "unknown-future"
+    },
+    {
+      "id": "unknown-future-binding",
+      "record_kind": "binding",
+      "writer": "future",
+      "reader": "new",
+      "mutation": "future_version",
+      "expected": "unknown-future"
+    },
+    {
+      "id": "unknown-future-verdict",
+      "record_kind": "verdict",
+      "writer": "future",
+      "reader": "new",
+      "mutation": "future_version",
+      "expected": "unknown-future"
+    },
+    {
+      "id": "unknown-future-acceptance-reference",
+      "record_kind": "shadow_acceptance_reference",
+      "writer": "future",
+      "reader": "new",
+      "mutation": "future_version",
+      "expected": "unknown-future"
+    },
+    {
+      "id": "changed-binding-resume",
+      "record_kind": "shadow_acceptance_reference",
+      "writer": "new",
+      "reader": "new",
+      "mutation": "changed_binding",
+      "expected": "changed-binding"
+    }
+  ]
+}
