@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.chain.restart_current_attempt import (
     LEGACY_ATTESTATION_EVENT_KIND,
     RESTART_ERROR,
     RESTART_SCHEMA,
+    _resolve_legacy_binding,
     promote_legacy_restart_receipt,
     restart_current_attempt,
 )
@@ -693,6 +694,44 @@ def test_legacy_restart_receipt_accepts_real_entries_manifest(tmp_path: Path) ->
     )
     assert result["outcome"] == "committed"
     assert fixture["plan_path"].read_bytes() == before[fixture["plan_path"]]
+
+
+def test_legacy_projection_uses_retired_plan_binding_when_live_metadata_is_absent(
+    tmp_path: Path,
+) -> None:
+    fixture = _legacy_archive_fixture(tmp_path)
+    chain = _load_json(fixture["state_path"])
+    historical = chain["metadata"].pop("project_source_binding")
+    _write_json(fixture["state_path"], chain)
+    plan = _load_json(fixture["plan_path"])
+
+    resolved = _resolve_legacy_binding(
+        chain["metadata"],
+        plan,
+        expected_binding_sha256=_binding_digest(historical),
+    )
+
+    assert resolved == historical
+    assert "project_source_binding" not in _load_json(fixture["state_path"])["metadata"]
+
+
+def test_legacy_projection_rejects_contradictory_modern_binding(
+    tmp_path: Path,
+) -> None:
+    fixture = _legacy_archive_fixture(tmp_path)
+    chain = _load_json(fixture["state_path"])
+    plan = _load_json(fixture["plan_path"])
+    contradictory = dict(chain["metadata"]["project_source_binding"])
+    contradictory["current"] = dict(contradictory["current"])
+    contradictory["current"]["head"] = "f" * 40
+    chain["metadata"]["project_source_binding"] = contradictory
+
+    with pytest.raises(chain_control.ChainControlCasConflict, match="project-source binding changed"):
+        _resolve_legacy_binding(
+            chain["metadata"],
+            plan,
+            expected_binding_sha256=_binding_digest(fixture["binding"]),
+        )
 
 
 @pytest.mark.parametrize(

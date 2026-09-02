@@ -955,9 +955,11 @@ def _assert_legacy_projection(
     retirement = (plan.get("meta") or {}).get("retirement") if isinstance(plan.get("meta"), Mapping) else None
     if not (isinstance(retirement, Mapping) and retirement.get("kind") == "retired_for_restart" and retirement.get("operation_id") == operation_id and retirement.get("cursor") == expected_cursor and retirement.get("milestone") == expected_current_milestone):
         raise _refuse("retired plan metadata does not match the legacy operation")
-    binding = metadata.get("project_source_binding")
-    if not isinstance(binding, Mapping) or _binding_digest(binding) != expected_binding_sha256:
-        raise _conflict("project-source binding changed since the legacy restart guards were computed")
+    binding = _resolve_legacy_binding(
+        metadata,
+        plan,
+        expected_binding_sha256=expected_binding_sha256,
+    )
     current = binding.get("current")
     if not isinstance(current, Mapping) or str(current.get("head") or "").lower() != expected_source_head.lower():
         raise _conflict("project-source head does not match the legacy restart guard")
@@ -971,6 +973,35 @@ def _assert_legacy_projection(
     if not (0 <= expected_cursor < len(spec.milestones)) or spec.milestones[expected_cursor].label != expected_current_milestone:
         raise _refuse("legacy restart milestone does not match the frozen spec")
     return chain_raw, dict(chain), plan_raw, dict(plan), marker_raw, dict(marker), dict(binding)
+
+
+def _resolve_legacy_binding(
+    metadata: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    *,
+    expected_binding_sha256: str,
+) -> dict[str, Any]:
+    """Resolve the source binding for a legacy restart projection.
+
+    A small set of old chain projections persisted the source binding only in
+    the retired plan.  That plan is already covered by the exact
+    ``expected_plan_state_sha256`` guard, so using its binding here preserves
+    the historical proof without treating a missing live field as a match.
+    A present live binding always remains authoritative and must match the
+    supplied digest; a contradictory modern value is never replaced by the
+    historical copy.
+    """
+    live = metadata.get("project_source_binding")
+    if live is not None:
+        if not isinstance(live, Mapping) or _binding_digest(live) != expected_binding_sha256:
+            raise _conflict("project-source binding changed since the legacy restart guards were computed")
+        return dict(live)
+
+    plan_meta = plan.get("meta")
+    historical = plan_meta.get("project_source_binding") if isinstance(plan_meta, Mapping) else None
+    if not isinstance(historical, Mapping) or _binding_digest(historical) != expected_binding_sha256:
+        raise _conflict("historical project-source binding is unavailable or changed")
+    return dict(historical)
 
 
 def _assert_legacy_effect(
@@ -1285,6 +1316,11 @@ def promote_legacy_restart_receipt(
         next_restart["legacy_attestation"] = attestation
         next_restart["restart_guard"] = modern_guard
         next_metadata["current_attempt_restart"] = next_restart
+        # A legacy projection may have omitted the live binding even though
+        # the retired plan carried the guarded historical value.  Re-materialize
+        # that exact value at the attestation CAS boundary so post-attestation
+        # consumers retain the normal modern binding checks.
+        next_metadata["project_source_binding"] = dict(binding)
         next_chain["metadata"] = next_metadata
         next_chain["current_plan_name"] = None
         next_chain["metadata"]["_nbf08_revision"] = next_revision
