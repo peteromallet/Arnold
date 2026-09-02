@@ -625,6 +625,7 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
         "arnold-supervise",
         "arnold-heartbeat",
         "arnold-chain",
+        "arnold-launch-boundary",
         "arnold-watchdog",
         "arnold-progress-auditor",
         "arnold-supervisor-runtime",

@@ -108,6 +108,20 @@ if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR" \
   exit 24
 fi
 
+# Reassert the shared Git/runtime/fixer boundary after the credentials-only
+# hot env has been loaded.  This is the same materializer used by the host
+# launcher, watchdog relaunch, and durable chain-drive command.
+ARNOLD_LAUNCH_BOUNDARY="/usr/local/bin/arnold-launch-boundary"
+if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then
+  ARNOLD_LAUNCH_BOUNDARY="$ENGINE_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-launch-boundary"
+fi
+if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then
+  echo "[arnold-chain] launch_boundary_unavailable" >&2
+  exit 78
+fi
+. "$ARNOLD_LAUNCH_BOUNDARY"
+arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"
+
 # ── pre-flight acceptance gate ───────────────────────────────────────
 # In atomic/enforce mode a completed chain with successors requiring
 # acceptance must carry a validated acceptance receipt for its final
@@ -220,6 +234,10 @@ _memory_headroom() {
 }
 
 _run_chain_start() {
+    # Reassert immediately before dispatch as well as at wrapper admission;
+    # this closes the gap where a sourced hot env or supervisor hook changes
+    # launch-affecting variables between validation and the child process.
+    arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"
     # A babysitter-owned chain drive must transfer ownership before the
     # supervisor returns.  The producer records AgentBox's typed process
     # resource first, then emits the occurrence-bound receipt consumed by the
@@ -249,9 +267,9 @@ _run_chain_start() {
         return 0
     fi
     if [ "$ONE_FLAG" = "--one" ]; then
-        bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
+        bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$0\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
     else
-        bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$2\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
+        bash -lc "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; cd \"\$0\" && env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH=\"\$0\" MEGAPLAN_TRUSTED_CONTAINER=1 \"\$3\" -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR" "$GEN_INTERPRETER"
     fi
 }
 

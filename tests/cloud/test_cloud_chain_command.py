@@ -321,14 +321,75 @@ def test_chain_start_command_installs_session_scoped_git_boundary() -> None:
         engine_dir="/workspace/runtime-candidates/demo",
         repair_session="native-build-forward-c2-bb000694-20260903-r4",
     )
-    assert 'ARNOLD_CHAIN_GIT_HELPER="${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE:-/workspace/.creds/git-credentials}"' in command
-    assert "on_box_git_auth_unavailable" in command
-    assert "export HOME=\"$ARNOLD_GIT_HOME\"" in command
-    assert "GIT_CONFIG_NOSYSTEM=1" in command
-    assert "GIT_CONFIG_GLOBAL=/dev/null" in command
-    assert "GIT_CONFIG_VALUE_0=\"store --file=$ARNOLD_CHAIN_GIT_HELPER\"" in command
-    assert "GIT_TERMINAL_PROMPT=0" in command
-    assert "/workspace/.megaplan/cloud-sessions/native-build-forward-c2-bb000694-20260903-r4/git-home" in command
+    assert "arnold-launch-boundary" in command
+    assert "arnold_materialize_launch_boundary" in command
+    assert command.index(". \"$ARNOLD_LAUNCH_BOUNDARY\"") < command.index(
+        "arnold_materialize_launch_boundary"
+    )
+    assert "on_box_git_auth_unavailable" not in command
+    assert "native-build-forward-c2-bb000694-20260903-r4" in command
+
+
+def test_shared_launch_boundary_reasserts_hostile_hot_env() -> None:
+    boundary = Path(__file__).resolve().parents[2] / (
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-launch-boundary"
+    )
+    script = f"""
+set -euo pipefail
+source {shlex.quote(str(boundary))}
+export ARNOLD_CHAIN_GIT_HELPER=/hostile/helper
+export HOME=/hostile/home
+export GIT_CONFIG_GLOBAL=/hostile/config
+export PYTHONPATH=/hostile/python
+export ARNOLD_BABYSITTER_MODEL=omp:deepseek/deepseek-v4-flash
+export ARNOLD_BABYSITTER_ROUTING=codex
+arnold_materialize_launch_boundary native-build-forward-c2-bb000694-20260903-r4 /tmp /tmp
+printf '%s\\n' "$ARNOLD_CHAIN_GIT_HELPER" "$HOME" "$GIT_CONFIG_GLOBAL" "$PYTHONPATH" "$ARNOLD_BABYSITTER_MODEL" "$ARNOLD_BABYSITTER_ROUTING"
+"""
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.splitlines() == [
+        "/workspace/.creds/git-credentials",
+        "/hostile/home",
+        "/hostile/config",
+        "/tmp",  # runtime boundary pins imports
+        "omp:openrouter/meta/muse-spark-1.3-contributor:high",
+        "omp",
+    ]
+    assert "secret" not in result.stdout + result.stderr
+
+
+def test_all_chain_entrypoints_use_shared_post_hot_env_boundary() -> None:
+    from arnold_pipelines.megaplan.cloud import chain_drive
+
+    cli_command = _chain_start_command(
+        "/workspace/project/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/runtime-candidates/demo",
+        repair_session="native-build-forward-c2-bb000694-20260903-r4",
+    )
+    drive_command = chain_drive._command(
+        session="native-build-forward-c2-bb000694-20260903-r4",
+        engine_dir=Path("/workspace/runtime-candidates/demo"),
+        interpreter=Path("/workspace/runtime-candidates/demo/.venv/bin/python"),
+        spec=Path("/workspace/project/chain.yaml"),
+        project_dir=Path("/workspace/project"),
+        canonical_log=Path("/workspace/project/chain.log"),
+        one=False,
+    )
+    wrappers = Path(__file__).resolve().parents[2] / "arnold_pipelines/megaplan/cloud/wrappers"
+    chain_source = (wrappers / "arnold-chain").read_text(encoding="utf-8")
+    watchdog_source = (wrappers / "arnold-watchdog").read_text(encoding="utf-8")
+    assert "arnold_materialize_launch_boundary" in cli_command
+    assert "arnold_materialize_launch_boundary" in drive_command
+    assert "arnold_materialize_launch_boundary" in chain_source
+    assert "arnold_materialize_launch_boundary" in watchdog_source
+    for source in (cli_command, drive_command, chain_source, watchdog_source):
+        if "cloud-hot-env" in source:
+            assert source.index("cloud-hot-env") < source.index(
+                "arnold_materialize_launch_boundary"
+            )
 
 
 def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:

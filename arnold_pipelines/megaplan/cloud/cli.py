@@ -2693,6 +2693,7 @@ _CLOUD_HOT_ENV_PATH = "/workspace/.cloud-hot-env"
 _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
+_LAUNCH_BOUNDARY_PATH = "/usr/local/bin/arnold-launch-boundary"
 
 
 @dataclass(frozen=True)
@@ -3830,7 +3831,6 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
-    session_home = f"/workspace/.megaplan/cloud-sessions/{repair_session or CHAIN_SESSION_NAME}/git-home"
     # The manifest activation runs immediately before this command and exports
     # the per-epic runtime manifest as ARNOLD_RUNTIME_MANIFEST.  Capture that
     # path as readonly *before* an ordinary launch loads the mutable box-wide
@@ -3842,21 +3842,6 @@ def _chain_start_command(
     # engine dir (PYTHONPATH) derives from the pinned manifest's
     # ``epic.runtime_root``; nothing reads SRC selector envs (G4).
     prefix = (
-        # Fresh AgentBox chains inherit one hermetic Git environment.  The
-        # local developer path has no /workspace/.creds directory and keeps
-        # its normal Git configuration; an AgentBox path fails closed when its
-        # mounted helper is missing or unreadable.  Only the helper path is
-        # exported, never credential contents.
-        'ARNOLD_CHAIN_GIT_HELPER="${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE:-/workspace/.creds/git-credentials}"; '
-        'if [ -d /workspace/.creds ] || [ -n "${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE+x}" ]; then '
-        'if [ ! -r "$ARNOLD_CHAIN_GIT_HELPER" ]; then '
-        'echo "[megaplan-launch] on_box_git_auth_unavailable: credential helper is absent or unreadable"; exit 78; fi; '
-        f'mkdir -p {shlex.quote(session_home)}; '
-        'export ARNOLD_GIT_HOME=' + shlex.quote(session_home) + '; '
-        'export HOME="$ARNOLD_GIT_HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null '
-        'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper '
-        'GIT_CONFIG_VALUE_0="store --file=$ARNOLD_CHAIN_GIT_HELPER" GIT_TERMINAL_PROMPT=0; '
-        'fi; '
         'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
         'readonly PINNED_RUNTIME_MANIFEST; '
     )
@@ -3927,6 +3912,9 @@ def _chain_start_command(
             'exit 24; '
             'fi; '
         )
+        prefix += _launch_boundary_prefix(
+            session=repair_session or CHAIN_SESSION_NAME,
+        )
         prefix += (
             'cd "$ENGINE_DIR" && env -u PYTHONHOME PYTHONSAFEPATH=1 '
             'PYTHONPATH="$ENGINE_DIR" '
@@ -3966,6 +3954,28 @@ def _managed_run_env_prefix(
         f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
         f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
         f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}; "
+    )
+
+
+def _launch_boundary_prefix(*, session: str, engine_var: str = "$ENGINE_DIR") -> str:
+    """Source and apply the shared post-hot-env launch boundary."""
+
+    # The deployed image installs this beside the other wrappers.  The
+    # runtime checkout fallback keeps local/runtime-first launches using the
+    # exact same materializer without depending on a host-global install.
+    session_q = shlex.quote(session)
+    return (
+        f'ARNOLD_LAUNCH_BOUNDARY={shlex.quote(_LAUNCH_BOUNDARY_PATH)}; '
+        'if [ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]; then '
+        f'ARNOLD_LAUNCH_BOUNDARY={engine_var}/arnold_pipelines/megaplan/cloud/wrappers/arnold-launch-boundary; '
+        'fi; '
+        'if [ -r "$ARNOLD_LAUNCH_BOUNDARY" ]; then '
+        '. "$ARNOLD_LAUNCH_BOUNDARY"; '
+        f'arnold_materialize_launch_boundary {session_q} {engine_var} {engine_var}; '
+        'elif [ -d /workspace/.creds ] || '
+        f'[ {session_q} = native-build-forward-c2-bb000694-20260903-r4 ]; then '
+        'echo "[megaplan-launch] launch_boundary_unavailable"; exit 78; '
+        'else export PYTHONPATH=' + engine_var + '; cd ' + engine_var + '; fi; '
     )
 
 

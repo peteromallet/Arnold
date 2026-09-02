@@ -68,6 +68,7 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
 
 def _command(
     *,
+    session: str,
     engine_dir: Path,
     interpreter: Path,
     spec: Path,
@@ -75,6 +76,19 @@ def _command(
     canonical_log: Path,
     one: bool,
 ) -> str:
+    boundary_lib = '/usr/local/bin/arnold-launch-boundary'
+    boundary = (
+        'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; '
+        '. /workspace/.cloud-hot-env; set +a; fi; '
+        f'ARNOLD_LAUNCH_BOUNDARY={shlex.quote(boundary_lib)}; '
+        'if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then '
+        f'ARNOLD_LAUNCH_BOUNDARY={shlex.quote(str(engine_dir / "arnold_pipelines/megaplan/cloud/wrappers/arnold-launch-boundary"))}; '
+        'fi; if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then '
+        'echo "[megaplan-chain-drive] launch_boundary_unavailable" >&2; exit 78; fi; '
+        '. "$ARNOLD_LAUNCH_BOUNDARY"; '
+        f'arnold_materialize_launch_boundary {shlex.quote(session)} '
+        f'{shlex.quote(str(engine_dir))} {shlex.quote(str(engine_dir))}; '
+    )
     argv: list[str] = [
         "env",
         "-u",
@@ -95,7 +109,7 @@ def _command(
     ]
     if one:
         argv.append("--one")
-    return shlex.join(argv) + f" >> {shlex.quote(str(canonical_log))} 2>&1"
+    return boundary + shlex.join(argv) + f" >> {shlex.quote(str(canonical_log))} 2>&1"
 
 
 def _existing_process(config: Any, operation_id: str) -> Any | None:
@@ -182,6 +196,7 @@ def launch_chain_drive(
     if not all((session, occurrence, plan)):
         raise ChainDriveError("chain-drive custody requires session, occurrence, and plan")
     command = _command(
+        session=session,
         engine_dir=engine_dir,
         interpreter=interpreter,
         spec=spec,

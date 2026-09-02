@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Shared post-hot-env launch boundary.
+#
+# Callers must source the credentials-only hot env first, then invoke this
+# function.  Every value which can affect Git, imports, or the closed fixer is
+# reasserted here; the hot env is never authoritative for those values.
+
+arnold_materialize_launch_boundary() {
+  local session="${1:-chain}"
+  local engine_dir="${2:-${ENGINE_DIR:-}}"
+  local working_dir="${3:-${engine_dir:-$PWD}}"
+  local helper="${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE:-/workspace/.creds/git-credentials}"
+  local session_home="/workspace/.megaplan/cloud-sessions/${session}/git-home"
+
+  # The box credential mount is an authority signal.  If it is present, a
+  # missing/unreadable helper is a typed fail-closed launch error.  Only its
+  # pathname is exported; credential contents never enter argv or logs.
+  export ARNOLD_CHAIN_GIT_HELPER="$helper"
+  if [[ -d /workspace/.creds || -n "${ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE+x}" ]]; then
+    if [[ ! -r "$helper" ]]; then
+      echo "[arnold-launch] on_box_git_auth_unavailable: credential helper is absent or unreadable" >&2
+      return 78
+    fi
+    mkdir -p "$session_home"
+    export ARNOLD_GIT_HOME="$session_home"
+    export HOME="$session_home"
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper
+    export GIT_CONFIG_VALUE_0="store --file=$helper"
+    export GIT_TERMINAL_PROMPT=0
+  fi
+
+  if [[ -n "$engine_dir" ]]; then
+    export PYTHONPATH="$engine_dir"
+    cd "$working_dir"
+  fi
+
+  # r4 is a closed continuation: hostile hot-env model/routing values cannot
+  # redirect either product recovery or the resident fixer.
+  case "$session" in
+    native-build-forward-c2-bb000694-20260903-r4*)
+      export ARNOLD_BABYSITTER_ROUTING=omp
+      export ARNOLD_BABYSITTER_MODEL='omp:openrouter/meta/muse-spark-1.3-contributor:high'
+      export ARNOLD_BABYSITTER_OMP_MODEL='omp:openrouter/meta/muse-spark-1.3-contributor'
+      unset ARNOLD_BABYSITTER_CODEX_MODEL ARNOLD_BABYSITTER_CODEX_INVESTIGATOR_MODEL
+      ;;
+  esac
+}
