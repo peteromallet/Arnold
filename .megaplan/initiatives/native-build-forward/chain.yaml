@@ -172,3 +172,9 @@ driver:
   auto_approve: true
   max_iterations: 90
   poll_sleep: 8.0
+  execution_binding: required
+  initiative_path: .megaplan/initiatives/native-build-forward
+  intended_initiative_revision: UNSET_REQUIRED_BEFORE_LAUNCH
+  require_editable_runtime_match: true
+  execution_binding_assets:
+    - arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml
