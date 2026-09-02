@@ -4319,14 +4319,15 @@ def promote_legacy_runtime_binding(
             ):
                 return False
             details = payload.get("details")
+            structured_expected = structured_actual = ""
             if isinstance(details, Mapping) and details:
-                expected = str(details.get("expected_sha256") or "")
-                actual = str(details.get("actual_sha256") or "")
+                structured_expected = str(details.get("expected_sha256") or "")
+                structured_actual = str(details.get("actual_sha256") or "")
                 if (
                     details.get("guard") != "manifest_selector"
-                    or not _FULL_SHA256.fullmatch(expected)
-                    or not _FULL_SHA256.fullmatch(actual)
-                    or expected == actual
+                    or not _FULL_SHA256.fullmatch(structured_expected)
+                    or not _FULL_SHA256.fullmatch(structured_actual)
+                    or structured_expected == structured_actual
                 ):
                     return False
             context = payload.get("legacy_runtime_promotion.v1")
@@ -4334,6 +4335,11 @@ def promote_legacy_runtime_binding(
                 return False
             held_selector = str(context.get("expected_manifest_sha256") or "")
             current_selector = str(current_context.get("expected_manifest_sha256") or "")
+            if structured_expected and (
+                structured_expected != held_selector
+                or structured_actual != current_selector
+            ):
+                return False
             # The live seq-781 hold predates structured guard details.  Its
             # typed hold/code plus the frozen expected selector and the
             # current CAS selector provide the same non-prose evidence.

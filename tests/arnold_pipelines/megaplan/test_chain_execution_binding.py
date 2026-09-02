@@ -4924,6 +4924,24 @@ def test_execution_binding_promote_accepts_exact_two_generation_recovery_chain(
             released_hold_receipt=second_receipt,
         )
     assert _state_path_for(spec_path).read_bytes() == before_prose_rejection
+    structured_replay = json.loads(json.dumps(real_journal.replay_strict()))
+    corrected_selector = corrected_kwargs["expected_manifest_sha256"]
+    for event in structured_replay["accepted"]:
+        if event.get("event_hash") == held_hash:
+            payload = event["payload"]
+            payload["details"] = {
+                "guard": "manifest_selector",
+                "expected_sha256": "0" * 64,
+                "actual_sha256": corrected_selector,
+            }
+    tampered_replay = structured_replay
+    before_structured_rejection = _state_path_for(spec_path).read_bytes()
+    with pytest.raises(CliError, match="selector-specific released-hold"):
+        promote_legacy_runtime_binding(
+            spec_path, tmp_path, **corrected_kwargs,
+            released_hold_receipt=second_receipt,
+        )
+    assert _state_path_for(spec_path).read_bytes() == before_structured_rejection
     monkeypatch.setattr(chain_control_module, "journal_for", real_journal_for)
 
     tampered = json.loads(second_receipt.read_text(encoding="utf-8"))
