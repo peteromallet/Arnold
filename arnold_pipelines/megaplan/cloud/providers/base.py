@@ -207,24 +207,28 @@ def _local_provider(spec: CloudSpec) -> Provider:
 def _ssh_provider(spec: CloudSpec) -> Provider:
     from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
     from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
-        SshEffectAdapterGateError,
+        current_ssh_gate_check,
         open_ssh_effect_adapter,
     )
 
-    # Production construction installs the effect adapter so every SSH
-    # mutation is gated.  When the adapter wiring is unavailable (M10: SSH is
-    # action-off and no ledger-backed gate is installed), construction fails
-    # closed: an SshProvider without an adapter must never be built, because
-    # production-reachable transport paths would otherwise run ungated.
-    try:
-        adapter = open_ssh_effect_adapter()
-    except SshEffectAdapterGateError as exc:
-        raise CliError(
-            "ssh_effect_adapter_unavailable",
-            "SSH provider construction refused: no ssh_effect_adapter "
-            "installed; SSH mutations are action-off and must never run "
-            "ungated",
-        ) from exc
+    # Production construction installs the canonical effect protocol and the
+    # current action gate before the provider is reachable from preflight,
+    # deploy, or chain.  The in-memory store is deliberate: the M10 SSH gate
+    # is action-off, so a provider factory must not create a durable ledger (or
+    # any other state) merely by inspecting a cloud spec.  Should policy ever
+    # authorize a mutation, the adapter still requires the normal durable
+    # effect protocol path and never falls back to raw transport.
+    from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
+    from arnold.workflow.effect_protocol import EffectProtocol
+    from arnold.workflow.ledger_outbox import SqliteLedgerOutbox
+
+    store = SqliteAttemptLedgerStore(":memory:")
+    protocol = EffectProtocol(store, SqliteLedgerOutbox(store))
+    adapter = open_ssh_effect_adapter(
+        protocol,
+        action_gate_check=current_ssh_gate_check(),
+        production_enabled=True,
+    )
     return SshProvider(spec, ssh_effect_adapter=adapter)
 
 

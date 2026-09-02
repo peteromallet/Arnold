@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -387,19 +388,63 @@ class TestSshProviderGatedDirectTransport:
         assert provider.down() == 0
         assert captured == ["docker stop megaplan-cloud-agent"]
 
-    # ── production construction: fail closed when the adapter is unavailable ──
+    # ── production construction: install the canonical gated adapter ──
 
-    def test_production_factory_fails_closed_without_adapter(self) -> None:
+    def test_production_factory_installs_canonical_adapter_and_gate(self) -> None:
+        from arnold_pipelines.megaplan.cloud.providers.base import get_provider
+        from arnold_pipelines.megaplan.cloud.providers.ssh import SshProvider
+        from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+            SshEffectAdapter,
+            SshEffectShard,
+            SshTarget,
+        )
+
+        # The real cloud provider factory must be usable by preflight, while
+        # retaining the production action-off gate.  It must never construct
+        # the provider with the raw-transport/None adapter path.
+        provider = get_provider("ssh", _minimal_cloud_spec())
+        assert isinstance(provider, SshProvider)
+        assert isinstance(provider._ssh_effect_adapter, SshEffectAdapter)
+        assert provider._ssh_effect_adapter._production_enabled is True
+        assert provider._ssh_effect_adapter._protocol is not None
+        target = SshTarget(
+            shard=SshEffectShard.DEPLOY,
+            host="testhost",
+            container="megaplan-cloud-agent",
+        )
+        assert provider._ssh_effect_adapter._gate(target) is GateResult.BLOCKED_MISSING_GRANT
+
+    def test_production_factory_never_allows_raw_ssh_dispatch(self) -> None:
         from arnold_pipelines.megaplan.cloud.providers.base import get_provider
 
-        # Production construction must refuse to build an SshProvider without
-        # an effect adapter: an unavailable adapter is a construction error,
-        # never a None-adapter fallback that could run ungated transport.
+        provider = get_provider("ssh", _minimal_cloud_spec())
         with pytest.raises(CliError) as caught:
-            get_provider("ssh", _minimal_cloud_spec())
-        assert caught.value.code == "ssh_effect_adapter_unavailable"
-        assert "no ssh_effect_adapter installed" in caught.value.message
-        assert "construction refused" in caught.value.message
+            provider._gate_action_off_transport(
+                "down",
+                lambda: pytest.fail("raw SSH dispatch bypassed gate"),
+            )
+        assert caught.value.code == "provider_failed"
+        assert "action-off" in caught.value.message
+
+    def test_continuation_cloud_yaml_preflight_uses_gated_factory(self) -> None:
+        """The real SSH cloud.yaml follows the preflight provider path."""
+        from arnold_pipelines.megaplan.cloud.cli import _provider_for_action
+        from arnold_pipelines.megaplan.cloud.spec import load_spec
+        from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+            SshEffectAdapter,
+        )
+
+        cloud_yaml = (
+            Path(__file__).parents[2]
+            / ".megaplan/initiatives/native-build-forward-continuation-20260902/cloud.yaml"
+        )
+        spec = load_spec(cloud_yaml)
+        provider = _provider_for_action(
+            spec,
+            SimpleNamespace(on_box=False, cloud_action=None, session=None),
+        )
+        assert isinstance(provider._ssh_effect_adapter, SshEffectAdapter)
+        assert provider._ssh_effect_adapter._production_enabled is True
 
     # ── observation paths unaffected ──
 
