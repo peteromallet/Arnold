@@ -11536,6 +11536,30 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Independent interpreter receipt paired with --runtime-identity",
     )
 
+    restart_current_attempt_parser = chain_sub.add_parser(
+        "restart-current-attempt",
+        help=(
+            "Retire the paused unfinished current plan so chain start can "
+            "rematerialize the same milestone"
+        ),
+    )
+    restart_current_attempt_parser.add_argument("--spec", required=True)
+    restart_current_attempt_parser.add_argument("--project-dir", required=True)
+    restart_current_attempt_parser.add_argument("--marker", required=True)
+    restart_current_attempt_parser.add_argument("--expected-session-id", required=True)
+    restart_current_attempt_parser.add_argument("--expected-cursor", required=True, type=int)
+    restart_current_attempt_parser.add_argument("--expected-current-milestone", required=True)
+    restart_current_attempt_parser.add_argument("--expected-current-plan", required=True)
+    restart_current_attempt_parser.add_argument("--expected-spec-sha256", required=True)
+    restart_current_attempt_parser.add_argument("--expected-chain-state-sha256", required=True)
+    restart_current_attempt_parser.add_argument("--expected-plan-state-sha256", required=True)
+    restart_current_attempt_parser.add_argument("--expected-state-revision", required=True, type=int)
+    restart_current_attempt_parser.add_argument("--expected-marker-sha256", required=True)
+    restart_current_attempt_parser.add_argument("--expected-binding-sha256", required=True)
+    restart_current_attempt_parser.add_argument("--expected-source-head", required=True)
+    restart_current_attempt_parser.add_argument("--reason", required=True)
+    restart_current_attempt_parser.add_argument("--actor", default="operator")
+
     seed_rematerialize_parser = chain_sub.add_parser(
         "seed-rematerialize",
         help=(
@@ -12494,6 +12518,7 @@ def run_chain_cli(
                     project_root,
                     expected_current_milestone=args.expected_current_milestone,
                     expected_current_plan=args.expected_current_plan,
+
                     expected_branch=args.expected_branch,
                     reason=args.reason,
                     actor=args.actor,
@@ -12510,6 +12535,46 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "execution-binding-migrate",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+    if action == "restart-current-attempt":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.restart_current_attempt import (
+                restart_current_attempt,
+            )
+
+            result = restart_current_attempt(
+                spec_path,
+                project_root,
+                marker_path=Path(args.marker).expanduser().resolve(),
+                expected_session_id=args.expected_session_id,
+                expected_cursor=args.expected_cursor,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                expected_state_revision=args.expected_state_revision,
+                expected_marker_sha256=args.expected_marker_sha256,
+                expected_binding_sha256=args.expected_binding_sha256,
+                expected_source_head=args.expected_source_head,
+                reason=args.reason,
+                actor=args.actor,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "restart-current-attempt",
                     **result,
                 },
                 indent=2,

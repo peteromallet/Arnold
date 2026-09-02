@@ -742,12 +742,40 @@ def target_rebind(
             chain,
             expected_label=expected_current_milestone,
         )
-        if chain.get("current_plan_name") != expected_current_plan:
+        restart_boundary = not bool(chain.get("current_plan_name"))
+        if restart_boundary:
+            metadata = chain.get("metadata")
+            restart = metadata.get("current_attempt_restart") if isinstance(metadata, Mapping) else None
+            if not (
+                isinstance(restart, Mapping)
+                and restart.get("schema") == "arnold.megaplan.current-attempt-restart.v1"
+                and restart.get("retired_plan") == expected_current_plan
+                and restart.get("cursor") == milestone_index
+                and restart.get("milestone") == expected_current_milestone
+            ):
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "target rebind without a current plan requires a matching "
+                    "current-attempt restart boundary",
+                )
+            chain_pause = metadata.get(AUTHORITY_KEY) if isinstance(metadata, Mapping) else None
+            if not (
+                isinstance(chain_pause, Mapping)
+                and chain_pause.get("active") is True
+                and chain_pause.get("schema_version") == AUTHORITY_SCHEMA
+                and chain.get("last_state") == "paused"
+            ):
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "post-restart target rebind requires an active durable chain pause",
+                )
+        elif chain.get("current_plan_name") != expected_current_plan:
             raise CliError(PROJECT_SOURCE_REBIND_ERROR, "current plan does not match the guard")
         if plan.get("name") not in {None, expected_current_plan}:
             raise CliError(PROJECT_SOURCE_REBIND_ERROR, "plan state name does not match the guard")
-        _assert_pause(chain, plan, expected_plan=expected_current_plan)
-        _assert_pre_execute(plan_dir, plan)
+        if not restart_boundary:
+            _assert_pause(chain, plan, expected_plan=expected_current_plan)
+            _assert_pre_execute(plan_dir, plan)
         _assert_clean_worktree(project_root)
 
         current_branch = _current_branch(project_root)
@@ -785,7 +813,6 @@ def target_rebind(
                 f"advertised target {to_ref} is {to_advertised}, expected {to_head}",
             )
         _fetch_advertised_ref(project_root, to_ref, to_head)
-
         existing_chain_binding = (
             chain.get("metadata", {}).get("project_source_binding")
             if isinstance(chain.get("metadata"), Mapping)
@@ -794,7 +821,7 @@ def target_rebind(
         existing_plan_binding = (
             meta.get("project_source_binding") if isinstance(meta, Mapping) else None
         )
-        if existing_chain_binding != existing_plan_binding:
+        if not restart_boundary and existing_chain_binding != existing_plan_binding:
             raise CliError(
                 PROJECT_SOURCE_REBIND_ERROR,
                 "chain and plan project-source bindings diverged",
@@ -939,10 +966,11 @@ def target_rebind(
             )
             if failure_injector is not None:
                 failure_injector("after_git_switch")
-            invalidated, moves = _invalidate_gate_artifacts(
-                plan_dir,
-                event_id_hint=preview_event["content_sha256"][:16],
-            )
+            if not restart_boundary:
+                invalidated, moves = _invalidate_gate_artifacts(
+                    plan_dir,
+                    event_id_hint=preview_event["content_sha256"][:16],
+                )
             event = _event(
                 direction=direction,
                 actor=actor,
@@ -965,21 +993,22 @@ def target_rebind(
                 current=target,
                 original=original,
             )
-            _update_plan(
-                plan,
-                binding=binding,
-                target_head=to_head,
-                event_sha256=event["content_sha256"],
-            )
+            if not restart_boundary:
+                _update_plan(
+                    plan,
+                    binding=binding,
+                    target_head=to_head,
+                    event_sha256=event["content_sha256"],
+                )
+                _atomic_write(plan_path, _json_bytes(plan))
+                if failure_injector is not None:
+                    failure_injector("after_plan_write")
             _update_chain(
                 chain,
                 binding=binding,
                 target_head=to_head,
                 event_sha256=event["content_sha256"],
             )
-            _atomic_write(plan_path, _json_bytes(plan))
-            if failure_injector is not None:
-                failure_injector("after_plan_write")
             _atomic_write(state_path, _json_bytes(chain))
             if failure_injector is not None:
                 failure_injector("after_chain_write")
@@ -990,10 +1019,11 @@ def target_rebind(
                 )
         except BaseException:
             rollback_errors: list[str] = []
-            try:
-                _atomic_write(plan_path, plan_raw)
-            except Exception as exc:  # pragma: no cover - catastrophic filesystem failure
-                rollback_errors.append(f"plan state restore failed: {exc}")
+            if not restart_boundary:
+                try:
+                    _atomic_write(plan_path, plan_raw)
+                except Exception as exc:  # pragma: no cover - catastrophic filesystem failure
+                    rollback_errors.append(f"plan state restore failed: {exc}")
             try:
                 _atomic_write(state_path, chain_raw)
             except Exception as exc:  # pragma: no cover - catastrophic filesystem failure
