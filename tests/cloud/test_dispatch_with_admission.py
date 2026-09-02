@@ -82,6 +82,34 @@ def test_gate_refusal_prevents_final_launch(tmp_path: Path) -> None:
     assert launches == []
 
 
+def test_admission_preflight_suppresses_before_controlled_entry(tmp_path: Path) -> None:
+    launches: list[int] = []
+
+    def preflight(receipt: WorkerAdmissionReceipt):
+        return {
+            "suppress": True,
+            "evidence_kind": "controlled_adapter",
+            "physical_operation_evidence": {
+                "schema": "test-no-launch.v1",
+                "reservation_event_id": receipt.reservation_event_id,
+                "admission_receipt_id": receipt.admission_receipt_id,
+                "physical_door_id": receipt.physical_door_id,
+                "launch_state_identity": "not_started",
+                "observed_at": "2026-09-02T00:00:00+00:00",
+            },
+        }
+
+    result = dispatch_with_admission(
+        request(tmp_path),
+        lambda _context: launches.append(1),
+        admission_preflight=preflight,
+    )
+    assert isinstance(result, DispatchOutcome)
+    assert result.kind == "no_launch"
+    assert result.launch_state == "not_started"
+    assert launches == []
+
+
 def test_explicit_worker_terminal_outcome_preserves_kind_and_identity(tmp_path: Path) -> None:
     from arnold_pipelines.megaplan.workers import WorkerResult
 

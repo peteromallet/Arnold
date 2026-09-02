@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -334,9 +335,31 @@ def pause_session(
         session=session,
         authority=result["authority"],
     )
-    marker["operator_pause"] = result["authority"]
-    marker["should_run"] = False
-    _write_marker(marker_path, marker, expected_sha256=marker_sha256)
+    # Re-read under the canonical marker cutover lock.  Automatic babysitter
+    # admission uses this same door for its final reservation CAS, so a pause
+    # either wins before a reservation or observes/preserves an already
+    # claimed launch; it must never overwrite an unrelated marker update.
+    with marker_runtime_cutover_lock(marker_path):
+        current_marker, current_sha256 = _load_marker(marker_path)
+        reservation = current_marker.get("babysitter_launch_reservation")
+        if isinstance(reservation, dict):
+            status = str(reservation.get("status") or "")
+            if status == "authorized":
+                cancelled = dict(reservation)
+                cancelled.update(
+                    {
+                        "status": "cancelled",
+                        "cancelled_at": datetime.now(timezone.utc).isoformat(),
+                        "cancelled_by": actor,
+                        "cancellation_reason": reason.strip() or "operator requested pause",
+                    }
+                )
+                current_marker["babysitter_launch_reservation"] = cancelled
+            elif status not in {"claimed", "cancelled", "completed"}:
+                raise RuntimeError("session marker contains an unknown babysitter launch reservation")
+        current_marker["operator_pause"] = result["authority"]
+        current_marker["should_run"] = False
+        _write_marker_locked(marker_path, current_marker, expected_sha256=current_sha256)
     return {
         **result,
         "session": session,
@@ -515,42 +538,70 @@ def _write_marker(
     expected_sha256: str,
 ) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
+    with marker_runtime_cutover_lock(path):
+        return _write_marker_locked(path, value, expected_sha256=expected_sha256)
+
+
+@contextmanager
+def marker_runtime_cutover_lock(path: Path, *, blocking: bool = True):
+    """Hold the canonical lock for all marker read/CAS cutover operations.
+
+    Babysitter admission and operator pause share this exact lock.  The
+    non-blocking form is intentionally exposed so an automatic dispatch can
+    report a typed suppression instead of waiting behind an operator action.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".runtime-cutover.lock")
     with lock_path.open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        flags = fcntl.LOCK_EX
+        if not blocking:
+            flags |= fcntl.LOCK_NB
+        fcntl.flock(lock.fileno(), flags)
         try:
-            current = path.read_bytes()
-        except OSError as exc:
-            raise RuntimeError(
-                f"session marker disappeared during update: {path}"
-            ) from exc
-        observed_sha256 = _sha256(current)
-        if observed_sha256 != expected_sha256:
-            raise RuntimeError(
-                "session marker changed concurrently: "
-                f"expected {expected_sha256}, observed {observed_sha256}"
-            )
-        if "content_digest" in value or "marker_sha256" in value:
-            unsigned = dict(value)
-            unsigned.pop("content_digest", None)
-            unsigned.pop("marker_sha256", None)
-            value = dict(value)
-            value["content_digest"] = _sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
-        encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+            yield lock
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _write_marker_locked(
+    path: Path,
+    value: dict[str, Any],
+    *,
+    expected_sha256: str,
+) -> str:
+    """Write a marker while ``marker_runtime_cutover_lock`` is held."""
+    try:
+        current = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"session marker disappeared during update: {path}") from exc
+    observed_sha256 = _sha256(current)
+    if observed_sha256 != expected_sha256:
+        raise RuntimeError(
+            "session marker changed concurrently: "
+            f"expected {expected_sha256}, observed {observed_sha256}"
+        )
+    if "content_digest" in value or "marker_sha256" in value:
+        unsigned = dict(value)
+        unsigned.pop("content_digest", None)
+        unsigned.pop("marker_sha256", None)
+        value = dict(value)
+        value["content_digest"] = _sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
         try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
-        return _sha256(encoded)
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return _sha256(encoded)
 
 
 def main(argv: list[str] | None = None) -> int:

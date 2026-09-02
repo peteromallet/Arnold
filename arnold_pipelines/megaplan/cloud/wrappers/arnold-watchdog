@@ -2501,6 +2501,10 @@ try:
     child_env["ARNOLD_BABYSITTER_PLAN"] = resolved_plan_name
     child_env["ARNOLD_BABYSITTER_RUN_KIND"] = run_kind
     child_env["ARNOLD_BABYSITTER_OCCURRENCE"] = digest
+    # This explicit context scopes the final marker/chain admission door to
+    # watchdog-originated automatic launches.  Direct/manual babysitter
+    # invocations retain their established behavior.
+    child_env["ARNOLD_BABYSITTER_AUTO_DISPATCH"] = "1"
     child_env["ARNOLD_BABYSITTER_GOAL_FILE"] = goal_path
     child_env["ARNOLD_BABYSITTER_MARKER_DIR"] = str(marker_dir)
     child_env["ARNOLD_BABYSITTER_REPAIR_DATA_DIR"] = str(repair_data_dir)
@@ -2543,6 +2547,40 @@ try:
         _time.sleep(0.05)
     if launch_rc is not None and launch_rc != 0:
         raise RuntimeError(f"babysitter exited early rc={launch_rc}")
+    # A child that was durably suppressed exits 0 without a managed process.
+    # Preserve that truthful outcome in the watchdog receipt; it is not a
+    # scheduled launch and must not be reported as a provider failure.
+    inner_receipt_path = run_root / f"{session}.babysitter-launch-receipt.json"
+    inner_status = ""
+    inner_dispatch = None
+    try:
+        inner_payload = _json.loads(inner_receipt_path.read_text())
+        inner_status = str(inner_payload.get("status") or "")
+        inner_dispatch = inner_payload.get("dispatch_outcome")
+    except (OSError, ValueError):
+        pass
+    if launch_rc is not None and launch_rc == 0 and inner_status == "suppressed":
+        suppressed_receipt = {
+            "schema": "arnold.superfixer.watchdog_dispatch_receipt.v1",
+            "session": session,
+            "plan": resolved_plan_name,
+            "run_id": run_id,
+            "occurrence_digest": digest,
+            "goal_path": goal_path,
+            "renderer_path": str(renderer),
+            "babysitter_bin": str(babysitter_bin),
+            "engine_root": str(engine_root),
+            "run_root": str(run_root),
+            "dispatched_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "status": "suppressed",
+            "suppression_reason": "automatic babysitter admission authority",
+            "dispatch_outcome": inner_dispatch,
+        }
+        _atomic_write(
+            repair_data_dir / f"{session}.babysitter-receipt.json",
+            _json.dumps(suppressed_receipt, indent=2, sort_keys=True) + "\n",
+        )
+        raise SystemExit(2)
     receipt = {
         "schema": "arnold.superfixer.watchdog_dispatch_receipt.v1",
         "session": session,
@@ -2641,6 +2679,13 @@ babysitter_policy_dispatch() {
     report_item "$report_items" "$session" "repair" "babysitter_scheduled" \
       "single-flash babysitter dispatched: $reason" "$workspace" "$remote_spec"
   else
+    local launch_status=$?
+    if [[ "$launch_status" -eq 2 ]]; then
+      log "single-flash babysitter suppressed by final authority door session=$session digest=$digest reason=$reason"
+      report_item "$report_items" "$session" "repair" "babysitter_suppressed" \
+        "single-flash babysitter dispatch suppressed by canonical pause/marker authority; no worker launched: $reason" "$workspace" "$remote_spec"
+      return 0
+    fi
     log "babysitter launch failed; no L1/L2 fallthrough session=$session reason=$reason"
     report_item "$report_items" "$session" "repair" "babysitter_launch_failed" \
       "babysitter launch failed; no L1/L2 fallthrough: $reason" "$workspace" "$remote_spec"

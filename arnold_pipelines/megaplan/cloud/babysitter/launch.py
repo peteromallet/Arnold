@@ -684,6 +684,240 @@ class ManagedLaunchUnresolved(RuntimeError):
         super().__init__("managed launch remains unresolved")
 
 
+def _automatic_dispatch_preflight(
+    ctx: dict[str, Any],
+    spec: ManagedCommandSpec,
+):
+    """Build the final automatic-only marker/chain admission door.
+
+    The watchdog supplies ``ARNOLD_BABYSITTER_AUTO_DISPATCH``.  Manual
+    invocations deliberately do not enter this path.  A short durable marker
+    reservation is the linearization point; the worker is launched only after
+    the reservation and the existing managed manifest have been committed.
+    """
+    if os.environ.get("ARNOLD_BABYSITTER_AUTO_DISPATCH", "").strip() not in {"1", "true", "yes"}:
+        return None
+    marker_dir = ctx.get("marker_dir")
+    workspace_raw = str(ctx.get("workspace") or "").strip()
+    if not isinstance(marker_dir, Path) or not workspace_raw:
+        return lambda _receipt: {
+            "suppress": True,
+            "evidence_kind": "controlled_adapter",
+            "physical_operation_evidence": {
+                "schema": "arnold.babysitter.no-launch.v1",
+                "reservation_event_id": _receipt.reservation_event_id,
+                "admission_receipt_id": _receipt.admission_receipt_id,
+                "physical_door_id": _receipt.physical_door_id,
+                "launch_state_identity": "not_started",
+                "observed_at": _utcnow_iso(),
+                "reason": "automatic dispatch lacks canonical marker/workspace authority",
+            },
+        }
+
+    marker_path = marker_dir / f"{ctx['session']}.json"
+    workspace = Path(workspace_raw).expanduser().resolve(strict=False)
+    remote_spec_raw = str(ctx.get("remote_spec") or "").strip()
+    spec_path = Path(remote_spec_raw).expanduser()
+    if not spec_path.is_absolute():
+        spec_path = workspace / spec_path
+    spec_path = spec_path.resolve(strict=False)
+
+    def preflight(receipt: Any) -> dict[str, Any]:
+        from arnold_pipelines.megaplan.chain import spec as chain_spec
+        from arnold_pipelines.megaplan._core.io import find_plan_dir
+        from arnold_pipelines.megaplan.managed_agent import reserve_managed_command
+        from arnold_pipelines.megaplan.cloud.operator_control import (
+            _load_marker,
+            _write_marker_locked,
+            marker_runtime_cutover_lock,
+        )
+        from arnold_pipelines.megaplan.incident.chain_control import (
+            ChainControlError,
+            ChainControlJournal,
+            chain_id_for_spec,
+        )
+        from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
+        from arnold_pipelines.megaplan.types import CliError
+
+        def evidence(reason: str, **extra: Any) -> dict[str, Any]:
+            return {
+                "suppress": True,
+                "evidence_kind": "controlled_adapter",
+                "physical_operation_evidence": {
+                    "schema": "arnold.babysitter.no-launch.v1",
+                    "reservation_event_id": receipt.reservation_event_id,
+                    "admission_receipt_id": receipt.admission_receipt_id,
+                    "physical_door_id": receipt.physical_door_id,
+                    "launch_state_identity": "not_started",
+                    "observed_at": _utcnow_iso(),
+                    "reason": reason,
+                    **extra,
+                },
+            }
+
+        if not marker_path.is_file() or not spec_path.is_file():
+            return evidence("canonical marker or frozen chain spec is unavailable")
+        try:
+            ledger = IncidentLedger(workspace)
+            state_path = chain_spec._state_path_for(spec_path)
+            state = chain_spec.load_chain_state(spec_path)
+            chain_id = chain_id_for_spec(spec_path)
+            plan_name = str(ctx.get("plan") or state.current_plan_name or "").strip()
+            plan_dir = find_plan_dir(workspace, plan_name) if plan_name else None
+            journal = ChainControlJournal(ledger)
+            expected_revision = (state.metadata or {}).get("_nbf08_revision")
+            # Sequence -> chain scope/state -> marker is the global lock order
+            # used by chain control and the marker cutover door.
+            with journal.transaction(
+                chain_ids=[chain_id],
+                state_paths=[state_path],
+                expected_revision=expected_revision,
+                operation_id=receipt.logical_dispatch_id,
+                actor={"id": "babysitter", "class": "automatic"},
+            ):
+                with marker_runtime_cutover_lock(marker_path, blocking=False):
+                    marker, marker_sha = _load_marker(marker_path)
+                    if marker.get("session") != ctx["session"]:
+                        return evidence("marker session identity mismatch")
+                    if Path(str(marker.get("workspace") or "")).expanduser().resolve(strict=False) != workspace:
+                        return evidence("marker workspace identity mismatch")
+                    marker_spec = str(marker.get("remote_spec") or "").strip()
+                    if marker_spec and Path(marker_spec).expanduser().resolve(strict=False) != spec_path:
+                        return evidence("marker chain spec identity mismatch")
+                    marker_pause = marker.get("operator_pause")
+                    if "operator_pause" in marker and (
+                        not isinstance(marker_pause, dict)
+                        or marker_pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
+                        or marker_pause.get("active") is not True
+                    ):
+                        return evidence("marker pause authority is malformed", marker_sha256=marker_sha)
+                    if isinstance(marker_pause, dict) and marker_pause.get("active") is True:
+                        return evidence("operator marker pause authority is active", marker_sha256=marker_sha)
+                    marker_plan = marker.get("plan")
+                    if marker_plan is not None and str(marker_plan) != plan_name:
+                        return evidence("marker plan identity mismatch", marker_sha256=marker_sha)
+                    if marker.get("should_run") is not True:
+                        return evidence("operator marker should_run is not true", marker_sha256=marker_sha)
+                    hold = marker.get("operator_resume_hold")
+                    if "operator_resume_hold" in marker and not isinstance(hold, dict):
+                        return evidence("operator resume hold is malformed", marker_sha256=marker_sha)
+                    if isinstance(hold, dict) and hold.get("active") is True:
+                        return evidence("operator resume hold is active", marker_sha256=marker_sha)
+                    metadata = state.metadata if isinstance(state.metadata, dict) else {}
+                    pause = metadata.get("operator_pause")
+                    if "operator_pause" in metadata and (
+                        not isinstance(pause, dict)
+                        or pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
+                        or pause.get("active") is not True
+                    ):
+                        return evidence("chain pause authority is malformed", marker_sha256=marker_sha)
+                    if isinstance(pause, dict) and pause.get("active") is True:
+                        return evidence("canonical chain pause authority is active", marker_sha256=marker_sha)
+                    if state.last_state == "paused":
+                        return evidence("chain state is paused", marker_sha256=marker_sha)
+                    if state.current_plan_name and state.current_plan_name != plan_name:
+                        return evidence("chain current-plan identity mismatch", marker_sha256=marker_sha)
+                    if plan_dir is None:
+                        return evidence("canonical plan state is unavailable", marker_sha256=marker_sha)
+                    try:
+                        plan_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        return evidence("canonical plan state is unreadable", marker_sha256=marker_sha)
+                    if not isinstance(plan_payload, dict):
+                        return evidence("canonical plan state is malformed", marker_sha256=marker_sha)
+                    if plan_payload.get("name") not in {None, plan_name}:
+                        return evidence("canonical plan identity mismatch", marker_sha256=marker_sha)
+                    if plan_payload.get("current_state") == "paused":
+                        return evidence("canonical plan pause state is active", marker_sha256=marker_sha)
+                    plan_meta = plan_payload.get("meta")
+                    plan_pause = plan_meta.get("operator_pause") if isinstance(plan_meta, dict) else None
+                    if isinstance(plan_meta, dict) and "operator_pause" in plan_meta and (
+                        not isinstance(plan_pause, dict)
+                        or plan_pause.get("schema_version") != "arnold.megaplan.operator-pause.v1"
+                        or plan_pause.get("active") is not True
+                    ):
+                        return evidence("plan pause authority is malformed", marker_sha256=marker_sha)
+                    if isinstance(plan_pause, dict) and plan_pause.get("active") is True:
+                        return evidence("canonical plan pause authority is active", marker_sha256=marker_sha)
+
+                    reservation_id = hashlib.sha256(
+                        json.dumps(
+                            ["babysitter-launch-reservation-v1", ctx["session"], ctx["occurrence"], ctx["run_id"], receipt.logical_dispatch_id],
+                            sort_keys=True, separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    reservation = marker.get("babysitter_launch_reservation")
+                    if isinstance(reservation, dict):
+                        frozen = {
+                            key: reservation.get(key)
+                            for key in ("reservation_id", "session", "occurrence_digest", "run_id", "managed_run_id", "logical_dispatch_id")
+                        }
+                        expected = {
+                            "reservation_id": reservation_id,
+                            "session": ctx["session"],
+                            "occurrence_digest": ctx["occurrence"],
+                            "run_id": ctx["run_id"],
+                            "managed_run_id": ctx["managed_run_id"],
+                            "logical_dispatch_id": receipt.logical_dispatch_id,
+                        }
+                        if frozen != expected:
+                            return evidence("marker contains a different launch reservation", marker_sha256=marker_sha)
+                        if reservation.get("status") == "cancelled":
+                            return evidence("automatic launch reservation was cancelled", marker_sha256=marker_sha)
+                        if reservation.get("status") not in {"claimed", "completed"}:
+                            return evidence("marker launch reservation has an invalid status", marker_sha256=marker_sha)
+                    else:
+                        reservation = None
+
+                    admitted = str(receipt.normalized_spec or spec.model)
+                    child_spec = spec if admitted == spec.model else replace(spec, model=admitted)
+                    manifest_path, manifest, _created = reserve_managed_command(child_spec)
+                    if reservation is None:
+                        reservation = {
+                            "schema": "arnold.babysitter.launch-reservation.v1",
+                            "reservation_id": reservation_id,
+                            "session": ctx["session"],
+                            "occurrence_digest": ctx["occurrence"],
+                            "run_id": ctx["run_id"],
+                            "managed_run_id": str(manifest.get("run_id") or ctx["managed_run_id"]),
+                            "logical_dispatch_id": receipt.logical_dispatch_id,
+                            "status": "claimed",
+                            "claimed_at": _utcnow_iso(),
+                            "marker_sha256": marker_sha,
+                            "chain_id": chain_id,
+                            "plan": plan_name,
+                            "spec": str(spec_path),
+                        }
+                        updated = dict(marker)
+                        updated["babysitter_launch_reservation"] = reservation
+                        _write_marker_locked(marker_path, updated, expected_sha256=marker_sha)
+                        ctx["babysitter_launch_reservation"] = reservation
+                    else:
+                        ctx["babysitter_launch_reservation"] = dict(reservation)
+                    ctx["managed_manifest_path"] = str(manifest_path)
+                    return {"reservation": dict(reservation), "manifest_path": str(manifest_path)}
+        except BlockingIOError:
+            return evidence("marker runtime-cutover lock is contended")
+        except (ChainControlError, CliError, OSError, ValueError, RuntimeError, TypeError) as exc:
+            return evidence(f"automatic admission authority is unreadable: {type(exc).__name__}")
+
+    return preflight
+
+
+def _validate_automatic_launch_reservation(ctx: Mapping[str, Any]) -> None:
+    reservation = ctx.get("babysitter_launch_reservation")
+    marker_dir = ctx.get("marker_dir")
+    if not isinstance(reservation, Mapping) or not isinstance(marker_dir, Path):
+        raise RuntimeError("automatic launch reservation is missing")
+    marker_path = marker_dir / f"{ctx['session']}.json"
+    from arnold_pipelines.megaplan.cloud.operator_control import marker_runtime_cutover_lock, _load_marker
+    with marker_runtime_cutover_lock(marker_path, blocking=False):
+        marker, _sha = _load_marker(marker_path)
+        current = marker.get("babysitter_launch_reservation")
+        if not isinstance(current, Mapping) or dict(current) != dict(reservation) or current.get("status") != "claimed":
+            raise RuntimeError("automatic launch reservation changed before physical dispatch")
+
+
 def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     """Run the managed command only after one canonical admission decision."""
     from arnold_pipelines.megaplan.cloud.runtime_attestation import require_production_worker_dispatch_runtime
@@ -749,6 +983,8 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     def launch(context: Any) -> LaunchResult:
         admitted = getattr(context, "selected_spec", None) or model
         parse_agent_spec(admitted)
+        if os.environ.get("ARNOLD_BABYSITTER_AUTO_DISPATCH", "").strip() in {"1", "true", "yes"}:
+            _validate_automatic_launch_reservation(ctx)
         child_spec = spec if admitted == spec.model else replace(spec, model=admitted)
         pid = os.getpid()
         try:
@@ -778,6 +1014,7 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         gate=require_production_worker_dispatch_runtime,
         probe_executor=production_provider_probe_executor(),
         child_launch=launch,
+        admission_preflight=_automatic_dispatch_preflight(ctx, spec),
     )
     if isinstance(result, AdmissionRefusal):
         raise RuntimeError(f"babysitter admission refused: {result.code}: {result.reason}")
@@ -790,6 +1027,10 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
         # launch_babysitter can publish it in the receipt without asking the
         # caller to unpack or reinterpret a transport value.
         ctx["dispatch_outcome"] = result.to_dict()
+        if result.kind == "no_launch":
+            # Suppression is a successful, durable no-start result.  The
+            # watchdog maps the child receipt to babysitter_suppressed.
+            return 0
         if result.kind == "unresolved_launch":
             raise ManagedLaunchUnresolved(result)
         if result.kind == "success":
@@ -829,8 +1070,13 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         ctx["goal_path"] = str(goal_path)
 
         identity_key = (
-            f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}:"
-            f"{time.time_ns()}"
+            f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}"
+            if os.environ.get("ARNOLD_BABYSITTER_AUTO_DISPATCH", "").strip()
+            in {"1", "true", "yes"}
+            else (
+                f"babysitter:{ctx['session']}:{ctx['occurrence']}:{ctx['run_id']}:"
+                f"{time.time_ns()}"
+            )
         )
         ctx["identity_key"] = identity_key
         managed_run_id = stable_managed_run_id(RUN_KIND, identity_key)
@@ -843,6 +1089,19 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
         # would be misread as a dead-supervisor restart) and then blocks
         # until the Flash agent finishes.
         rc = _admit_managed_launch(ctx, spec)
+        if (ctx.get("dispatch_outcome") or {}).get("kind") == "no_launch":
+            _write_receipts(
+                ctx,
+                _receipt_payload(
+                    ctx,
+                    status="suppressed",
+                    finished_at=_utcnow_iso(),
+                    returncode=0,
+                    dispatch_outcome=ctx.get("dispatch_outcome"),
+                    suppression_reason=(ctx.get("dispatch_outcome") or {}).get("reconciliation_event_id"),
+                ),
+            )
+            return 0
         _write_receipts(ctx, _receipt_payload(ctx, status="running"))
         managed_terminal = "unknown"
         try:
