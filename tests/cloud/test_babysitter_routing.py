@@ -128,6 +128,56 @@ def test_continuation_managed_spec_pins_nested_omp_dispatch_to_muse_high(
     assert spec.links["routing"]["thinking"] == CONTINUATION_MUSE_THINKING
 
 
+def test_continuation_fixer_uses_shared_omp_capability_preflight(monkeypatch) -> None:
+    session = "native-build-forward-c2-bb000694-20260903-r4"
+    route = resolve_babysitter_routing(
+        {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:high"},
+        session=session,
+    )
+    calls = []
+
+    def fake_probe(*, local=False, provider=None):
+        calls.append((local, provider))
+        return {
+            "status": "ok",
+            "provider": "openrouter",
+            "model": "meta/muse-spark-1.3-contributor",
+            "thinking": "high",
+            "fallback": False,
+            "probe": "omp_sessionless_no_tools",
+        }
+
+    monkeypatch.setattr(launch, "_omp_openrouter_capability_check", fake_probe)
+    ctx = {"routing": route}
+    evidence = launch._continuation_capability_preflight(ctx)
+    assert evidence["status"] == "ok"
+    assert ctx["provider_capability"] is evidence
+    assert calls == [(True, None)]
+
+
+def test_continuation_fixer_capability_auth_failure_fails_closed(monkeypatch) -> None:
+    session = "native-build-forward-c2-bb000694-20260903-r4"
+    route = resolve_babysitter_routing(
+        {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:high"},
+        session=session,
+    )
+    monkeypatch.setattr(
+        launch,
+        "_omp_openrouter_capability_check",
+        lambda *, local=False, provider=None: {
+            "status": "authentication_failed",
+            "reason": "omp_authentication_failed",
+            "provider": "openrouter",
+            "model": "meta/muse-spark-1.3-contributor",
+            "thinking": "high",
+            "fallback": False,
+            "probe": "omp_sessionless_no_tools",
+        },
+    )
+    with pytest.raises(RuntimeError, match="capability preflight failed"):
+        launch._continuation_capability_preflight({"routing": route})
+
+
 def test_managed_spec_records_codex_route_and_sealed_goal(tmp_path: Path) -> None:
     goal = tmp_path / "goal.md"
     goal.write_text("prove movement", encoding="utf-8")

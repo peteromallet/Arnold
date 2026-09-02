@@ -132,18 +132,100 @@ def _validate_continuation_muse_routes(
     }
 
 
-def _remote_openrouter_credential_check(provider) -> dict[str, Any]:
-    """Check only credential presence; never return its value."""
+_MUSE_PREFLIGHT_QUERY = "Reply with exactly: ARNOLD_MUSE_PREFLIGHT_OK"
+
+
+def _omp_openrouter_capability_check(
+    provider=None, *, local: bool = False
+) -> dict[str, Any]:
+    """Prove the exact OMP/OpenRouter route without inspecting credentials.
+
+    OMP owns authentication (usually through the box broker/store), so an
+    ``OPENROUTER_API_KEY`` environment variable is not itself a launch
+    prerequisite.  The bounded no-tools/sessionless probe is deliberately a
+    single exact model with no fallback.  Only a typed status and digest of
+    stderr are returned; provider output and secrets are never persisted.
+    """
+    command = (
+        "omp -p --model openrouter/meta/muse-spark-1.3-contributor "
+        "--thinking high --no-tools --no-session --max-time 90 "
+        + shlex.quote(_MUSE_PREFLIGHT_QUERY)
+    )
     try:
-        result = provider.ssh_exec(
-            'test -n "${OPENROUTER_API_KEY:-}"'
-        )
+        if provider is not None and not local:
+            result = provider.ssh_exec(command)
+        else:
+            result = subprocess.run(
+                [
+                    "omp",
+                    "-p",
+                    "--model",
+                    "openrouter/meta/muse-spark-1.3-contributor",
+                    "--thinking",
+                    "high",
+                    "--no-tools",
+                    "--no-session",
+                    "--max-time",
+                    "90",
+                    _MUSE_PREFLIGHT_QUERY,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=100,
+                check=False,
+            )
     except Exception as exc:
-        return {"status": "error", "reason": type(exc).__name__}
-    return {
-        "status": "ok" if result.returncode == 0 else "missing",
-        "credential": "OPENROUTER_API_KEY",
+        return {
+            "status": "unavailable",
+            "reason": type(exc).__name__,
+            "provider": "openrouter",
+            "model": "meta/muse-spark-1.3-contributor",
+            "thinking": "high",
+            "fallback": False,
+            "probe": "omp_sessionless_no_tools",
+        }
+    returncode = int(getattr(result, "returncode", 1))
+    stdout = str(getattr(result, "stdout", "") or "")
+    stderr = str(getattr(result, "stderr", "") or "")
+    lowered = (stdout + "\n" + stderr).lower()
+    if "fallback" in lowered:
+        status = "fallback_mismatch"
+        reason = "omp_fallback_detected"
+    elif any(token in lowered for token in ("auth", "credential", "unauthorized")):
+        status = "authentication_failed"
+        reason = "omp_authentication_failed"
+    elif any(token in lowered for token in ("quota", "credit")):
+        status = "quota_exhausted"
+        reason = "omp_quota_exhausted"
+    elif any(
+        token in lowered
+        for token in ("model not found", "unknown model", "unsupported model", "resolution")
+    ):
+        status = "resolution_failed"
+        reason = "omp_model_resolution_failed"
+    elif returncode == 0 and _MUSE_PREFLIGHT_QUERY.split()[-1] not in stdout:
+        status = "probe_failed"
+        reason = "omp_probe_response_mismatch"
+    elif returncode == 0:
+        status = "ok"
+        reason = None
+    else:
+        status = "probe_failed"
+        reason = "omp_probe_nonzero"
+    evidence = {
+        "status": status,
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "thinking": "high",
+        "fallback": False,
+        "probe": "omp_sessionless_no_tools",
+        "returncode": returncode,
+        "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
     }
+    if reason is not None:
+        evidence["reason"] = reason
+    return evidence
 
 
 def _validate_zero_recovery_canary_spec(
@@ -5185,6 +5267,14 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     )
     missing_env = _missing_configured_secrets(spec, os.environ)
     remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
+    errors: list[str] = []
+    import_check: dict[str, Any] = {
+        "status": "skipped" if remote["skipped"] else "unavailable",
+        "checks": {},
+        "errors": [],
+        "reason": "remote_checks_skipped" if remote["skipped"] else "host_or_collector_preflight_no_go",
+    }
+    missing_commands: list[str] = []
     if not remote["skipped"]:
         ssh_host_prelaunch = spec.provider == "ssh"
         if ssh_host_prelaunch:
@@ -5219,7 +5309,6 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             collector_ready = True
             capacity_ready = True
             remote_checks_ready = True
-        errors = []
         if not collector_ready:
             errors.append(
                 f"container lifecycle is {lifecycle or 'unknown'}; remote exec collector unavailable"
@@ -5249,8 +5338,6 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
                 provider,
                 list(preflight_summary.get("runtime_commands", [])),
             )
-            if closed_route is not None:
-                remote["provider_credentials"] = _remote_openrouter_credential_check(provider)
         else:
             import_check = {
                 "status": "unavailable",
@@ -5259,14 +5346,34 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
                 "reason": "host_or_collector_preflight_no_go",
             }
             missing_commands = []
-        remote.update(
-            {
-                "import_check": import_check,
-                "missing_commands": missing_commands,
+    if closed_route is not None:
+        # A skipped remote preflight still performs the local OMP capability
+        # check.  The box broker/store is authoritative; OPENROUTER_API_KEY
+        # in this process is merely one possible implementation detail.
+        if remote["skipped"]:
+            remote["provider_credentials"] = _omp_openrouter_capability_check(
+                local=True
+            )
+        elif remote_checks_ready:
+            remote["provider_credentials"] = _omp_openrouter_capability_check(
+                provider
+            )
+        else:
+            remote["provider_credentials"] = {
+                "status": "unavailable",
+                "reason": "host_or_collector_preflight_no_go",
+                "provider": "openrouter",
+                "model": "meta/muse-spark-1.3-contributor",
+                "thinking": "high",
+                "fallback": False,
+                "probe": "omp_sessionless_no_tools",
             }
-        )
-    else:
-        errors = []
+    remote.update(
+        {
+            "import_check": import_check,
+            "missing_commands": missing_commands,
+        }
+    )
     if placeholder_findings and not bool(getattr(args, "allow_template_placeholders", False)):
         errors.append(
             "template placeholders remain; edit them or pass --allow-template-placeholders"
@@ -5288,11 +5395,10 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     if remote.get("missing_commands"):
         errors.append("missing remote commands: " + ", ".join(remote["missing_commands"]))
     if (
-        not remote["skipped"]
+        closed_route is not None
         and remote.get("provider_credentials", {}).get("status") != "ok"
-        and closed_route is not None
     ):
-        errors.append("r4 continuation requires an available OPENROUTER_API_KEY")
+        errors.append("r4 continuation requires an authenticated OMP OpenRouter Muse route")
     payload = {
         "success": not errors,
         "event": "cloud_preflight",
@@ -5669,14 +5775,14 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     provider_credentials = None
     if closed_route is not None:
-        provider_credentials = _remote_openrouter_credential_check(provider)
+        provider_credentials = _omp_openrouter_capability_check(provider)
         if provider_credentials.get("status") != "ok":
             raise CliError(
                 "cloud_preflight_failed",
-                "r4 continuation requires an available OPENROUTER_API_KEY",
+                "r4 continuation requires an authenticated OMP OpenRouter Muse route",
                 extra={
                     "missing_commands": [],
-                    "missing_env": ["OPENROUTER_API_KEY"],
+                    "missing_env": [],
                     "provider_credentials": provider_credentials,
                     "preflight": preflight_summary,
                 },

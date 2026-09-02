@@ -62,6 +62,7 @@ from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     CONTINUATION_MUSE_THINKING,
     resolve_babysitter_routing,
 )
+from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
     machine_origin_provenance,
@@ -294,6 +295,25 @@ def _difficulty_env() -> int:
     return difficulty
 
 
+def _continuation_capability_preflight(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Use the same authenticated OMP capability evidence as chain launch.
+
+    Closed continuation fixers must prove the route through OMP's broker/store;
+    an ambient ``OPENROUTER_API_KEY`` is neither required nor copied.  Keep the
+    returned evidence sanitized (the shared helper only returns typed status
+    and digests) so a failed fixer admission cannot leak provider credentials.
+    """
+    routing = ctx.get("routing")
+    if routing is None or not getattr(routing, "closed", False):
+        return None
+    evidence = _omp_openrouter_capability_check(local=True)
+    ctx["provider_capability"] = evidence
+    if evidence.get("status") != "ok":
+        reason = str(evidence.get("reason") or evidence.get("status") or "unknown")
+        raise RuntimeError(f"babysitter OMP capability preflight failed: {reason}")
+    return evidence
+
+
 def _load_optional_json(path_raw: str | None) -> dict[str, object] | None:
     if not path_raw:
         return None
@@ -360,6 +380,10 @@ def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[
     routing = ctx.get("routing")
     if routing is not None:
         payload.update(routing.as_dict())
+    if ctx.get("provider_capability") is not None:
+        # The shared OMP probe returns only typed status and fingerprints; do
+        # not replace it with raw provider output in a fixer receipt.
+        payload["provider_capability"] = ctx["provider_capability"]
     payload.update({key: value for key, value in extra.items() if value is not None})
     return payload
 
@@ -1248,6 +1272,7 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             return 0
 
         ctx["engine_root"] = _resolve_engine_root()
+        _continuation_capability_preflight(ctx)
         goal_path = _resolve_goal_file(ctx)
         ctx["goal_path"] = str(goal_path)
 

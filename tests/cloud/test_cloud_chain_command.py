@@ -476,18 +476,92 @@ def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
     assert caught.value.code == "closed_profile_route_mismatch"
 
 
-def test_r4_remote_credential_probe_returns_presence_only() -> None:
-    from arnold_pipelines.megaplan.cloud.cli import _remote_openrouter_credential_check
+def test_r4_omp_capability_probe_returns_sanitized_evidence() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
 
     class Provider:
         def ssh_exec(self, command):
-            assert command == 'test -n "${OPENROUTER_API_KEY:-}"'
-            return subprocess.CompletedProcess([], 0, "", "")
+            assert "openrouter/meta/muse-spark-1.3-contributor" in command
+            assert "--thinking high" in command
+            assert "--no-tools --no-session" in command
+            assert "fallback" not in command
+            return subprocess.CompletedProcess([], 0, "ARNOLD_MUSE_PREFLIGHT_OK\n", "")
 
-    assert _remote_openrouter_credential_check(Provider()) == {
-        "status": "ok",
-        "credential": "OPENROUTER_API_KEY",
-    }
+    result = _omp_openrouter_capability_check(Provider())
+    assert result["status"] == "ok"
+    assert result["provider"] == "openrouter"
+    assert result["model"] == "meta/muse-spark-1.3-contributor"
+    assert result["thinking"] == "high"
+    assert result["fallback"] is False
+    assert "OPENROUTER_API_KEY" not in result
+
+
+def test_r4_omp_capability_probe_auth_failure_is_typed_and_redacted() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
+
+    class Provider:
+        def ssh_exec(self, command):
+            return subprocess.CompletedProcess(
+                [], 1, "", "unauthorized: secret-token-must-not-escape"
+            )
+
+    result = _omp_openrouter_capability_check(Provider())
+    assert result["status"] == "authentication_failed"
+    assert result["reason"] == "omp_authentication_failed"
+    assert "secret-token" not in repr(result)
+    assert "OPENROUTER_API_KEY" not in repr(result)
+
+
+def test_r4_omp_capability_probe_resolution_failure_is_typed() -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
+
+    class Provider:
+        def ssh_exec(self, command):
+            return subprocess.CompletedProcess([], 1, "", "model not found")
+
+    result = _omp_openrouter_capability_check(Provider())
+    assert result["status"] == "resolution_failed"
+    assert result["reason"] == "omp_model_resolution_failed"
+
+
+def test_r4_omp_store_probe_does_not_require_or_copy_env_key(monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, "ARNOLD_MUSE_PREFLIGHT_OK\n", "")
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.subprocess.run", fake_run)
+    result = _omp_openrouter_capability_check(local=True)
+    assert result["status"] == "ok"
+    argv, kwargs = calls[0]
+    assert argv[argv.index("--model") + 1] == "openrouter/meta/muse-spark-1.3-contributor"
+    assert argv[argv.index("--thinking") + 1] == "high"
+    assert "OPENROUTER_API_KEY" not in repr(argv)
+    assert "sk-secret" not in repr(result)
+
+
+def test_r4_omp_probe_does_not_copy_a_different_env_store_key(monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud.cli import _omp_openrouter_capability_check
+
+    secret = "env-key-from-a-different-store"
+    monkeypatch.setenv("OPENROUTER_API_KEY", secret)
+    calls = []
+
+    class Provider:
+        def ssh_exec(self, command):
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                [], 0, "ARNOLD_MUSE_PREFLIGHT_OK\n", ""
+            )
+
+    result = _omp_openrouter_capability_check(Provider())
+    assert result["status"] == "ok"
+    assert calls and secret not in calls[0]
+    assert secret not in repr(result)
 
 
 def test_chain_start_command_cd_is_manifest_accepted_root_not_project_or_engine() -> None:
