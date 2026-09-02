@@ -8,7 +8,7 @@
   },
   "artifacts": {
     "chain.yaml": "6e5ae55ca39e10ee115192ee2d4ed93915baf0502e3a9bb60b26105e91b98bf6",
-    "HANDOFF.md": "3cadf1cda9a0ae183ff511f0ffdc71068b6a6e05c08ef4429ddc3bb32ad53a64",
+    "HANDOFF.md": "42d63815f418e176413332bd01405255675221dba40d856058df7a22b3a359b5",
     "NORTHSTAR.md": "5edf0673142580ea922849c27538cb0c18e20983c5af4c26d9b9d5efd791699d",
     "cloud.yaml": "f735368323caba98f4a6dcb67d319a320d6ea24954a55b9baf815c3091d5fd6e",
     "arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml": "99f6f336ac561cb58b389252ebab1e3652b8f1da8b0eb835eae05c45c0158b1a"
