@@ -11464,6 +11464,13 @@ def build_chain_parser(subparsers: Any) -> None:
         ),
     )
     execution_binding_migrate_parser.add_argument(
+        "--released-hold-receipt",
+        help=(
+            "Exact receipt emitted by `chain release-hold` for the prior failed "
+            "legacy-runtime promotion. Required to retry a released hold."
+        ),
+    )
+    execution_binding_migrate_parser.add_argument(
         "--expected-chain-spec-sha256",
         help="Exact old on-disk and persisted chain-spec SHA-256 for legacy promotion.",
     )
@@ -12468,8 +12475,16 @@ def run_chain_cli(
                     actor=args.actor,
                     verified_external_runtime_identity=identity_payload,
                     verified_external_runtime_receipt=receipt_arg,
+                    released_hold_receipt=(
+                        getattr(args, "released_hold_receipt", None) or None
+                    ),
                 )
             else:
+                if getattr(args, "released_hold_receipt", None):
+                    raise CliError(
+                        "chain_execution_binding_migrate_refused",
+                        "--released-hold-receipt requires --promote-legacy-runtime-only",
+                    )
                 external_identity = verify_external_runtime_identity(
                     Path(identity_arg).expanduser().resolve(strict=False),
                     Path(receipt_arg).expanduser().resolve(strict=False),

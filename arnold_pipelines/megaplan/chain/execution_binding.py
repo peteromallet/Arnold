@@ -4025,6 +4025,7 @@ def promote_legacy_runtime_binding(
     actor: str = "operator",
     verified_external_runtime_identity: Mapping[str, Any],
     verified_external_runtime_receipt: str | Path,
+    released_hold_receipt: str | Path | None = None,
 ) -> dict[str, Any]:
     """Promote a legacy runtime-only binding through the NBF08 ledger.
 
@@ -4058,6 +4059,7 @@ def promote_legacy_runtime_binding(
         _stable_id,
         apply_chain_lifecycle,
         chain_id_for_spec,
+        journal_for,
         state_digest_for,
     )
 
@@ -4181,7 +4183,7 @@ def promote_legacy_runtime_binding(
         "expected_marker_sha256": expected_marker_sha256,
         "expected_manifest_sha256": expected_manifest_sha256,
     }
-    operation_id = _stable_id(
+    base_operation_id = _stable_id(
         "execution-binding-promote",
         chain_id,
         expected_chain_spec_sha256,
@@ -4194,9 +4196,232 @@ def promote_legacy_runtime_binding(
         expected_marker_sha256,
         expected_manifest_sha256,
     )
+    operation_id = base_operation_id
+    released_reference: dict[str, Any] | None = None
+
+    if released_hold_receipt is not None:
+        release_path = Path(str(released_hold_receipt)).expanduser().resolve(strict=False)
+        try:
+            release_wrapper = json.loads(release_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt is unreadable",
+            ) from exc
+        release_event = (
+            release_wrapper.get("event")
+            if isinstance(release_wrapper, Mapping)
+            else None
+        )
+        release_event = release_event if isinstance(release_event, Mapping) else release_wrapper
+        release_payload = (
+            release_event.get("payload")
+            if isinstance(release_event, Mapping)
+            else None
+        )
+        release_schema = (
+            release_wrapper.get("schema")
+            if isinstance(release_wrapper, Mapping)
+            else None
+        )
+        if (
+            release_schema != "nbf08-chain-control-hold-release-v1"
+            or not isinstance(release_event, Mapping)
+            or release_event.get("event_kind") != "chain_control.hold_released"
+            or not isinstance(release_payload, Mapping)
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt is not a hold release",
+            )
+        release_event_hash = str(release_event.get("event_hash") or "")
+        release_id = str(release_payload.get("release_operation_id") or "")
+        recovery_epoch = str(release_payload.get("recovery_epoch") or "")
+        target_operation_id = str(release_payload.get("target_operation_id") or "")
+        held_event_hash = str(release_payload.get("held_event_hash") or "")
+        if not all(
+            _FULL_SHA256.fullmatch(value)
+            for value in (
+                release_event_hash,
+                release_id,
+                recovery_epoch,
+                target_operation_id,
+                held_event_hash,
+            )
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt lacks exact recovery identities",
+            )
+        if release_id != recovery_epoch:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt has conflicting recovery identities",
+            )
+        if (
+            release_event.get("chain_id") != chain_id
+            or release_event.get("operation_id") != target_operation_id
+            or target_operation_id != base_operation_id
+            or release_event.get("recovery_id") != recovery_epoch
+            or release_payload.get("chain_id") != chain_id
+            or release_payload.get("target_operation_id") != base_operation_id
+            or release_payload.get("held_event_hash") != held_event_hash
+            or release_payload.get("chain_spec_sha256") != expected_chain_spec_sha256
+            or release_payload.get("state_digest") != expected_state_digest
+            or release_payload.get("state_revision") != expected_state_revision
+            or release_payload.get("cursor") != expected_cursor
+            or release_payload.get("current_milestone") != expected_current_milestone
+            or release_payload.get("current_plan") != expected_current_plan
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt does not match the exact promotion request",
+            )
+
+        # Validate the receipt against the immutable journal before opening a
+        # new lifecycle operation.  This keeps bad, stale, or second-use
+        # recovery inputs state-neutral; the effect repeats these checks under
+        # the transaction lock for the race-safe final authority decision.
+        replay = journal_for(project_root).replay_strict()
+        authoritative_release = next(
+            (
+                event
+                for event in replay["accepted"]
+                if event.get("event_kind") == "chain_control.hold_released"
+                and event.get("event_hash") == release_event_hash
+            ),
+            None,
+        )
+        target_events = [
+            event
+            for event in replay["accepted"]
+            if event.get("chain_id") == chain_id
+            and event.get("operation_id") == base_operation_id
+        ]
+        target_hold = next(
+            (
+                event
+                for event in target_events
+                if event.get("event_kind") == "chain_control.hold"
+                and event.get("event_hash") == held_event_hash
+            ),
+            None,
+        )
+        target_intent = next(
+            (
+                event
+                for event in target_events
+                if event.get("event_kind") == "chain_control.intent"
+            ),
+            None,
+        )
+        if (
+            not isinstance(authoritative_release, Mapping)
+            or authoritative_release != release_event
+            or not isinstance(target_hold, Mapping)
+            or not isinstance(target_intent, Mapping)
+            or not target_events
+            or target_events[-1].get("event_kind") != "chain_control.hold_released"
+            or target_events[-1].get("event_hash") != release_event_hash
+            or (target_intent.get("payload") or {}).get("intent_kind")
+            != "execution-binding-promote"
+            or (target_intent.get("payload") or {}).get("legacy_runtime_promotion.v1")
+            != runtime_context
+        ):
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold receipt does not target the exact prior promotion hold",
+            )
+
+        released_reference = {
+            "path": str(release_path),
+            "event_hash": release_event_hash,
+            "release_operation_id": release_id,
+            "recovery_epoch": recovery_epoch,
+            "target_operation_id": target_operation_id,
+            "held_event_hash": held_event_hash,
+        }
+        operation_id = _stable_id(
+            "execution-binding-promote-released-hold",
+            base_operation_id,
+            release_event_hash,
+            recovery_epoch,
+            str(expected_state_revision),
+        )
+        prior_use = next(
+            (
+                event
+                for event in replay["accepted"]
+                if event.get("event_kind") == "chain_control.runtime_rebound"
+                and isinstance((event.get("payload") or {}).get("effect"), Mapping)
+                and ((event.get("payload") or {}).get("effect") or {}).get(
+                    "released_hold"
+                )
+                == released_reference
+            ),
+            None,
+        )
+        if prior_use is not None and prior_use.get("operation_id") != operation_id:
+            raise CliError(
+                EXECUTION_BINDING_MIGRATE_ERROR,
+                "released-hold recovery has already been consumed",
+            )
+        runtime_context = dict(runtime_context)
+        runtime_context["released_hold"] = dict(released_reference)
     manifest_path = active_manifest_path().resolve(strict=False)
 
     def _effect(txn: Any) -> dict[str, Any]:
+        if released_reference is not None:
+            replay = txn.journal.replay_strict()
+            authoritative_release = next(
+                (
+                    event
+                    for event in replay["accepted"]
+                    if event.get("event_kind") == "chain_control.hold_released"
+                    and event.get("event_hash") == released_reference["event_hash"]
+                ),
+                None,
+            )
+            target_events = [
+                event
+                for event in replay["accepted"]
+                if event.get("chain_id") == chain_id
+                and event.get("operation_id") == base_operation_id
+            ]
+            if (
+                not isinstance(authoritative_release, Mapping)
+                or authoritative_release.get("chain_id") != chain_id
+                or authoritative_release.get("event_kind")
+                != "chain_control.hold_released"
+                or authoritative_release.get("event_hash")
+                != released_reference["event_hash"]
+                or not target_events
+                or target_events[-1].get("event_kind") != "chain_control.hold_released"
+                or target_events[-1].get("event_hash") != released_reference["event_hash"]
+            ):
+                raise ChainControlHold(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "released-hold recovery is no longer authoritative",
+                )
+            prior_use = next(
+                (
+                    event
+                    for event in replay["accepted"]
+                    if event.get("event_kind") == "chain_control.runtime_rebound"
+                    and event.get("operation_id") != operation_id
+                    and isinstance((event.get("payload") or {}).get("effect"), Mapping)
+                    and ((event.get("payload") or {}).get("effect") or {}).get(
+                        "released_hold"
+                    )
+                    == released_reference
+                ),
+                None,
+            )
+            if prior_use is not None:
+                raise ChainControlHold(
+                    EXECUTION_BINDING_MIGRATE_ERROR,
+                    "released-hold recovery has already been consumed",
+                )
         adapter = ChainStateAdapter(txn, state_path)
         raw_state = adapter.read_expected()
         if not isinstance(raw_state, Mapping):
@@ -4455,6 +4680,11 @@ def promote_legacy_runtime_binding(
                         "chain_session": session,
                         "marker_path": str(marker_path),
                         "execution_binding": active,
+                        **(
+                            {"released_hold": dict(released_reference)}
+                            if released_reference is not None
+                            else {}
+                        ),
                     }
         except (BlockingIOError, TimeoutError) as exc:
             raise ChainControlHold(
@@ -4482,7 +4712,10 @@ def promote_legacy_runtime_binding(
         operation_id=operation_id,
         expected_revision=expected_state_revision,
         expected_cursor=expected_cursor,
-        linked_receipts=[str(receipt_path)],
+        linked_receipts=[
+            str(receipt_path),
+            *([released_reference["path"]] if released_reference is not None else []),
+        ],
         effect=_safe_effect,
         state_paths=[plan_state_path],
         committed_event_kind="chain_control.runtime_rebound",
