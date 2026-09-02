@@ -862,9 +862,6 @@ def _archive_journal(
     effect = payload.get("effect") if isinstance(payload, Mapping) else None
     if not isinstance(payload, Mapping) or payload.get("intent_kind") != "restart_current_attempt" or not isinstance(effect, Mapping):
         raise _refuse("archived restart committed effect is malformed")
-    guard = effect.get("restart_guard")
-    if not isinstance(guard, Mapping):
-        raise _refuse("archived restart committed effect lacks its restart guard")
     return {
         "manifest": dict(manifest),
         "manifest_sha256": manifest_sha,
@@ -875,7 +872,7 @@ def _archive_journal(
         "events": events,
         "committed": committed,
         "effect": dict(effect),
-        "guard": dict(guard),
+        "guard": dict(effect.get("restart_guard")) if isinstance(effect.get("restart_guard"), Mapping) else None,
         "physical_sequence": physical,
     }
 
@@ -974,6 +971,68 @@ def _assert_legacy_projection(
     if not (0 <= expected_cursor < len(spec.milestones)) or spec.milestones[expected_cursor].label != expected_current_milestone:
         raise _refuse("legacy restart milestone does not match the frozen spec")
     return chain_raw, dict(chain), plan_raw, dict(plan), marker_raw, dict(marker), dict(binding)
+
+
+def _assert_legacy_effect(
+    archive: Mapping[str, Any],
+    *,
+    chain: Mapping[str, Any],
+    chain_raw: bytes,
+    plan_raw: bytes,
+    expected_chain_state_sha256: str,
+    expected_plan_state_sha256: str,
+    expected_operation_id: str,
+    expected_state_revision: int,
+    expected_cursor: int,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+) -> dict[str, Any]:
+    """Validate the guard-less legacy restart effect at its basic boundary."""
+    committed = archive.get("committed")
+    effect = archive.get("effect")
+    if not isinstance(committed, Mapping) or not isinstance(effect, Mapping):
+        raise _refuse("archived restart committed effect is malformed")
+    if (
+        committed.get("operation_id") != expected_operation_id
+        or committed.get("intent") != "restart_current_attempt"
+        or committed.get("expected_revision") != expected_state_revision - 1
+        or committed.get("actual_revision") != expected_state_revision
+        or committed.get("expected_cursor") != expected_cursor
+        or committed.get("actual_cursor") != expected_cursor
+    ):
+        raise _refuse("archived restart operation identity or revision evidence does not match")
+    payload = committed.get("payload")
+    if not isinstance(payload, Mapping) or payload.get("intent_kind") != "restart_current_attempt":
+        raise _refuse("archived restart committed intent is malformed")
+    if (
+        effect.get("retired_plan") != expected_current_plan
+        or effect.get("milestone") != expected_current_milestone
+        or effect.get("actual_revision") != expected_state_revision
+        or effect.get("actual_cursor") != expected_cursor
+        or effect.get("chain_state_sha256") != expected_chain_state_sha256
+        or effect.get("plan_state_sha256") != expected_plan_state_sha256
+    ):
+        raise _refuse("archived restart basic effect does not match the current projection")
+    if (
+        committed.get("pre_state_digest") != effect.get("pre_state_digest")
+        or committed.get("post_state_digest") != effect.get("post_state_digest")
+        or committed.get("actual_revision") != effect.get("actual_revision")
+        or committed.get("actual_cursor") != effect.get("actual_cursor")
+    ):
+        raise _refuse("archived restart envelope and effect evidence disagree")
+    for key in ("pre_state_digest", "post_state_digest"):
+        _full_sha256(effect.get(key), label=f"archived restart {key}")
+    from arnold_pipelines.megaplan.incident.chain_control import state_digest_for
+
+    if effect.get("post_state_digest") != state_digest_for(chain):
+        raise _refuse("archived restart post-state digest does not match the current projection")
+    if effect.get("pre_state_digest") == effect.get("post_state_digest"):
+        raise _refuse("archived restart effect does not prove a state transition")
+    if hashlib.sha256(chain_raw).hexdigest() != expected_chain_state_sha256:
+        raise _conflict("current chain state changed while validating the archived effect")
+    if hashlib.sha256(plan_raw).hexdigest() != expected_plan_state_sha256:
+        raise _conflict("retired plan state changed while validating the archived effect")
+    return dict(effect)
 
 
 def promote_legacy_restart_receipt(
@@ -1106,25 +1165,19 @@ def promote_legacy_restart_receipt(
         from arnold_pipelines.megaplan.incident.chain_control import state_digest_for
         if state_digest_for(chain) != expected_state_digest:
             raise _conflict("chain state digest does not match the legacy restart guard")
-    legacy_guard = archive["guard"]
-    if legacy_guard.get("state_revision_before") != expected_state_revision - 1 or legacy_guard.get("actual_revision") not in {None, expected_state_revision}:
-        # Older receipts put the actual revision on the envelope, not guard;
-        # the envelope is checked below as the authoritative value.
-        if archive["committed"].get("expected_revision") != expected_state_revision - 1 or archive["committed"].get("actual_revision") != expected_state_revision:
-            raise _refuse("archived restart revision evidence does not match the live revision")
-    if archive["committed"].get("expected_revision") != expected_state_revision - 1 or archive["committed"].get("actual_revision") != expected_state_revision:
-        raise _refuse("archived restart revision evidence does not match the live revision")
-    for key, expected in (("cursor", expected_cursor), ("milestone", expected_current_milestone), ("retired_plan", expected_current_plan)):
-        if legacy_guard.get(key) != expected:
-            raise _refuse(f"archived restart guard {key} does not match the live projection")
-    if legacy_guard.get("source", {}).get("head") != expected_source_head:
-        raise _refuse("archived restart source head does not match the live projection")
-    if legacy_guard.get("source_binding") != binding:
-        raise _refuse("archived restart source binding does not match the live projection")
-    if legacy_guard.get("execution_binding") != chain.get("metadata", {}).get("execution_binding"):
-        raise _refuse("archived restart execution binding does not match the live projection")
-    if legacy_guard.get("chain_state_sha256_after") not in {None, expected_chain_state_sha256} or legacy_guard.get("plan_state_sha256_after") not in {None, expected_plan_state_sha256}:
-        raise _refuse("archived restart post-state hashes do not match the live projection")
+    legacy_effect = _assert_legacy_effect(
+        archive,
+        chain=chain,
+        chain_raw=chain_raw,
+        plan_raw=plan_raw,
+        expected_chain_state_sha256=expected_chain_state_sha256,
+        expected_plan_state_sha256=expected_plan_state_sha256,
+        expected_operation_id=expected_operation_id,
+        expected_state_revision=expected_state_revision,
+        expected_cursor=expected_cursor,
+        expected_current_milestone=expected_current_milestone,
+        expected_current_plan=expected_current_plan,
+    )
     existing = _committed_event(journal, new_operation_id, LEGACY_ATTESTATION_EVENT_KIND)
     if existing is not None:
         result = apply_chain_lifecycle(
@@ -1140,10 +1193,15 @@ def promote_legacy_restart_receipt(
         return {"outcome": "replay", "operation_id": new_operation_id, "event_hash": (result.get("replay_event") or {}).get("event_hash"), "legacy_operation_id": expected_operation_id, "legacy_event_hash": expected_legacy_event_hash}
 
     def effect(txn: Any) -> dict[str, Any]:
-        current_raw, current = _load_json_bytes(state_path, label="chain state")
-        _, current_plan = _load_json_bytes(plan_path, label="retired plan state")
-        _, current_marker = _load_json_bytes(marker_path, label="session marker")
-        _assert_legacy_projection(
+        (
+            current_raw,
+            current,
+            _,
+            current_plan,
+            _,
+            current_marker,
+            binding,
+        ) = _assert_legacy_projection(
             spec_path=spec_path, project_root=project_root, marker_path=marker_path,
             state_path=state_path, plan_path=plan_path,
             expected_session_id=expected_session_id, expected_cursor=expected_cursor,
@@ -1164,14 +1222,51 @@ def promote_legacy_restart_receipt(
         # Compute the exact JSON bytes ChainStateAdapter will write so the
         # modern guard is content-addressed before the CAS happens.
         next_restart = dict(next_metadata["current_attempt_restart"])
-        modern_guard = dict(legacy_guard)
-        modern_guard.update({
+        current_source = binding.get("current")
+        execution_binding = current.get("metadata", {}).get("execution_binding")
+        if not isinstance(current_source, Mapping) or not isinstance(execution_binding, Mapping):
+            raise _refuse("current binding or execution binding is unavailable")
+        source = {"branch": current_source.get("branch"), "head": expected_source_head}
+        if not isinstance(source["branch"], str) or not source["branch"].strip():
+            raise _refuse("current source branch is unavailable")
+        modern_guard = {
+            "schema": RESTART_SCHEMA,
+            "session_id": expected_session_id,
+            "spec_sha256": expected_spec_sha256,
+            "chain_state_sha256_before": expected_chain_state_sha256,
+            "plan_state_sha256_before": expected_plan_state_sha256,
+            "marker_sha256": expected_marker_sha256,
+            "state_revision_before": expected_state_revision,
+            "cursor": expected_cursor,
+            "milestone": expected_current_milestone,
+            "retired_plan": expected_current_plan,
+            "source_binding_sha256": expected_binding_sha256,
+            "source_binding": binding,
+            "source": source,
+            "execution_binding": execution_binding,
             "attestation_operation_id": new_operation_id,
             "attested_state_revision_before": expected_state_revision,
             "attested_state_revision_after": next_revision,
             "attestation_pre_state_digest": current_digest,
             "attestation_spec_sha256": _full_sha256(expected_spec_sha256, label="spec SHA-256"),
-        })
+        }
+        legacy_guard = {
+            "schema": "arnold.megaplan.current-attempt-restart-legacy-basic-guard.v1",
+            "session_id": expected_session_id,
+            "spec_sha256": expected_spec_sha256,
+            "chain_state_sha256_after": expected_chain_state_sha256,
+            "plan_state_sha256_after": expected_plan_state_sha256,
+            "state_revision_before": expected_state_revision,
+            "cursor": expected_cursor,
+            "milestone": expected_current_milestone,
+            "retired_plan": expected_current_plan,
+            "source_binding_sha256": expected_binding_sha256,
+            "source_binding": binding,
+            "source": source,
+            "execution_binding": execution_binding,
+            "legacy_pre_state_digest": legacy_effect["pre_state_digest"],
+            "legacy_post_state_digest": legacy_effect["post_state_digest"],
+        }
         attestation = {
             "schema": LEGACY_ATTESTATION_SCHEMA,
             "operation_id": new_operation_id,

@@ -540,11 +540,43 @@ def test_restart_parser_smoke() -> None:
 
 def _legacy_archive_fixture(tmp_path: Path, *, entries_manifest: bool = False) -> dict[str, Any]:
     fixture = _fixture(tmp_path)
-    _restart(fixture)
+    chain = _load_json(fixture["state_path"])
+    chain["metadata"]["_nbf08_revision"] = 5
+    _write_json(fixture["state_path"], chain)
+    _restart(
+        fixture,
+        expected_state_revision=5,
+        expected_chain_state_sha256=sha256_path(fixture["state_path"]),
+    )
     operation_id = _load_json(fixture["state_path"])["metadata"]["current_attempt_restart"]["operation_id"]
     archive_events = tmp_path / "restart-archive" / ".megaplan" / "incident-ledger" / "events.jsonl"
     archive_events.parent.mkdir(parents=True)
     archive_events.write_bytes(fixture["root"].joinpath(".megaplan", "incident-ledger", "events.jsonl").read_bytes())
+    records = [json.loads(line) for line in archive_events.read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        envelope = record.get("payload")
+        if not isinstance(envelope, dict) or envelope.get("event_kind") != "chain_control.committed":
+            continue
+        effect = envelope.get("payload", {}).get("effect")
+        if not isinstance(effect, dict) or envelope.get("operation_id") != operation_id:
+            continue
+        effect.pop("restart_guard", None)
+        envelope["payload"]["effect"] = effect
+        envelope["event_hash"] = chain_control.compute_event_hash(
+            authority_mode=str(envelope["authority_mode"]), ledger_id=str(envelope["ledger_id"]),
+            chain_id=str(envelope["chain_id"] or "chainless"), physical_sequence=int(envelope["physical_sequence"]),
+            evidence_sequence=int(envelope["evidence_sequence"]), semantic_sequence=int(envelope["semantic_sequence"]),
+            event_id=str(envelope["event_id"]), event_kind=str(envelope["event_kind"]),
+            operation_id=str(envelope["operation_id"] or "none"), causation_id=str(envelope["causation_id"] or "none"),
+            correlation_id=str(envelope["correlation_id"] or "none"), recovery_id=str(envelope["recovery_id"] or "none"),
+            previous_physical_digest=str(envelope["previous_physical_digest"]),
+            previous_evidence_digest=str(envelope["previous_evidence_digest"]), payload=envelope["payload"],
+        )
+        break
+    archive_events.write_text(
+        "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
+        encoding="utf-8",
+    )
     manifest = archive_events.parent / "archive-manifest.json"
     if entries_manifest:
         manifest_payload = {
@@ -591,10 +623,10 @@ def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_pat
     fixture = _legacy_archive_fixture(tmp_path)
     chain = _load_json(fixture["state_path"])
     guards = _guards(fixture)
-    # The old restart advanced revision 3 -> 4; the live projection is now
-    # rev4 and carries the retired-plan boundary but no live receipt.
+    # The archived restart advanced revision 5 -> 6; the live projection is
+    # now rev6 and carries the retired-plan boundary but no live attestation.
     guards.update({
-        "expected_state_revision": 4,
+        "expected_state_revision": 6,
         "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
         "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
     })
@@ -606,7 +638,7 @@ def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_pat
         expected_spec_sha256=sha256_path(fixture["spec"]),
         expected_chain_state_sha256=sha256_path(fixture["state_path"]),
         expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
-        expected_state_revision=4, expected_marker_sha256=sha256_path(fixture["marker"]),
+        expected_state_revision=6, expected_marker_sha256=sha256_path(fixture["marker"]),
         expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
         expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
         archived_journal_path=fixture["archive_events"],
@@ -617,7 +649,7 @@ def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_pat
     )
     assert result["outcome"] == "committed"
     after = _load_json(fixture["state_path"])
-    assert after["metadata"]["_nbf08_revision"] == 5
+    assert after["metadata"]["_nbf08_revision"] == 7
     assert after["current_plan_name"] is None
     assert after["metadata"]["current_attempt_restart"]["operation_id"] == fixture["operation_id"]
     assert after["metadata"]["current_attempt_restart"]["legacy_attestation"]["legacy_event_hash"] == fixture["archive_event_hash"]
@@ -630,7 +662,7 @@ def test_legacy_restart_receipt_promotion_is_one_revision_and_replayable(tmp_pat
         expected_spec_sha256=sha256_path(fixture["spec"]),
         expected_chain_state_sha256=sha256_path(fixture["state_path"]),
         expected_plan_state_sha256=sha256_path(fixture["plan_path"]),
-        expected_state_revision=5, expected_marker_sha256=sha256_path(fixture["marker"]),
+        expected_state_revision=7, expected_marker_sha256=sha256_path(fixture["marker"]),
         expected_binding_sha256=_binding_digest(after["metadata"]["project_source_binding"]),
         expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
         archived_journal_path=fixture["archive_events"], expected_archived_journal_sha256=sha256_path(fixture["archive_events"]),
@@ -651,7 +683,7 @@ def test_legacy_restart_receipt_accepts_real_entries_manifest(tmp_path: Path) ->
         expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
         expected_spec_sha256=sha256_path(fixture["spec"]),
         expected_chain_state_sha256=sha256_path(fixture["state_path"]),
-        expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=4,
+        expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=6,
         expected_marker_sha256=sha256_path(fixture["marker"]),
         expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
         expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
@@ -661,6 +693,50 @@ def test_legacy_restart_receipt_accepts_real_entries_manifest(tmp_path: Path) ->
     )
     assert result["outcome"] == "committed"
     assert fixture["plan_path"].read_bytes() == before[fixture["plan_path"]]
+
+
+@pytest.mark.parametrize(
+    ("override", "error"),
+    [
+        ({"expected_plan_state_sha256": "0" * 64}, "retired plan state"),
+        ({"expected_source_head": "f" * 40}, "project-source head"),
+    ],
+)
+def test_legacy_restart_rejects_basic_or_current_guard_mismatch_without_mutation(
+    tmp_path: Path, override: dict[str, Any], error: str
+) -> None:
+    fixture = _legacy_archive_fixture(tmp_path)
+    before = {
+        path: path.read_bytes()
+        for path in (fixture["state_path"], fixture["plan_path"], fixture["marker"])
+    }
+    chain = _load_json(fixture["state_path"])
+    kwargs = {
+        "marker_path": fixture["marker"],
+        "expected_session_id": fixture["root"].name,
+        "expected_cursor": 6,
+        "expected_current_milestone": MILESTONE,
+        "expected_current_plan": PLAN_NAME,
+        "expected_spec_sha256": sha256_path(fixture["spec"]),
+        "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
+        "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
+        "expected_state_revision": 6,
+        "expected_marker_sha256": sha256_path(fixture["marker"]),
+        "expected_binding_sha256": _binding_digest(chain["metadata"]["project_source_binding"]),
+        "expected_source_head": fixture["source"],
+        "expected_operation_id": fixture["operation_id"],
+        "archived_journal_path": fixture["archive_events"],
+        "expected_archived_journal_sha256": sha256_path(fixture["archive_events"]),
+        "archive_manifest_path": fixture["archive_manifest"],
+        "expected_archive_manifest_sha256": sha256_path(fixture["archive_manifest"]),
+        "expected_legacy_event_hash": fixture["archive_event_hash"],
+        "reason": "reject mismatched attestation source",
+        "actor": "test",
+    }
+    kwargs.update(override)
+    with pytest.raises((CliError, chain_control.ChainControlCasConflict), match=error):
+        promote_legacy_restart_receipt(fixture["spec"], fixture["root"], **kwargs)
+    assert {path: path.read_bytes() for path in before} == before
 
 
 @pytest.mark.parametrize("entry_case", ["duplicate", "conflict", "traversal", "malformed", "wrong_path", "whitespace"])
@@ -692,7 +768,7 @@ def test_legacy_entries_manifest_rejects_invalid_binding_without_mutation(tmp_pa
             expected_current_milestone=MILESTONE, expected_current_plan=PLAN_NAME,
             expected_spec_sha256=sha256_path(fixture["spec"]),
             expected_chain_state_sha256=sha256_path(fixture["state_path"]),
-            expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=4,
+            expected_plan_state_sha256=sha256_path(fixture["plan_path"]), expected_state_revision=6,
             expected_marker_sha256=sha256_path(fixture["marker"]),
             expected_binding_sha256=_binding_digest(chain["metadata"]["project_source_binding"]),
             expected_source_head=fixture["source"], expected_operation_id=fixture["operation_id"],
