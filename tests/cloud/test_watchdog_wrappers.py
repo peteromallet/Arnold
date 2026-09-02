@@ -594,6 +594,27 @@ relaunch_materializer_authority_gate() {
     )
 
 
+def test_watchdog_maps_suppressed_babysitter_to_typed_report_without_schedule() -> None:
+    """The outer watchdog preserves the inner no-launch authority result."""
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("babysitter_policy_dispatch"),
+            "babysitter_effective_mode() { printf 'superfixer\\t'; }",
+            "babysitter_occurrence_digest() { printf 'digest'; }",
+            "babysitter_running_for_occurrence() { return 1; }",
+            "babysitter_after_elapsed() { return 0; }",
+            "launch_status_trigger_babysitter() { return 2; }",
+            "babysitter_parked_chain_stall() { return 1; }",
+            "log() { :; }",
+            "report_item() { printf '%s\\n' \"$4\"; }",
+            "babysitter_policy_dispatch session workspace spec chain plan items reason",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "babysitter_suppressed"
+
+
 def test_run_watchdog_shell_strips_ambient_notification_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
