@@ -699,9 +699,10 @@ def _archive_entries_binding(
         if not isinstance(raw, Mapping):
             raise _refuse(f"archive manifest entry {index} is malformed")
         path = raw.get("path")
-        if not isinstance(path, str) or not path.strip():
+        if not isinstance(path, str) or not path:
             raise _refuse(f"archive manifest entry {index} has no path")
-        path = path.strip()
+        if path != path.strip():
+            raise _refuse(f"archive manifest entry {index} has path whitespace")
         if (
             path.startswith(("/", "\\"))
             or re.match(r"^[A-Za-z]:", path)
@@ -724,7 +725,14 @@ def _archive_entries_binding(
             raise _refuse("archive manifest entries contain duplicate paths")
         by_path[path] = row
         normalized.append(row)
-    candidates = [row for row in normalized if PurePosixPath(row["path"]).name == events_path.name]
+    archive_root = events_path.parent.parent.parent
+    try:
+        expected_path = events_path.relative_to(archive_root).as_posix()
+    except ValueError as exc:
+        raise _refuse("archived journal is outside its archive root") from exc
+    if expected_path != ".megaplan/incident-ledger/events.jsonl":
+        raise _refuse("archived journal is not at the canonical archive path")
+    candidates = [row for row in normalized if row["path"] == expected_path]
     if len(candidates) != 1:
         raise _refuse("archive manifest must contain one unambiguous journal entry")
     binding = candidates[0]

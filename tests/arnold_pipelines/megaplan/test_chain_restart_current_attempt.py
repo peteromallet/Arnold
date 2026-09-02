@@ -550,7 +550,7 @@ def _legacy_archive_fixture(tmp_path: Path, *, entries_manifest: bool = False) -
         manifest_payload = {
             "schema": "legacy-restart-archive.v1",
             "entries": [{
-                "path": "events.jsonl",
+                "path": ".megaplan/incident-ledger/events.jsonl",
                 "sha256": sha256_path(archive_events),
                 "size": archive_events.stat().st_size,
             }],
@@ -663,7 +663,7 @@ def test_legacy_restart_receipt_accepts_real_entries_manifest(tmp_path: Path) ->
     assert fixture["plan_path"].read_bytes() == before[fixture["plan_path"]]
 
 
-@pytest.mark.parametrize("entry_case", ["duplicate", "conflict", "traversal", "malformed"])
+@pytest.mark.parametrize("entry_case", ["duplicate", "conflict", "traversal", "malformed", "wrong_path", "whitespace"])
 def test_legacy_entries_manifest_rejects_invalid_binding_without_mutation(tmp_path: Path, entry_case: str) -> None:
     fixture = _legacy_archive_fixture(tmp_path, entries_manifest=True)
     manifest = json.loads(fixture["archive_manifest"].read_text(encoding="utf-8"))
@@ -676,6 +676,10 @@ def test_legacy_entries_manifest_rejects_invalid_binding_without_mutation(tmp_pa
         manifest["entries"].append(conflicting)
     elif entry_case == "traversal":
         manifest["entries"][0]["path"] = "../events.jsonl"
+    elif entry_case == "wrong_path":
+        manifest["entries"][0]["path"] = ".megaplan/archive/events.jsonl"
+    elif entry_case == "whitespace":
+        manifest["entries"][0]["path"] = " .megaplan/incident-ledger/events.jsonl"
     else:
         del manifest["entries"][0]["size"]
     fixture["archive_manifest"].write_text(json.dumps(manifest) + "\n", encoding="utf-8")
