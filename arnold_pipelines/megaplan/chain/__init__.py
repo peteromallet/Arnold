@@ -11283,6 +11283,48 @@ def build_chain_parser(subparsers: Any) -> None:
             "runtime-rebind operation. Required to retry a released hold."
         ),
     )
+    runtime_rebind_parser.add_argument(
+        "--attested-hold-context-receipt",
+        help=(
+            "Exact receipt emitted by `chain attest-hold-context` for a "
+            "legacy contextless runtime-rebind hold."
+        ),
+    )
+
+    attest_hold_context_parser = chain_sub.add_parser(
+        "attest-hold-context",
+        help="Record an auditable operator attestation for a legacy contextless runtime hold",
+    )
+    attest_hold_context_parser.add_argument("--spec", required=True)
+    attest_hold_context_parser.add_argument("--project-dir", required=True)
+    attest_hold_context_parser.add_argument("--chain-id", required=True)
+    attest_hold_context_parser.add_argument("--operation-id", required=True)
+    attest_hold_context_parser.add_argument(
+        "--expected-hold-event-hash", "--expected-hold-event-sha256",
+        dest="expected_hold_event_hash", required=True,
+    )
+    attest_hold_context_parser.add_argument("--released-hold-receipt", required=True)
+    attest_hold_context_parser.add_argument(
+        "--expected-release-event-hash", "--expected-release-event-sha256",
+        dest="expected_release_event_hash", required=True,
+    )
+    attest_hold_context_parser.add_argument("--expected-chain-spec-sha256", required=True)
+    attest_hold_context_parser.add_argument("--expected-state-digest", required=True)
+    attest_revision_group = attest_hold_context_parser.add_mutually_exclusive_group(required=True)
+    attest_revision_group.add_argument("--expected-state-revision", type=int)
+    attest_revision_group.add_argument("--expect-missing-state-revision", action="store_true")
+    attest_hold_context_parser.add_argument("--expected-cursor", required=True, type=int)
+    attest_hold_context_parser.add_argument("--expected-current-milestone", required=True)
+    attest_hold_context_parser.add_argument("--expected-current-plan", required=True)
+    attest_hold_context_parser.add_argument("--from-runtime-sha256", required=True)
+    attest_hold_context_parser.add_argument("--to-runtime-sha256", required=True)
+    attest_hold_context_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
+    attest_hold_context_parser.add_argument("--runtime-identity", required=True)
+    attest_hold_context_parser.add_argument("--runtime-provenance-receipt", required=True)
+    attest_hold_context_parser.add_argument("--recovery-evidence", required=True)
+    attest_hold_context_parser.add_argument("--receipt", required=True)
+    attest_hold_context_parser.add_argument("--reason", required=True)
+    attest_hold_context_parser.add_argument("--actor", default="operator")
 
     release_hold_parser = chain_sub.add_parser(
         "release-hold",
@@ -11929,6 +11971,70 @@ def run_chain_cli(
         )
         return 0
 
+    if action == "attest-hold-context":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlError, chain_id_for_spec
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                attest_hold_context,
+                verify_external_runtime_identity,
+            )
+
+            if args.chain_id != chain_id_for_spec(spec_path):
+                raise CliError("chain_mismatch", "hold context attestation chain does not match the spec")
+            identity_path = Path(args.runtime_identity).expanduser().resolve(strict=False)
+            provenance_path = Path(args.runtime_provenance_receipt).expanduser().resolve(strict=False)
+            verified_identity = verify_external_runtime_identity(identity_path, provenance_path)
+            expected_revision = getattr(args, "expected_state_revision", None)
+            expect_missing_revision = bool(getattr(args, "expect_missing_state_revision", False))
+            if not expect_missing_revision and expected_revision is None:
+                raise CliError(
+                    "missing_revision_expectation",
+                    "hold context attestation requires --expected-state-revision or "
+                    "--expect-missing-state-revision",
+                )
+            chain_state = chain_spec.load_chain_state(spec_path, verify_execution_binding=False)
+            result = attest_hold_context(
+                spec_path,
+                chain_state,
+                released_hold_receipt=args.released_hold_receipt,
+                expected_chain_id=args.chain_id,
+                expected_operation_id=args.operation_id,
+                expected_hold_event_hash=args.expected_hold_event_hash,
+                expected_release_event_hash=args.expected_release_event_hash,
+                expected_chain_spec_sha256=args.expected_chain_spec_sha256,
+                expected_state_digest=args.expected_state_digest,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_cursor=args.expected_cursor,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                direction=args.direction,
+                runtime_identity=verified_identity,
+                runtime_provenance_receipt=str(provenance_path),
+                recovery_evidence=Path(args.recovery_evidence).expanduser().resolve(),
+                reason=args.reason,
+                actor=args.actor,
+                expected_state_revision=expected_revision,
+                expect_missing_state_revision=expect_missing_revision,
+                _external_identity_verified=True,
+            )
+            receipt_path = Path(args.receipt).expanduser().resolve()
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_text(
+                json.dumps({"schema": "nbf08-chain-control-hold-context-attestation-v1", "event": result["event"]}, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except ChainControlError as exc:
+            return _emit_error(CliError(exc.code, str(exc), extra=exc.details))
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps({"success": True, "spec": str(spec_path), "action": "attest-hold-context", **result}, indent=2) + "\n")
+        return 0
+
     if action == "occurrence-join":
         project_root = root
         project_dir_arg = getattr(args, "project_dir", None)
@@ -12145,6 +12251,9 @@ def run_chain_cli(
                 ),
                 released_hold_receipt=(
                     getattr(args, "released_hold_receipt", None) or None
+                ),
+                attested_hold_context_receipt=(
+                    getattr(args, "attested_hold_context_receipt", None) or None
                 ),
             )
             after = chain_state.to_dict()

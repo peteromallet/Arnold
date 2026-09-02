@@ -35,6 +35,8 @@ BINDING_SCHEMA = "arnold.megaplan.chain_execution_binding.v1"
 REBIND_SCHEMA = "arnold.megaplan.chain_execution_rebind.v1"
 RUNTIME_BINDING_SCHEMA = "arnold.megaplan.chain_runtime_binding.v1"
 RUNTIME_REBIND_SCHEMA = "arnold.megaplan.chain_runtime_rebind.v1"
+RUNTIME_REBIND_CONTEXT_KEY = "runtime_rebind_context.v1"
+HOLD_CONTEXT_ATTESTATION_SCHEMA = "nbf08-chain-control-hold-context-attestation-v1"
 DRIFT_ERROR = "chain_execution_binding_drift"
 RUNTIME_DRIFT_ERROR = "chain_runtime_binding_drift"
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -1741,6 +1743,7 @@ def _rebind_optional_runtime_identity_transaction(
     verified_external_runtime_receipt: str | None,
     expected_chain_spec_sha256: str | None,
     released_hold_receipt: str | None = None,
+    attested_hold_context_receipt: str | None = None,
 ) -> dict[str, Any]:
     """Replace an optional chain's runtime through one NBF-08 transaction.
 
@@ -1770,6 +1773,22 @@ def _rebind_optional_runtime_identity_transaction(
         plan_dir / "state.json" if plan_dir is not None else None
     )
     chain_id = chain_id_for_spec(spec_path)
+    if released_hold_receipt and attested_hold_context_receipt:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: released-hold and attested-context receipts are mutually exclusive",
+        )
+    runtime_context = {
+        "chain_id": chain_id,
+        "policy": "optional",
+        "direction": direction,
+        "chain_spec_sha256": str(expected_chain_spec_sha256 or ""),
+        "cursor": getattr(state, "current_milestone_index", None),
+        "current_milestone": expected_current_milestone,
+        "current_plan": expected_current_plan,
+        "from_runtime_sha256": expected_previous_runtime_sha256,
+        "to_runtime_sha256": expected_active_runtime_sha256,
+    }
     operation_id = _stable_id(
         "runtime-rebind",
         "optional-policy-replacement",
@@ -1784,6 +1803,7 @@ def _rebind_optional_runtime_identity_transaction(
         actor,
     )
     release_reference: dict[str, Any] | None = None
+    attestation_reference: dict[str, Any] | None = None
     if released_hold_receipt:
         receipt_path = Path(released_hold_receipt).expanduser().resolve(strict=False)
         try:
@@ -1815,6 +1835,53 @@ def _rebind_optional_runtime_identity_transaction(
             release_reference["event_hash"],
             release_reference["recovery_epoch"],
         )
+    if attested_hold_context_receipt:
+        receipt_path = Path(attested_hold_context_receipt).expanduser().resolve(strict=False)
+        try:
+            receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt is unreadable") from exc
+        candidate = receipt_payload.get("event") if isinstance(receipt_payload, Mapping) else None
+        candidate = candidate if isinstance(candidate, Mapping) else receipt_payload
+        if not isinstance(receipt_payload, Mapping) or receipt_payload.get("schema") != HOLD_CONTEXT_ATTESTATION_SCHEMA:
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt schema is invalid")
+        payload = candidate.get("payload") if isinstance(candidate, Mapping) else None
+        effect = payload.get("effect") if isinstance(payload, Mapping) else None
+        context = effect.get(RUNTIME_REBIND_CONTEXT_KEY) if isinstance(effect, Mapping) else None
+        if (
+            not isinstance(candidate, Mapping)
+            or candidate.get("event_kind") != "chain_control.hold_context_attested"
+            or not isinstance(payload, Mapping)
+            or not isinstance(effect, Mapping)
+            or not isinstance(context, Mapping)
+        ):
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt is invalid")
+        event_hash = str(candidate.get("event_hash") or "")
+        if not _FULL_SHA256.fullmatch(event_hash):
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt lacks an event hash")
+        attestation_reference = {
+            "path": str(receipt_path),
+            "event_hash": event_hash,
+            "target_operation_id": str(effect.get("target_operation_id") or ""),
+            "held_event_hash": str(effect.get("held_event_hash") or ""),
+            "release_event_hash": str(effect.get("release_event_hash") or ""),
+            "context": dict(context),
+        }
+        if not all(
+            _FULL_SHA256.fullmatch(attestation_reference[key])
+            for key in ("target_operation_id", "held_event_hash", "release_event_hash")
+        ):
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt lacks exact recovery identities")
+        if any(attestation_reference["context"].get(key) != value for key, value in runtime_context.items()):
+            raise CliError(RUNTIME_DRIFT_ERROR, "attested hold-context receipt does not match rebind guards")
+        operation_id = _stable_id(
+            "runtime-rebind-attested-hold",
+            attestation_reference["event_hash"],
+            *[str(runtime_context[key]) for key in (
+                "chain_id", "policy", "direction", "chain_spec_sha256", "cursor",
+                "current_milestone", "current_plan", "from_runtime_sha256", "to_runtime_sha256",
+            )],
+        )
     # The operation identity, rather than the mutable revision counter, is the
     # replay key.  The adapter re-reads and CAS-checks the on-disk revision
     # under the lock; keeping this outer value unset lets a second identical
@@ -1828,6 +1895,8 @@ def _rebind_optional_runtime_identity_transaction(
     linked_receipts = [receipt_link] if receipt_link else []
     if release_reference:
         linked_receipts.append(release_reference["path"])
+    if attestation_reference:
+        linked_receipts.append(attestation_reference["path"])
 
     def _effect(txn: Any) -> dict[str, Any]:
         adapter = ChainStateAdapter(txn, state_path)
@@ -1873,14 +1942,53 @@ def _rebind_optional_runtime_identity_transaction(
             expected_active_runtime_sha256, expected_current_milestone,
             expected_current_plan, direction, reason, actor,
         )
-        if release_reference is None:
+        if attestation_reference is not None:
+            authoritative = next(
+                (
+                    event for event in replay["accepted"]
+                    if event.get("event_kind") == "chain_control.hold_context_attested"
+                    and event.get("event_hash") == attestation_reference["event_hash"]
+                ),
+                None,
+            )
+            auth_effect = ((authoritative or {}).get("payload") or {}).get("effect")
+            if (
+                authoritative is None
+                or not isinstance(auth_effect, Mapping)
+                or auth_effect.get("target_operation_id") != attestation_reference["target_operation_id"]
+                or auth_effect.get("held_event_hash") != attestation_reference["held_event_hash"]
+                or auth_effect.get("release_event_hash") != attestation_reference["release_event_hash"]
+                or authoritative.get("chain_id") != chain_id
+                or auth_effect.get(RUNTIME_REBIND_CONTEXT_KEY) != runtime_context
+            ):
+                raise ChainControlHold(
+                    RUNTIME_DRIFT_ERROR,
+                    "runtime rebind refused: attested hold context is not authoritative",
+                )
+            if attestation_reference["target_operation_id"] == operation_id:
+                raise ChainControlHold(
+                    RUNTIME_DRIFT_ERROR,
+                    "runtime rebind refused: attestation operation collides with held operation",
+                )
+        elif release_reference is None:
             existing = replay["operations"].get(base_operation_id)
-            if existing is not None and existing.get("event_kind") == "chain_control.hold_released":
+            released_runtime_hold = any(
+                event.get("event_kind") == "chain_control.hold_released"
+                and isinstance((event.get("payload") or {}).get("target_operation_id"), str)
+                and any(
+                    prior.get("event_kind") == "chain_control.intent"
+                    and prior.get("operation_id") == (event.get("payload") or {}).get("target_operation_id")
+                    and (prior.get("payload") or {}).get("intent_kind") == "runtime-rebind"
+                    for prior in replay["accepted"]
+                )
+                for event in replay["accepted"]
+            )
+            if (existing is not None and existing.get("event_kind") == "chain_control.hold_released") or released_runtime_hold:
                 raise ChainControlHold(
                     RUNTIME_DRIFT_ERROR,
                     "runtime rebind refused: released hold receipt is required for a fresh attempt",
                 )
-        else:
+        elif release_reference:
             authoritative = next(
                 (
                     event for event in replay["accepted"]
@@ -1956,6 +2064,19 @@ def _rebind_optional_runtime_identity_transaction(
             "runtime_binding": rebound.get("runtime_binding"),
             "verification_mode": rebound.get("verification_mode"),
             "rebind_event": rebound.get("event"),
+            RUNTIME_REBIND_CONTEXT_KEY: runtime_context,
+            **(
+                {
+                    "attested_hold_context": {
+                        "event_hash": attestation_reference["event_hash"],
+                        "target_operation_id": attestation_reference["target_operation_id"],
+                        "held_event_hash": attestation_reference["held_event_hash"],
+                        "release_event_hash": attestation_reference["release_event_hash"],
+                    }
+                }
+                if attestation_reference
+                else {}
+            ),
         }
 
     result = apply_chain_lifecycle(
@@ -1973,6 +2094,7 @@ def _rebind_optional_runtime_identity_transaction(
         effect=_effect,
         state_paths=[plan_state_path] if plan_state_path is not None else (),
         committed_event_kind="chain_control.runtime_rebound",
+        intent_context={RUNTIME_REBIND_CONTEXT_KEY: runtime_context},
     )
     if result.get("outcome") == "committed":
         effect = result.get("effect") or {}
@@ -2014,6 +2136,280 @@ def _rebind_optional_runtime_identity_transaction(
     )
 
 
+def attest_hold_context(
+    spec_path: Path,
+    state: Any,
+    *,
+    released_hold_receipt: str,
+    expected_chain_id: str,
+    expected_operation_id: str,
+    expected_hold_event_hash: str,
+    expected_release_event_hash: str,
+    expected_chain_spec_sha256: str,
+    expected_state_digest: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    expected_cursor: int,
+    expected_previous_runtime_sha256: str,
+    expected_active_runtime_sha256: str,
+    direction: str,
+    runtime_identity: Mapping[str, Any],
+    runtime_provenance_receipt: str,
+    recovery_evidence: Path,
+    reason: str,
+    actor: str = "operator",
+    expected_state_revision: int | None = None,
+    expect_missing_state_revision: bool = False,
+    _external_identity_verified: bool = False,
+) -> dict[str, Any]:
+    """Attest immutable context for a legacy, contextless runtime hold.
+
+    This is an evidence-only bridge.  It never writes chain state; the only
+    durable effect is a canonical ``hold_context_attested`` event linking the
+    original hold and its release.  New context-bearing holds bypass this API.
+    """
+    from arnold_pipelines.megaplan._core.io import find_plan_dir
+    from arnold_pipelines.megaplan.chain.spec import _state_path_for, load_spec
+    from arnold_pipelines.megaplan.chain.target_rebind import _assert_pause
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlCasConflict,
+        ChainControlHold,
+        ChainStateAdapter,
+        _stable_id,
+        apply_chain_lifecycle,
+        chain_id_for_spec,
+        state_digest_for,
+    )
+
+    if binding_policy(spec_path)["mode"] != "optional":
+        raise CliError(RUNTIME_DRIFT_ERROR, "hold context attestation requires optional policy")
+    if expected_chain_id != chain_id_for_spec(spec_path):
+        raise CliError(RUNTIME_DRIFT_ERROR, "hold context attestation chain does not match the spec")
+    for value, label in (
+        (expected_operation_id, "operation"),
+        (expected_hold_event_hash, "hold event"),
+        (expected_release_event_hash, "release event"),
+        (expected_chain_spec_sha256, "chain spec"),
+        (expected_state_digest, "state"),
+        (expected_previous_runtime_sha256, "previous runtime"),
+        (expected_active_runtime_sha256, "active runtime"),
+    ):
+        if not _FULL_SHA256.fullmatch(str(value or "")):
+            raise CliError(RUNTIME_DRIFT_ERROR, f"{label} SHA-256 is invalid")
+    if direction not in {"cutover", "rollback"}:
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback")
+    if not all(str(value or "").strip() for value in (expected_current_milestone, expected_current_plan, reason, actor)):
+        raise CliError(RUNTIME_DRIFT_ERROR, "every hold context attestation guard is required")
+    if expect_missing_state_revision and expected_state_revision is not None:
+        raise CliError(RUNTIME_DRIFT_ERROR, "missing-revision mode cannot include a state revision")
+    if not expect_missing_state_revision and expected_state_revision is None:
+        raise CliError(RUNTIME_DRIFT_ERROR, "hold context attestation requires an explicit revision expectation")
+    if not recovery_evidence.is_file():
+        raise CliError(RUNTIME_DRIFT_ERROR, "hold context attestation recovery evidence is unavailable")
+    evidence_sha = _sha256_file(recovery_evidence)
+    release_path = Path(released_hold_receipt).expanduser().resolve(strict=False)
+    try:
+        receipt_payload = json.loads(release_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CliError(RUNTIME_DRIFT_ERROR, "released-hold receipt is unreadable") from exc
+    release_event = receipt_payload.get("event") if isinstance(receipt_payload, Mapping) else None
+    release_event = release_event if isinstance(release_event, Mapping) else receipt_payload
+    release_payload = release_event.get("payload") if isinstance(release_event, Mapping) else None
+    if (
+        not isinstance(receipt_payload, Mapping)
+        or receipt_payload.get("schema") != "nbf08-chain-control-hold-release-v1"
+        or not isinstance(release_event, Mapping)
+        or release_event.get("event_kind") != "chain_control.hold_released"
+        or not isinstance(release_payload, Mapping)
+        or release_event.get("event_hash") != expected_release_event_hash
+        or release_payload.get("chain_id") != expected_chain_id
+        or release_payload.get("target_operation_id") != expected_operation_id
+        or release_payload.get("held_event_hash") != expected_hold_event_hash
+    ):
+        raise CliError(RUNTIME_DRIFT_ERROR, "released-hold receipt does not match the exact hold tuple")
+    receipt_path = Path(runtime_provenance_receipt).expanduser().resolve(strict=False)
+    if not receipt_path.is_file():
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime provenance receipt is unavailable")
+    receipt_data = _json_object(receipt_path, label="runtime provenance receipt")
+    if receipt_data.get("schema") != RUNTIME_PROVENANCE_RECEIPT_SCHEMA:
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime provenance receipt schema is invalid")
+    if not isinstance(runtime_identity, Mapping):
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime identity is required")
+    verified_identity = dict(runtime_identity)
+    if not _external_identity_verified:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".runtime-identity.json") as identity_file:
+            json.dump(dict(runtime_identity), identity_file)
+            identity_file.flush()
+            verified_identity = dict(verify_external_runtime_identity(Path(identity_file.name), receipt_path))
+    if verified_identity.get("content_sha256") != expected_active_runtime_sha256:
+        raise CliError(RUNTIME_DRIFT_ERROR, "verified runtime identity does not match the attested target")
+
+    context = {
+        "chain_id": expected_chain_id,
+        "policy": "optional",
+        "direction": direction,
+        "chain_spec_sha256": expected_chain_spec_sha256,
+        "cursor": expected_cursor,
+        "current_milestone": expected_current_milestone,
+        "current_plan": expected_current_plan,
+        "from_runtime_sha256": expected_previous_runtime_sha256,
+        "to_runtime_sha256": expected_active_runtime_sha256,
+    }
+    operation_id = _stable_id(
+        "hold-context-attestation",
+        expected_release_event_hash,
+        *[str(context[key]) for key in (
+            "chain_id", "policy", "direction", "chain_spec_sha256", "cursor",
+            "current_milestone", "current_plan", "from_runtime_sha256", "to_runtime_sha256",
+        )],
+    )
+    state_path = _state_path_for(spec_path)
+    project_root = _project_root(spec_path)
+    plan_dir = find_plan_dir(project_root, expected_current_plan)
+    plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
+    if plan_state_path is None or not plan_state_path.is_file():
+        raise CliError(RUNTIME_DRIFT_ERROR, "canonical paused plan state is unavailable")
+
+    def _effect(txn: Any) -> dict[str, Any]:
+        replay = txn.journal.replay_strict()
+        release = next(
+            (
+                event for event in replay["accepted"]
+                if event.get("event_kind") == "chain_control.hold_released"
+                and event.get("event_hash") == expected_release_event_hash
+            ),
+            None,
+        )
+        release_inner = release.get("payload") if isinstance(release, Mapping) else None
+        if (
+            not isinstance(release_inner, Mapping)
+            or release.get("chain_id") != expected_chain_id
+            or release_inner.get("target_operation_id") != expected_operation_id
+            or release_inner.get("held_event_hash") != expected_hold_event_hash
+        ):
+            raise ChainControlHold("hold_release_mismatch", "released hold is not authoritative")
+        operation_events = [
+            event for event in replay["accepted"]
+            if event.get("chain_id") == expected_chain_id
+            and event.get("operation_id") == expected_operation_id
+        ]
+        hold = next(
+            (
+                event for event in operation_events
+                if event.get("event_kind") == "chain_control.hold"
+                and event.get("event_hash") == expected_hold_event_hash
+            ),
+            None,
+        )
+        if not isinstance(hold, Mapping) or operation_events[-1].get("event_kind") != "chain_control.hold_released":
+            raise ChainControlHold("hold_target_mismatch", "hold context attestation requires the latest exact released hold")
+        if any(
+            isinstance(event.get("payload"), Mapping)
+            and RUNTIME_REBIND_CONTEXT_KEY in event.get("payload", {})
+            for event in operation_events
+            if event.get("event_kind") == "chain_control.intent"
+        ):
+            raise ChainControlHold("context_already_present", "context-bearing hold does not require attestation")
+        original_intent = next(
+            (
+                event for event in operation_events
+                if event.get("event_kind") == "chain_control.intent"
+            ),
+            None,
+        )
+        if not isinstance(original_intent, Mapping) or (original_intent.get("payload") or {}).get("intent_kind") != "runtime-rebind":
+            raise ChainControlHold("not_runtime_rebind_hold", "hold is not a runtime-rebind operation")
+        for prior_attestation in replay["accepted"]:
+            if prior_attestation.get("event_kind") != "chain_control.hold_context_attested":
+                continue
+            prior_effect = ((prior_attestation.get("payload") or {}).get("effect"))
+            if not isinstance(prior_effect, Mapping):
+                continue
+            if (
+                prior_effect.get("target_operation_id") == expected_operation_id
+                and prior_effect.get("release_event_hash") == expected_release_event_hash
+                and prior_effect.get(RUNTIME_REBIND_CONTEXT_KEY) != context
+            ):
+                raise ChainControlHold(
+                    "attestation_reuse",
+                    "hold context has already been attested with a different runtime target",
+                )
+        current = ChainStateAdapter(txn, state_path).read_expected()
+        if not isinstance(current, Mapping):
+            raise ChainControlHold("missing_chain_state", "canonical chain state is unavailable")
+        metadata = current.get("metadata") or {}
+        if hashlib.sha256(spec_path.read_bytes()).hexdigest() != expected_chain_spec_sha256 or str(metadata.get("chain_spec_sha256") or "") != expected_chain_spec_sha256:
+            raise ChainControlHold("spec_cas_conflict", "chain spec SHA-256 changed")
+        if state_digest_for(current) != expected_state_digest:
+            raise ChainControlCasConflict("chain state digest changed")
+        observed_revision = metadata.get("_nbf08_revision")
+        if expect_missing_state_revision:
+            if observed_revision is not None:
+                raise ChainControlCasConflict("chain state revision is present; missing-revision guard failed")
+        elif observed_revision != expected_state_revision:
+            raise ChainControlCasConflict("chain state revision changed")
+        if current.get("current_milestone_index") != expected_cursor or str(current.get("current_plan_name") or "") != expected_current_plan:
+            raise ChainControlCasConflict("chain cursor or current plan changed")
+        spec = load_spec(spec_path)
+        if not (0 <= expected_cursor < len(spec.milestones)) or spec.milestones[expected_cursor].label != expected_current_milestone:
+            raise ChainControlHold("milestone_mismatch", "current milestone does not match the frozen spec")
+        binding = ((metadata.get("execution_binding") or {}).get("runtime_binding") or {})
+        current_identity = binding.get("current_identity") if isinstance(binding, Mapping) else None
+        if not isinstance(current_identity, Mapping) or current_identity.get("content_sha256") != expected_previous_runtime_sha256:
+            raise ChainControlHold("runtime_binding_mismatch", "current runtime does not match the attested from runtime")
+        try:
+            plan_state = json.loads(plan_state_path.read_text(encoding="utf-8"))
+            _assert_pause(current, plan_state, expected_plan=expected_current_plan)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ChainControlHold("pause_unreadable", "canonical paused plan state is unreadable") from exc
+        except Exception as exc:
+            if isinstance(exc, ChainControlHold):
+                raise
+            raise ChainControlHold("pause_mismatch", str(exc)) from exc
+        digest = state_digest_for(current)
+        return {
+            "pre_state_digest": digest,
+            "post_state_digest": digest,
+            "actual_revision": observed_revision,
+            "actual_cursor": expected_cursor,
+            "current_milestone": expected_current_milestone,
+            "current_plan": expected_current_plan,
+            "chain_spec_sha256": expected_chain_spec_sha256,
+            "target_operation_id": expected_operation_id,
+            "held_event_hash": expected_hold_event_hash,
+            "release_event_hash": expected_release_event_hash,
+            RUNTIME_REBIND_CONTEXT_KEY: context,
+            "source": "operator_attestation",
+            "recovery_evidence": {"path": str(recovery_evidence.resolve()), "sha256": evidence_sha},
+            "runtime_identity": {"from": dict(current_identity), "to": dict(verified_identity)},
+            "linked_receipts": [str(release_path), str(receipt_path), str(recovery_evidence.resolve())],
+        }
+
+    result = apply_chain_lifecycle(
+        spec_path,
+        project_root,
+        intent_kind="hold-context-attestation",
+        actor={"id": actor, "class": "operator"},
+        operation_id=operation_id,
+        expected_revision=None,
+        expected_cursor=expected_current_milestone,
+        linked_receipts=[str(release_path), str(receipt_path), str(recovery_evidence.resolve())],
+        effect=_effect,
+        state_paths=[plan_state_path],
+        committed_event_kind="chain_control.hold_context_attested",
+        intent_context={RUNTIME_REBIND_CONTEXT_KEY: context},
+    )
+    if result.get("outcome") == "committed":
+        return {"outcome": "committed", "event": result.get("event"), "receipt": result.get("result")}
+    if result.get("outcome") == "replay":
+        prior = result.get("result") or {}
+        return {"outcome": "replay", "event": prior, "receipt": prior, "replay_event": result.get("replay_event")}
+    error = result.get("error")
+    if isinstance(error, ChainControlHold):
+        raise CliError(error.code, str(error), extra=dict(error.details)) from error
+    raise CliError(RUNTIME_DRIFT_ERROR, "hold context attestation did not commit")
+
+
 def rebind_runtime_identity(
     spec_path: Path,
     state: Any,
@@ -2031,6 +2427,7 @@ def rebind_runtime_identity(
     expected_chain_spec_sha256: str | None = None,
     verified_external_runtime_receipt: str | None = None,
     released_hold_receipt: str | None = None,
+    attested_hold_context_receipt: str | None = None,
     _inside_transaction: bool = False,
     _external_identity_verified: bool = False,
 ) -> dict[str, Any]:
@@ -2053,6 +2450,16 @@ def rebind_runtime_identity(
         raise CliError(
             RUNTIME_DRIFT_ERROR,
             "runtime rebind refused: released-hold receipt requires optional-policy override",
+        )
+    if attested_hold_context_receipt and not allow_optional_policy:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: attested hold-context receipt requires optional-policy override",
+        )
+    if released_hold_receipt and attested_hold_context_receipt:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: released-hold and attested-context receipts are mutually exclusive",
         )
     if not _FULL_SHA256.fullmatch(expected_previous_runtime_sha256):
         raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 is invalid")
@@ -2177,6 +2584,7 @@ def rebind_runtime_identity(
             verified_external_runtime_receipt=verified_external_runtime_receipt,
             expected_chain_spec_sha256=expected_chain_spec_sha256,
             released_hold_receipt=released_hold_receipt,
+            attested_hold_context_receipt=attested_hold_context_receipt,
         )
 
     policy = binding_policy(spec_path)

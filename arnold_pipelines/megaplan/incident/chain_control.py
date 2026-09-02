@@ -94,6 +94,7 @@ SEMANTIC_KINDS = frozenset(
         "chain_control.source_rebound",
         "chain_control.config_rebound",
         "chain_control.runtime_rebound",
+        "chain_control.hold_context_attested",
         "chain_control.backend_rebound",
     }
 )
@@ -106,6 +107,7 @@ CLAIMLESS_KINDS = frozenset(
         "chain_control.cas_conflict",
         "chain_control.tamper_detected",
         "chain_control.hold",
+        "chain_control.hold_context_attested",
         "chain_control.replay",
         "chain_control.authority_validated",
     }
@@ -133,6 +135,7 @@ ALL_KINDS = (
         "chain_control.external_effect_result",
         "chain_control.reconcile_required",
         "chain_control.hold_released",
+        "chain_control.hold_context_attested",
     }
 )
 
@@ -716,6 +719,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.suffix_rebound",
         "chain_control.runtime_rebound",
         "chain_control.hold_released",
+        "chain_control.hold_context_attested",
     }
 )
 
@@ -1202,6 +1206,7 @@ class ChainControlJournal:
                         "chain_control.cas_conflict",
                         "chain_control.hold",
                         "chain_control.hold_released",
+                        "chain_control.hold_context_attested",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",
                     } or op_id not in operations:
@@ -1405,6 +1410,7 @@ class ChainControlJournal:
         spec_identity: Any = None,
         source_identity: Any = None,
         committed_event_kind: str = "chain_control.committed",
+        intent_context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         authority_mode = "file"
         key = replay_tuple_for(
@@ -1484,6 +1490,7 @@ class ChainControlJournal:
             operation_id=operation_id,
             actor=actor,
         ) as txn:
+            context = dict(intent_context or {})
             intent = self.append_under_lock(
                 txn,
                 event_kind="chain_control.intent",
@@ -1491,7 +1498,7 @@ class ChainControlJournal:
                 operation_id=operation_id,
                 causation_id=operation_id,
                 correlation_id=operation_id,
-                payload={"intent_kind": intent_kind, "expected_revision": expected_revision},
+                payload={"intent_kind": intent_kind, "expected_revision": expected_revision, **context},
                 semantic_effect="no_change",
                 claim_class=claim_class,
                 actor=actor,
@@ -1509,7 +1516,7 @@ class ChainControlJournal:
                 operation_id=operation_id,
                 causation_id=intent["payload"]["event_id"],
                 correlation_id=operation_id,
-                payload={"intent_kind": intent_kind},
+                payload={"intent_kind": intent_kind, **context},
                 semantic_effect="no_change",
                 claim_class=claim_class,
                 actor=actor,
@@ -1523,7 +1530,7 @@ class ChainControlJournal:
                 operation_id=operation_id,
                 causation_id=validated["payload"]["event_id"],
                 correlation_id=operation_id,
-                payload={"intent_kind": intent_kind, "claim": "single-use"},
+                payload={"intent_kind": intent_kind, "claim": "single-use", **context},
                 semantic_effect="no_change",
                 claim_class=claim_class,
                 actor=actor,
@@ -1559,7 +1566,7 @@ class ChainControlJournal:
                     operation_id=operation_id,
                     causation_id=claimed["payload"]["event_id"],
                     correlation_id=operation_id,
-                    payload={"reason": str(exc), "code": exc.code, "details": exc.details},
+                    payload={"reason": str(exc), "code": exc.code, "details": exc.details, **context},
                     semantic_effect="no_change",
                     claim_class="held" if isinstance(exc, DurabilityUnknown) else "evidence-only",
                     actor=actor,
@@ -2261,6 +2268,7 @@ def apply_chain_lifecycle(
     effect: Callable[[LockedChainControlTransaction], dict[str, Any]] | None = None,
     state_paths: Sequence[Path] = (),
     committed_event_kind: str = "chain_control.committed",
+    intent_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     journal = journal_for(root)
     chain_id = chain_id_for_spec(spec_path)
@@ -2287,6 +2295,7 @@ def apply_chain_lifecycle(
         linked_receipts=linked_receipts,
         effect=effect,
         committed_event_kind=committed_event_kind,
+        intent_context=intent_context,
     )
 
 
