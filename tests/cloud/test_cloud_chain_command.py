@@ -39,6 +39,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _durable_megaplan_uploads,
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
+    _launch_boundary_prefix,
     _materialize_canonical_epic_input,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
@@ -390,6 +391,49 @@ def test_all_chain_entrypoints_use_shared_post_hot_env_boundary() -> None:
             assert source.index("cloud-hot-env") < source.index(
                 "arnold_materialize_launch_boundary"
             )
+        assert "if arnold_materialize_launch_boundary" in source
+
+
+def test_boundary_failure_preserves_rc_and_never_dispatches(tmp_path: Path) -> None:
+    boundary = tmp_path / "arnold-launch-boundary"
+    boundary.write_text(
+        "arnold_materialize_launch_boundary() { return 78; }\n",
+        encoding="utf-8",
+    )
+    boundary.chmod(0o755)
+
+    cli_prefix = _launch_boundary_prefix(
+        session="native-build-forward-c2-bb000694-20260903-r4",
+        engine_var=shlex.quote(str(tmp_path)),
+    )
+    cli_result = subprocess.run(
+        ["bash", "-c", cli_prefix + "echo SENTINEL"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert cli_result.returncode == 78
+    assert "SENTINEL" not in cli_result.stdout
+
+    from arnold_pipelines.megaplan.cloud import chain_drive
+
+    drive_command = chain_drive._command(
+        session="native-build-forward-c2-bb000694-20260903-r4",
+        engine_dir=tmp_path,
+        interpreter=Path("/bin/echo"),
+        spec=tmp_path / "chain.yaml",
+        project_dir=tmp_path,
+        canonical_log=tmp_path / "chain.log",
+        one=False,
+    )
+    drive_result = subprocess.run(
+        ["bash", "-c", drive_command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert drive_result.returncode == 78
+    assert "arnold_pipelines.megaplan" not in drive_result.stdout
 
 
 def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:

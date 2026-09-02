@@ -86,8 +86,9 @@ def _command(
         'fi; if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then '
         'echo "[megaplan-chain-drive] launch_boundary_unavailable" >&2; exit 78; fi; '
         '. "$ARNOLD_LAUNCH_BOUNDARY"; '
-        f'arnold_materialize_launch_boundary {shlex.quote(session)} '
-        f'{shlex.quote(str(engine_dir))} {shlex.quote(str(engine_dir))}; '
+        f'if arnold_materialize_launch_boundary {shlex.quote(session)} '
+        f'{shlex.quote(str(engine_dir))} {shlex.quote(str(engine_dir))}; then :; '
+        'else _arnold_boundary_rc=$?; exit "$_arnold_boundary_rc"; fi; '
     )
     argv: list[str] = [
         "env",

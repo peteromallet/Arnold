@@ -120,7 +120,7 @@ if [[ ! -r "$ARNOLD_LAUNCH_BOUNDARY" ]]; then
   exit 78
 fi
 . "$ARNOLD_LAUNCH_BOUNDARY"
-arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"
+if arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"; then :; else boundary_rc=$?; exit "$boundary_rc"; fi
 
 # ── pre-flight acceptance gate ───────────────────────────────────────
 # In atomic/enforce mode a completed chain with successors requiring
@@ -237,7 +237,7 @@ _run_chain_start() {
     # Reassert immediately before dispatch as well as at wrapper admission;
     # this closes the gap where a sourced hot env or supervisor hook changes
     # launch-affecting variables between validation and the child process.
-    arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"
+    if arnold_materialize_launch_boundary "$EXPECTED_SESSION" "$ENGINE_DIR" "$ENGINE_DIR"; then :; else boundary_rc=$?; return "$boundary_rc"; fi
     # A babysitter-owned chain drive must transfer ownership before the
     # supervisor returns.  The producer records AgentBox's typed process
     # resource first, then emits the occurrence-bound receipt consumed by the
