@@ -31,6 +31,9 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     rebind_runtime_identity,
     verify_external_runtime_identity,
 )
+from arnold_pipelines.megaplan.chain.execution_binding import (
+    _assert_marker_agrees_with_runtime,
+)
 from arnold_pipelines.megaplan.chain.operator_pause import AUTHORITY_SCHEMA
 from arnold_pipelines.megaplan.chain.spec import (
     ChainState,
@@ -4542,6 +4545,16 @@ def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayabl
     ]
     assert len(semantic) == 1
     assert semantic[0]["payload"]["effect"]["chain_spec_sha256"] == expected_spec_sha
+    operation_events = [
+        event for event in replay["accepted"]
+        if event.get("operation_id") == semantic[0]["operation_id"]
+    ]
+    assert all(event.get("expected_revision") in (None, 0) for event in operation_events)
+    intent = next(event for event in operation_events if event["event_kind"] == "chain_control.intent")
+    promotion_context = intent["payload"]["legacy_runtime_promotion.v1"]
+    assert promotion_context["expected_state_digest"] == state_digest_for(before.to_dict())
+    assert promotion_context["expected_state_revision"] == 0
+    assert semantic[0]["expected_revision"] == 0
 
     replayed = promote_legacy_runtime_binding(
         spec_path,
@@ -4574,7 +4587,7 @@ def test_execution_binding_promote_legacy_runtime_only_is_ledgered_and_replayabl
         verify_bound_state_matches_journal(spec_path)
 
 
-@pytest.mark.parametrize("bad_guard", ["state", "marker", "manifest"])
+@pytest.mark.parametrize("bad_guard", ["state", "marker", "manifest", "malformed-marker"])
 def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4614,6 +4627,9 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
     spec_before = spec_path.read_bytes()
     marker_before = marker_path.read_bytes()
     manifest_before = manifest_path.read_bytes()
+    if bad_guard == "malformed-marker":
+        marker_path.write_bytes(b"{not-json}\n")
+        marker_before = marker_path.read_bytes()
     state_obj = load_chain_state(spec_path, verify_execution_binding=False)
     marker_sha = hashlib.sha256(marker_before).hexdigest()
     manifest_sha = hashlib.sha256(manifest_before).hexdigest()
@@ -4628,6 +4644,8 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
         kwargs["expected_state_digest"] = "0" * 64
     elif bad_guard == "marker":
         kwargs["expected_marker_sha256"] = "1" * 64
+    elif bad_guard == "malformed-marker":
+        kwargs["expected_marker_sha256"] = hashlib.sha256(marker_before).hexdigest()
     else:
         kwargs["expected_manifest_sha256"] = "2" * 64
     with pytest.raises(CliError):
@@ -4647,3 +4665,71 @@ def test_execution_binding_promote_legacy_runtime_only_bad_cas_is_zero_state_mut
     assert spec_path.read_bytes() == spec_before
     assert marker_path.read_bytes() == marker_before
     assert manifest_path.read_bytes() == manifest_before
+    if bad_guard == "malformed-marker":
+        assert any(
+            event.get("event_kind") == "chain_control.hold"
+            and "legacy_runtime_promotion.v1" in event.get("payload", {})
+            for event in journal_for(tmp_path).replay_strict()["accepted"]
+        )
+
+
+def test_marker_multiple_identity_forms_must_all_agree() -> None:
+    """Redundant marker forms are accepted only when mutually consistent."""
+    spec_path = Path("/workspace/.megaplan/initiatives/demo/chain.yaml")
+    runtime = normalize_runtime_identity(
+        _legacy_runtime_identity(Path("/workspace/runtime-candidates/demo"))
+    )
+    marker = {
+        "session": "promotion-session",
+        "remote_spec": str(spec_path),
+        "runtime_binding": {"current_identity": dict(runtime)},
+        "editable_source_head": runtime["source_revision"],
+        "editable_install_sync": {"source": runtime["import_root"]},
+    }
+    marker_sha = hashlib.sha256(
+        json.dumps(marker, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    _assert_marker_agrees_with_runtime(
+        marker,
+        session="promotion-session",
+        spec_path=spec_path,
+        guarded_plan="c2-plan",
+        external=runtime,
+        old_root=Path(runtime["import_root"]),
+        expected_marker_sha256=marker_sha,
+        marker_sha256=marker_sha,
+    )
+
+    conflicting = json.loads(json.dumps(marker))
+    conflicting["editable_source_head"] = "b" * 40
+    conflicting_sha = hashlib.sha256(
+        json.dumps(conflicting, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(CliError, match="marker source head"):
+        _assert_marker_agrees_with_runtime(
+            conflicting,
+            session="promotion-session",
+            spec_path=spec_path,
+            guarded_plan="c2-plan",
+            external=runtime,
+            old_root=Path(runtime["import_root"]),
+            expected_marker_sha256=conflicting_sha,
+            marker_sha256=conflicting_sha,
+        )
+
+    malformed = json.loads(json.dumps(marker))
+    malformed["runtime_binding"] = "forged"
+    malformed_sha = hashlib.sha256(
+        json.dumps(malformed, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(CliError, match="runtime binding form is malformed"):
+        _assert_marker_agrees_with_runtime(
+            malformed,
+            session="promotion-session",
+            spec_path=spec_path,
+            guarded_plan="c2-plan",
+            external=runtime,
+            old_root=Path(runtime["import_root"]),
+            expected_marker_sha256=malformed_sha,
+            marker_sha256=malformed_sha,
+        )
