@@ -113,7 +113,7 @@ def _dirty_fingerprint(source: Path) -> list[dict[str, Any]]:
     for status in _status(source):
         if len(status) < 4:
             raise _refuse("source status contains a malformed path")
-        code, relative = status[:2], status[3:]
+        code, relative = status[:2], status[3:].rstrip("/")
         path = source / relative
         try:
             info = path.lstat()
@@ -131,7 +131,20 @@ def _dirty_fingerprint(source: Path) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: (str(row.get("path")), str(row.get("status"))))
 
 
-def _archive_dirty_state(source: Path, custody_dir: Path, operation_id: str) -> tuple[Path, dict[str, Any]]:
+def _git_diff(source: Path, *, exclude_paths: tuple[str, ...] = ()) -> bytes:
+    args = ["diff", "HEAD"]
+    if exclude_paths:
+        args.extend(["--", *[f":(exclude){item}" for item in exclude_paths]])
+    return _git(source, *args).stdout.encode("utf-8")
+
+
+def _archive_dirty_state(
+    source: Path,
+    custody_dir: Path,
+    operation_id: str,
+    *,
+    exclude_paths: tuple[str, ...] = (),
+) -> tuple[Path, dict[str, Any]]:
     """Archive tracked diff and untracked bytes once, content-addressed."""
     root = custody_dir.expanduser().resolve(strict=False) / operation_id
     manifest_path = root / "manifest.json"
@@ -147,7 +160,7 @@ def _archive_dirty_state(source: Path, custody_dir: Path, operation_id: str) -> 
     status = _status(source)
     if not status:
         raise _refuse("failed-prechain recovery requires the recorded dirty source state")
-    diff = _git(source, "diff", "HEAD").stdout.encode("utf-8")
+    diff = _git_diff(source, exclude_paths=exclude_paths)
     root.mkdir(parents=True, exist_ok=True)
     diff_path = root / "tracked.diff"
     diff_path.write_bytes(diff)
@@ -197,15 +210,39 @@ def _verify_archive(manifest_path: Path, payload: Mapping[str, Any], operation_i
             raise _refuse("recovery archive entry is missing or changed")
 
 
-def _assert_source_archive_fingerprint(source: Path, archive_path: Path, payload: Mapping[str, Any]) -> None:
+def _assert_source_archive_fingerprint(
+    source: Path,
+    archive_path: Path,
+    payload: Mapping[str, Any],
+    *,
+    exclude_paths: tuple[str, ...] = (),
+    before_excluded: Mapping[str, Mapping[str, Any]] | None = None,
+) -> None:
+    def excluded(path: str) -> bool:
+        return any(path == item or path.startswith(item + "/") for item in exclude_paths)
+
     expected_tree = payload.get("worktree_fingerprint")
-    if not isinstance(expected_tree, list) or _dirty_fingerprint(source) != expected_tree:
+    if not isinstance(expected_tree, list):
         raise _refuse("source tracked, untracked, or symlink set differs from the archive")
+    expected_rows = [row for row in expected_tree if isinstance(row, Mapping) and not excluded(str(row.get("path") or ""))]
+    actual_tree = _dirty_fingerprint(source)
+    actual_rows = [row for row in actual_tree if not excluded(str(row.get("path") or ""))]
+    if actual_rows != expected_rows:
+        raise _refuse("source tracked, untracked, or symlink set differs from the archive")
+    if before_excluded is not None:
+        expected_by_path = {
+            str(row.get("path")): row
+            for row in expected_tree
+            if isinstance(row, Mapping) and str(row.get("path") or "") in exclude_paths
+        }
+        for path, before in before_excluded.items():
+            if expected_by_path.get(path) != before:
+                raise _refuse("archived journal baseline does not match the guarded workspace")
     entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
     tracked = next((row for row in entries if isinstance(row, Mapping) and row.get("path") == "tracked.diff"), None)
     if not isinstance(tracked, Mapping):
         raise _refuse("recovery archive has no tracked diff entry")
-    current_diff = _git(source, "diff", "HEAD").stdout.encode("utf-8")
+    current_diff = _git_diff(source, exclude_paths=exclude_paths)
     if hashlib.sha256(current_diff).hexdigest() != tracked.get("sha256"):
         raise _refuse("tracked source changes differ from the archived failed launch")
     for row in entries:
@@ -219,6 +256,30 @@ def _assert_source_archive_fingerprint(source: Path, archive_path: Path, payload
             valid = candidate.is_file() and _sha(candidate) == str(row.get("sha256") or "")
         if not valid:
             raise _refuse("untracked source changes differ from the archived failed launch")
+
+
+def _journal_owned_paths(journal: Any, chain_id: str, workspace: Path) -> tuple[str, ...]:
+    """Return only the journal paths this recovery is allowed to create/change."""
+    ledger_dir = Path(journal.ledger.ledger_dir).resolve(strict=False)
+    paths = [
+        ledger_dir / ".events.seq",
+        ledger_dir / ".events.init_ts",
+        ledger_dir / "events.jsonl",
+        Path(journal.scope_lock_path(chain_id)).resolve(strict=False),
+        ledger_dir / ".nbf08-locks",
+    ]
+    relative: list[str] = []
+    for path in paths:
+        try:
+            relative.append(path.relative_to(workspace).as_posix())
+        except ValueError:
+            continue
+    return tuple(sorted(set(relative)))
+
+
+def _journal_baseline(workspace: Path, paths: tuple[str, ...]) -> dict[str, Mapping[str, Any]]:
+    rows = {str(row.get("path")): row for row in _dirty_fingerprint(workspace)}
+    return {path: rows[path] for path in paths if path in rows}
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -308,9 +369,39 @@ def _stage_runtime(source: Path, staged: Path, old_sha: str, new_sha: str) -> No
         shutil.copytree(old_venv, new_venv, symlinks=True)
 
 
-def _promote_staged_runtime(source: Path, staged: Path, backup: Path, *, new_sha: str) -> None:
+def _copy_journal_state(workspace: Path, staged: Path, relative_paths: tuple[str, ...]) -> None:
+    """Carry the authoritative pre-swap journal bytes into the clean candidate."""
+    for relative in relative_paths:
+        source = workspace / relative
+        target = staged / relative
+        if source.is_dir() and not source.is_symlink():
+            shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+        elif source.is_symlink():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            target.symlink_to(os.readlink(source))
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+
+
+def _promote_staged_runtime(
+    source: Path,
+    staged: Path,
+    backup: Path,
+    *,
+    new_sha: str,
+    allowed_dirty_paths: tuple[str, ...] = (),
+) -> None:
     """Atomically replace the dirty workspace, retaining it as custody."""
-    if _head(staged) != new_sha or _status(staged):
+    dirty = _status(staged)
+    if allowed_dirty_paths:
+        dirty = [
+            item for item in dirty
+            if not any(item[3:].rstrip("/") == allowed or item[3:].rstrip("/").startswith(allowed + "/") for allowed in allowed_dirty_paths)
+        ]
+    if _head(staged) != new_sha or dirty:
         raise _refuse("staged runtime is not clean at the reviewed revision")
     if backup.exists():
         if source.exists() and _head(source) == new_sha and not _status(source):
@@ -429,18 +520,23 @@ def recover_failed_prechain(
             raise _refuse("three-root recovery requires distinct engine and chain roots")
         if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
             raise _refuse("immutable engine runtime is not the clean failed revision")
-    archive_path, archive = _archive_dirty_state(workspace_path, custody_dir, operation_id)
-    _verify_archive(archive_path, archive, operation_id)
-    receipt_path = archive_path.parent / "recovery-receipt.json"
-
     from arnold_pipelines.megaplan.incident.chain_control import (
         ChainControlHold,
-        _stable_id,
         chain_id_for_spec,
         journal_for,
     )
     chain_id = chain_id_for_spec(spec_path)
     journal = journal_for(project_root)
+    journal_owned_paths = _journal_owned_paths(journal, chain_id, workspace_path)
+    journal_before = _journal_baseline(workspace_path, journal_owned_paths)
+    archive_path, archive = _archive_dirty_state(
+        workspace_path,
+        custody_dir,
+        operation_id,
+        exclude_paths=journal_owned_paths,
+    )
+    _verify_archive(archive_path, archive, operation_id)
+    receipt_path = archive_path.parent / "recovery-receipt.json"
     journal.ensure_genesis(chain_id=chain_id, actor={"id": actor, "class": "operator"}, spec_identity=str(spec_path))
 
     existing = journal.operation_result(operation_id)
@@ -471,9 +567,21 @@ def recover_failed_prechain(
         if source_path != workspace_path and (_head(engine_runtime_path) != old_sha or _status(engine_runtime_path)):
             raise ChainControlHold("engine_cas_conflict", "immutable engine runtime changed under recovery lock")
         try:
-            _assert_source_archive_fingerprint(workspace_path, archive_path, archive)
+            _assert_source_archive_fingerprint(
+                workspace_path,
+                archive_path,
+                archive,
+                exclude_paths=journal_owned_paths,
+                before_excluded=journal_before,
+            )
         except CliError as exc:
             raise ChainControlHold("source_cas_conflict", str(exc)) from exc
+        # The exception above is narrowly limited to known journal files; the
+        # journal itself must still be structurally valid and strictly replayable.
+        try:
+            journal.replay_strict()
+        except ChainControlHold:
+            raise
         failed_workspace = archive_path.parent / "failed-workspace"
         receipt_before = receipt_path.read_bytes() if receipt_path.exists() and receipt_path.stat().st_size else None
         promoted_workspace = False
@@ -501,7 +609,14 @@ def recover_failed_prechain(
         rollback_state = restore
         try:
             _stage_runtime(source_path, staged_runtime_path, old_sha, new_sha)
-            _promote_staged_runtime(workspace_path, staged_runtime_path, failed_workspace, new_sha=new_sha)
+            _copy_journal_state(workspace_path, staged_runtime_path, journal_owned_paths)
+            _promote_staged_runtime(
+                workspace_path,
+                staged_runtime_path,
+                failed_workspace,
+                new_sha=new_sha,
+                allowed_dirty_paths=journal_owned_paths,
+            )
             promoted_workspace = True
             if Path(str(current_manifest.epic.get("runtime_root") or "")).expanduser().resolve(strict=False) != engine_runtime_path:
                 raise ChainControlHold("engine_cas_conflict", "runtime manifest engine identity changed")
