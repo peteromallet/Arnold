@@ -56,6 +56,15 @@
 #
 set -euo pipefail
 
+# The chain bootstrap supplies the reviewed source-bound interpreter.  Keep a
+# standalone invocation compatible with the historical default, but never
+# silently choose a different interpreter when the launcher pinned one.
+PYTHON_BIN="${ARNOLD_RUNTIME_PYTHON:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "arnold-runtime-create: reviewed source interpreter is unavailable" >&2
+  exit 78
+fi
+
 if [[ $# -ne 2 ]]; then
   echo "usage: arnold-runtime-create <slug> <base-ref>" >&2
   exit 64
@@ -108,7 +117,7 @@ BRANCH="fixer/$SLUG-$STAMP"
 MANIFEST_PATH="$MANIFEST_DIR/$SLUG.json"
 
 _json_get() {
-  python3 -c '
+  "$PYTHON_BIN" -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
 for key in sys.argv[2].split("."):
@@ -156,7 +165,7 @@ if [[ -e "$RUNTIME_DIR" || -e "$MANIFEST_PATH" ]]; then
     echo "arnold-runtime-create: base-ref '$BASE_REF' is not resolvable in '$BASE_REPO'" >&2
     exit 1
   fi
-  python3 - "$MANIFEST_PATH" "$SLUG" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$CANONICAL_ORIGIN" <<'PY'
+  "$PYTHON_BIN" - "$MANIFEST_PATH" "$SLUG" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$CANONICAL_ORIGIN" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
@@ -250,7 +259,7 @@ fi
 # install).
 GEN_ROOT="${ARNOLD_RUNTIME_VENVS_DIR:-$BASE_DIR/runtime-venvs}"
 DEPS_LOCKFILE="$RUNTIME_DIR/uv.lock"
-GEN_PROOF_JSON="$(python3 - "$RUNTIME_DIR" "$GEN_ROOT" <<'PY'
+GEN_PROOF_JSON="$("$PYTHON_BIN" - "$RUNTIME_DIR" "$GEN_ROOT" <<'PY'
 import json, os, sys
 from pathlib import Path
 from arnold_pipelines.megaplan.cloud.install_sync import (
@@ -270,7 +279,7 @@ PY
   echo "arnold-runtime-create: dependency generation build/verify FAILED for '$RUNTIME_DIR' (frozen spec: '$DEPS_LOCKFILE') — refusing to create a runtime without a verifiable generation" >&2
   exit 1
 }
-GEN_DIR="$(python3 -c '
+GEN_DIR="$("$PYTHON_BIN" -c '
 import json, sys
 proof = json.loads(sys.argv[1])
 print(str(proof["interpreter_path"]).rsplit("/bin/python", 1)[0])
@@ -278,7 +287,8 @@ print(str(proof["interpreter_path"]).rsplit("/bin/python", 1)[0])
   echo "arnold-runtime-create: dependency generation proof is unreadable (interpreter path missing)" >&2
   exit 1
 }
-echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON"))" >&2
+GEN_ID="$("$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON")"
+echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$GEN_ID)" >&2
 
 # (c) Write the epic manifest atomically. Build the full payload first (the
 # complete mandatory field set per the runtime_manifest contract — schema "1",
@@ -292,7 +302,7 @@ manifest_valid() {
 
 mkdir -p "$MANIFEST_DIR"
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
-python3 - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" "$GEN_DIR" "$GEN_PROOF_JSON" "$DEPS_LOCKFILE" "$REMOTE" <<'PY'
+"$PYTHON_BIN" - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" "$GEN_DIR" "$GEN_PROOF_JSON" "$DEPS_LOCKFILE" "$REMOTE" <<'PY'
 import json, os, sys
 from datetime import datetime, timedelta, timezone
 
@@ -479,13 +489,13 @@ with open(path, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2, sort_keys=True)
     fh.write("\n")
 PY
-if python3 -m arnold_pipelines.megaplan.cloud.runtime_manifest write \
+if "$PYTHON_BIN" -m arnold_pipelines.megaplan.cloud.runtime_manifest write \
     "$MANIFEST_PATH" --from "$MANIFEST_TMP" >/dev/null 2>&1 \
    && manifest_valid "$MANIFEST_PATH" "$SLUG"; then
   : # authoritative writer validated and wrote the manifest
 else
   echo "arnold-runtime-create: runtime_manifest CLI unavailable/failed; writing '$MANIFEST_PATH' directly (fallback)" >&2
-  python3 - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
+  "$PYTHON_BIN" - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
 import json, os, sys, tempfile
 
 path, src = sys.argv[1:3]
@@ -509,7 +519,7 @@ fi
 # full payload directly (schema-valid; from_dict ignores unknown keys) so the
 # deviation record ALWAYS persists — an allow_manifestless permit that
 # silently disappears from the manifest would be a silent fallback.
-python3 - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
+"$PYTHON_BIN" - "$MANIFEST_PATH" "$MANIFEST_TMP" <<'PY'
 import json, os, sys, tempfile
 
 path, src = sys.argv[1:3]
@@ -554,7 +564,7 @@ if [[ -f "$POINTER" ]]; then
 fi
 COMPATIBILITY_RECEIPT="${ARNOLD_RUNTIME_COMPATIBILITY_RECEIPT:-$MANIFEST_PATH.compatibility-pointer-conflict.json}"
 export ARNOLD_RUNTIME_COMPATIBILITY_RECEIPT="$COMPATIBILITY_RECEIPT"
-if ! python3 -c '
+if ! "$PYTHON_BIN" -c '
 import hashlib
 import json
 import os

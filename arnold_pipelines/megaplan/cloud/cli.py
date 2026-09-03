@@ -4236,6 +4236,7 @@ def _chain_runtime_probe_and_create_command(
     chain_state_path: str | None = None,
     marker_path: str | None = None,
     session_name: str | None = None,
+    runtime_python: str | None = None,
 ) -> str:
     """Box-side probe for the per-epic runtime manifest; creates the runtime
     when absent and verifies/resumes an exact pre-chain partial runtime.
@@ -4264,6 +4265,37 @@ def _chain_runtime_probe_and_create_command(
         create_env.append(f"CHAIN_MARKER={shlex.quote(marker_path)}")
     if session_name:
         create_env.append(f"CHAIN_SESSION={shlex.quote(session_name)}")
+    # Runtime creation is a source-bound bootstrap operation.  The installed
+    # /usr/local/bin wrapper may belong to an older image and can import a
+    # different runtime, so never select it by PATH or by ambient image
+    # freshness.  The configured megaplan source checkout is the authority;
+    # the remote command verifies its exact ref, wrapper blob, and import root
+    # before invoking anything that can create state.
+    python_assignment = (
+        f"PYTHON_BIN={shlex.quote(runtime_python)}"
+        if runtime_python
+        else 'PYTHON_BIN="$(command -v python3 2>/dev/null || true)"'
+    )
+    source_guard = "\n".join(
+        [
+            f'CREATE_SOURCE={shlex.quote(base_repo)}',
+            'CREATE_BIN="$CREATE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
+            f"{python_assignment}",
+            'if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then echo "chain_runtime_wrapper_interpreter_unavailable: reviewed source interpreter is not executable" >&2; exit 78; fi',
+            'SOURCE_ROOT="$(git -C "$CREATE_SOURCE" rev-parse --show-toplevel 2>/dev/null || true)"',
+            'if [ -z "$SOURCE_ROOT" ] || [ ! -x "$CREATE_BIN" ]; then echo "chain_runtime_wrapper_unavailable: configured source wrapper is missing or unreadable" >&2; exit 78; fi',
+            'SOURCE_HEAD="$(git -C "$CREATE_SOURCE" rev-parse --verify "$BASE_REF^{commit}" 2>/dev/null || true)"',
+            'CHECKED_OUT_HEAD="$(git -C "$CREATE_SOURCE" rev-parse --verify HEAD 2>/dev/null || true)"',
+            'if [ -z "$SOURCE_HEAD" ] || [ "$SOURCE_HEAD" != "$CHECKED_OUT_HEAD" ]; then echo "chain_runtime_source_binding_mismatch: configured source HEAD does not exactly match base ref" >&2; exit 78; fi',
+            'SOURCE_TREE="$(git -C "$CREATE_SOURCE" rev-parse --verify "$SOURCE_HEAD^{tree}" 2>/dev/null || true)"',
+            'WRAPPER_BLOB="$(git -C "$CREATE_SOURCE" rev-parse --verify "$SOURCE_HEAD:arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create" 2>/dev/null || true)"',
+            'WRAPPER_DIGEST="$(git -C "$CREATE_SOURCE" hash-object "$CREATE_BIN" 2>/dev/null || true)"',
+            'if [ -z "$SOURCE_TREE" ] || [ -z "$WRAPPER_BLOB" ] || [ "$WRAPPER_BLOB" != "$WRAPPER_DIGEST" ]; then echo "chain_runtime_wrapper_identity_mismatch: configured source wrapper differs from its reviewed commit" >&2; exit 78; fi',
+            'export PYTHONSAFEPATH=1 PYTHONPATH="$CREATE_SOURCE" ARNOLD_RUNTIME_PYTHON="$PYTHON_BIN" ARNOLD_REVIEWED_SOURCE_ROOT="$CREATE_SOURCE" ARNOLD_REVIEWED_SOURCE_REVISION="$SOURCE_HEAD" ARNOLD_REVIEWED_SOURCE_TREE="$SOURCE_TREE"',
+            'cd "$CREATE_SOURCE"',
+            'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$CREATE_SOURCE" "$PYTHON_BIN" -P -c \'import arnold_pipelines, pathlib, sys; expected=pathlib.Path(sys.argv[1]).resolve(); actual=pathlib.Path(arnold_pipelines.__file__).resolve().parents[1]; raise SystemExit(0 if actual == expected else 78)\' "$CREATE_SOURCE"; then echo "chain_runtime_source_import_mismatch: reviewed source was not imported" >&2; exit 78; fi',
+        ]
+    )
     return "\n".join(
         [
             "set -euo pipefail",
@@ -4271,10 +4303,7 @@ def _chain_runtime_probe_and_create_command(
             f"MANIFEST={shlex.quote(manifest_path)}",
             f"BASE_REPO={shlex.quote(base_repo)}",
             f"BASE_REF={shlex.quote(base_ref)}",
-            "CREATE_BIN=/usr/local/bin/arnold-runtime-create",
-            'if [ ! -x "$CREATE_BIN" ]; then',
-            '  CREATE_BIN="$BASE_REPO/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
-            "fi",
+            source_guard,
             *create_env,
             'if [ -f "$MANIFEST" ]; then',
             # A present runtime is resumable only before any chain authority
@@ -4291,7 +4320,7 @@ def _chain_runtime_probe_and_create_command(
             '  git -C "$BASE_REPO" fetch origin "$BASE_REF" >/dev/null 2>&1 || true',
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             "fi",
-            'python3 - "$MANIFEST" 0 <<\'PY\'',
+            '"$PYTHON_BIN" - "$MANIFEST" 0 <<\'PY\'',
             _RUNTIME_MANIFEST_BINDING_READER,
             "PY",
         ]
@@ -4387,6 +4416,7 @@ def _ensure_chain_runtime_binding(
         chain_state_path=launch_ctx.state_path,
         marker_path=launch_ctx.marker_path,
         session_name=launch_ctx.session_name,
+        runtime_python=launch_spec.megaplan.runtime_python,
     )
     result = provider.ssh_exec(command)
     if result.returncode != 0:

@@ -1834,6 +1834,82 @@ def test_chain_runtime_probe_and_create_command_embeds_create_and_policy() -> No
     assert "/workspace/.megaplan/demo-abc123.json" in command
 
 
+def test_chain_runtime_probe_uses_reviewed_source_wrapper_over_stale_installed_bin(
+    tmp_path: Path,
+) -> None:
+    """A stale image wrapper must not get a chance to import an old runtime."""
+    source = tmp_path / "reviewed-source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "branch", "-M", "main"], check=True)
+    package = source / "arnold_pipelines"
+    package.mkdir()
+    (package / "__init__.py").write_text("__version__ = 'reviewed'\n")
+    wrapper = (
+        source / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+        / "arnold-runtime-create"
+    )
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "printf source-wrapper > \"$SOURCE_MARKER\"\n"
+        "cat > \"$ARNOLD_RUNTIME_MANIFEST_DIR/$1.json\" <<'JSON'\n"
+        '{"runtime_id":"demo-1","schema":"1","generation":1,'
+        '"epic_id":"demo","state":"active","owner":"test",'
+        '"base":{},"epic":{"branch":"fixer/demo","worktree_path":"/tmp/runtime",'
+        '"venv_path":"/tmp","runtime_root":"/tmp/runtime",'
+        '"expected_head":"0000000000000000000000000000000000000000",'
+        '"repair_bin":"/tmp/repair","deps_lockfile":"/tmp/uv.lock"},'
+        '"indirection":{},"policy":{},"promotions":[],"timestamps":{},'
+        '"gc_policy":{},"commands":[]}\n'
+        "JSON\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.name=test",
+            "-c", "user.email=test@example.invalid", "commit", "-qm",
+            "reviewed source",
+        ],
+        check=True,
+    )
+    stale_bin = tmp_path / "stale-bin"
+    stale_bin.mkdir()
+    stale_marker = tmp_path / "stale-wrapper-used"
+    (stale_bin / "arnold-runtime-create").write_text(
+        f"#!/bin/sh\nprintf stale > {shlex.quote(str(stale_marker))}\nexit 99\n",
+        encoding="utf-8",
+    )
+    (stale_bin / "arnold-runtime-create").chmod(0o755)
+    source_marker = tmp_path / "source-wrapper-used"
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    manifest = manifest_dir / "demo.json"
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo", manifest_path=str(manifest), runtime_src="/tmp/runtime",
+        manifest_dir=str(manifest_dir), base_repo=str(source), base_ref="main",
+        policy_path=None, runtime_python=sys.executable,
+    )
+    assert 'CREATE_BIN="$CREATE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"' in command
+    assert "/usr/local/bin/arnold-runtime-create" not in command
+    result = subprocess.run(
+        ["bash", "-c", command], capture_output=True, text=True,
+        env={
+            **os.environ,
+            "PATH": f"{stale_bin}:{os.environ['PATH']}",
+            "SOURCE_MARKER": str(source_marker),
+            "PYTHONPATH": str(tmp_path / "missing-ambient-python"),
+        },
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert source_marker.read_text() == "source-wrapper"
+    assert not stale_marker.exists()
+    assert json.loads(result.stdout)["epic_id"] == "demo"
+
+
 def test_chain_runtime_probe_pins_canonical_origin_and_partial_recovery_guards() -> None:
     command = _chain_runtime_probe_and_create_command(
         slug="demo-abc123",
