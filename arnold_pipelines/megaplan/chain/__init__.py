@@ -11480,6 +11480,14 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Close one exact prior failed-prechain hold with an auditable no-effect disposition",
     )
     failed_prechain_parser.add_argument(
+        "--retry-after",
+        metavar="OPERATION_ID",
+        help=(
+            "Start one deterministic new recovery attempt only after this "
+            "exact operation has a terminal no-effect hold reconciliation"
+        ),
+    )
+    failed_prechain_parser.add_argument(
         "--expected-held-event-hash",
         help="Exact SHA-256 event hash of the held operation's durable hold",
     )
@@ -12502,6 +12510,11 @@ def run_chain_cli(
                 actor=args.actor,
             )
             if args.reconcile_held:
+                if args.retry_after:
+                    raise CliError(
+                        "invalid_recovery_mode",
+                        "--reconcile-held and --retry-after are mutually exclusive",
+                    )
                 if not args.expected_held_event_hash:
                     raise CliError(
                         "missing_held_event_hash",
@@ -12529,6 +12542,7 @@ def run_chain_cli(
                     Path(args.project_dir).expanduser().resolve(),
                     staged_runtime_path=Path(args.staged_runtime).expanduser().resolve(),
                     reviewed_new_sha=args.reviewed_new_sha,
+                    retry_after_operation_id=args.retry_after,
                     **common,
                 )
         except CliError as exc:

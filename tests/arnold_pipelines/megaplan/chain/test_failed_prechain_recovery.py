@@ -304,7 +304,7 @@ def _held_recovery_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> d
     )
     monkeypatch.setattr(recovery, "load_manifest", lambda _path: current)
     custody = project / "custody"
-    operation_id = "held-recovery-operation"
+    operation_id = hashlib.sha256(b"held-recovery-operation").hexdigest()
     evidence = custody / operation_id / "manifest.json"
     (workspace / "generated-reconcile.md").write_text("immutable failed-launch evidence\n", encoding="utf-8")
     evidence, _archive = recovery._archive_dirty_state(workspace, custody, operation_id)
@@ -442,6 +442,80 @@ def test_reconcile_accepts_only_an_empty_regular_receipt_stub(
     result = recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
     assert result["outcome"] == "committed"
     assert receipt.read_bytes() == b""
+
+
+def test_retry_after_reconciled_hold_is_a_linked_deterministic_attempt_and_replayable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    reconcile_kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="reconcile before deterministic retry", actor="operator",
+    )
+    reconciliation = recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **reconcile_kwargs)
+    assert reconciliation["outcome"] == "committed"
+
+    retry_kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], staged_runtime_path=tmp_path / "staged-retry",
+        custody_dir=f["custody"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], reviewed_new_sha=f["new"],
+        retry_after_operation_id=f["operation_id"], reason="retry after no-effect reconciliation", actor="operator",
+    )
+    monkeypatch.setattr(
+        recovery,
+        "cutover_runtime_manifest",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            generation=2,
+            epic={"runtime_root": str(f["workspace"]), "expected_head": f["new"]},
+        ),
+    )
+    monkeypatch.setattr(
+        recovery,
+        "write_manifest",
+        lambda _manifest, path: path.write_text("manifest-after\n", encoding="utf-8"),
+    )
+    first = recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
+    assert first["outcome"] == "committed"
+    assert first["operation_id"] != f["operation_id"]
+    assert recovery._head(f["workspace"]) == f["new"]
+    assert recovery._head(f["custody"] / first["operation_id"] / "failed-workspace") == f["old"]
+
+    # The retry intent records the exact terminal predecessor and event hash;
+    # strict replay therefore exposes a durable causal link, not a nonce.
+    from arnold_pipelines.megaplan.incident.chain_control import journal_for
+    replay = journal_for(f["project"]).replay_strict()
+    terminal = replay["operations"][f["operation_id"]]
+    retry_intent = next(
+        event for event in replay["accepted"]
+        if event.get("operation_id") == first["operation_id"]
+        and event.get("event_kind") == "chain_control.intent"
+    )
+    assert retry_intent["payload"]["retry_after_operation_id"] == f["operation_id"]
+    assert retry_intent["payload"]["retry_after_event_hash"] == terminal["event_hash"]
+    retry_committed = replay["operations"][first["operation_id"]]
+    assert str(f["custody"] / f["operation_id"] / "manifest.json") in retry_committed["linked_receipts"]
+    second = recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
+    assert second["outcome"] == "replay"
+
+
+def test_retry_after_requires_terminal_no_effect_predecessor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], staged_runtime_path=tmp_path / "staged-retry",
+        custody_dir=f["custody"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], reviewed_new_sha=f["new"],
+        retry_after_operation_id=f["operation_id"], reason="must reject unresolved predecessor", actor="operator",
+    )
+    with pytest.raises(CliError, match="terminal aborted_no_effect"):
+        recovery.recover_failed_prechain(f["spec"], f["project"], **kwargs)
 
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "directory"])

@@ -435,6 +435,7 @@ def recover_failed_prechain(
     reviewed_new_sha: str,
     reason: str,
     actor: str = "operator",
+    retry_after_operation_id: str | None = None,
 ) -> dict[str, Any]:
     """Recover one failed same-session bootstrap, with one journaled effect."""
     spec_path = spec_path.expanduser().resolve(strict=False)
@@ -469,9 +470,21 @@ def recover_failed_prechain(
             except ValueError:
                 continue
             raise _refuse(f"{label} path must not be inside the {root_label}")
-    operation_id = hashlib.sha256(
-        f"{RECOVERY_INTENT}\0{expected_session_id}\0{expected_manifest_sha256}\0{old_sha}\0{new_sha}".encode()
-    ).hexdigest()
+    retry_after = None
+    if retry_after_operation_id is not None:
+        retry_after = _safe_text(retry_after_operation_id, label="retry predecessor operation")
+        if _SHA256.fullmatch(retry_after) is None:
+            raise _refuse("retry predecessor operation must be a full SHA-256 operation id")
+    operation_identity = (
+        f"{RECOVERY_INTENT}\0{expected_session_id}\0{expected_manifest_sha256}\0"
+        f"{old_sha}\0{new_sha}"
+    )
+    # Preserve the original operation identity for the first attempt.  A
+    # retry is a distinct deterministic attempt linked to its terminal
+    # predecessor, so replay cannot accidentally alias the original effect.
+    if retry_after is not None:
+        operation_identity += f"\0retry-after\0{retry_after}"
+    operation_id = hashlib.sha256(operation_identity.encode()).hexdigest()
     state_path = chain_spec._state_path_for(spec_path)
     if state_path.exists():
         raise _refuse("failed-prechain recovery requires absent chain state")
@@ -528,6 +541,71 @@ def recover_failed_prechain(
     )
     chain_id = chain_id_for_spec(spec_path)
     journal = journal_for(project_root)
+    retry_after_event_hash: str | None = None
+    retry_evidence_path: Path | None = None
+    if retry_after is not None:
+        replay = journal.replay_strict()
+        predecessor = replay["operations"].get(retry_after)
+        predecessor_events = [
+            event for event in replay.get("accepted", [])
+            if event.get("chain_id") == chain_id and event.get("operation_id") == retry_after
+        ]
+        if (
+            not isinstance(predecessor, Mapping)
+            or predecessor.get("event_kind") != "chain_control.hold_reconciled"
+            or predecessor.get("outcome") != "aborted_no_effect"
+            or not predecessor_events
+            or predecessor_events[-1].get("event_hash") != predecessor.get("event_hash")
+        ):
+            raise _refuse("retry predecessor must be a terminal aborted_no_effect hold reconciliation")
+        retry_after_event_hash = str(predecessor.get("event_hash") or "").lower()
+        if _SHA256.fullmatch(retry_after_event_hash) is None:
+            raise _refuse("retry predecessor terminal event hash is invalid")
+        predecessor_payload = predecessor.get("payload") if isinstance(predecessor.get("payload"), Mapping) else {}
+        expected_predecessor = {
+            "held_operation_id": retry_after,
+            "session": expected_session_id,
+            "spec_path": str(spec_path),
+            "spec_sha256": expected_spec_sha256,
+            "marker_path": str(marker_path),
+            "marker_sha256": expected_marker_sha256,
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": expected_manifest_sha256,
+            "old_sha": old_sha,
+            "new_sha": new_sha,
+            "reviewed_source": str(source_path),
+            "chain_workspace": str(workspace_path),
+            "engine_runtime": str(engine_runtime_path),
+        }
+        if any(predecessor_payload.get(key) != value for key, value in expected_predecessor.items()):
+            raise _refuse("retry predecessor identity does not match current recovery guards")
+        if predecessor.get("spec_identity") != str(spec_path):
+            raise _refuse("retry predecessor spec identity does not match")
+        if predecessor.get("intent") != "reconcile-held-no-effect":
+            raise _refuse("retry predecessor intent is not held-operation reconciliation")
+        if predecessor.get("source_identity") != {
+            "old_sha": old_sha,
+            "new_sha": new_sha,
+            "reviewed_source": str(source_path),
+            "chain_workspace": str(workspace_path),
+            "engine_runtime": str(engine_runtime_path),
+        }:
+            raise _refuse("retry predecessor source identity does not match")
+        evidence = predecessor_payload.get("recovery_evidence")
+        expected_evidence = custody_dir / retry_after / "manifest.json"
+        retry_evidence_path = expected_evidence
+        if not isinstance(evidence, Mapping) or Path(str(evidence.get("path") or "")).resolve(strict=False) != expected_evidence:
+            raise _refuse("retry predecessor custody evidence identity does not match")
+        if not expected_evidence.is_file() or _sha(expected_evidence) != str(evidence.get("sha256") or ""):
+            raise _refuse("retry predecessor custody evidence is unavailable or changed")
+        try:
+            evidence_payload = json.loads(expected_evidence.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise _refuse("retry predecessor custody evidence is unreadable") from exc
+        _verify_archive(expected_evidence, evidence_payload, retry_after)
+        linked = predecessor.get("linked_receipts") or []
+        if str(expected_evidence) not in {str(item) for item in linked}:
+            raise _refuse("retry predecessor terminal is not linked to its custody evidence")
     journal_owned_paths = _journal_owned_paths(journal, chain_id, workspace_path)
     journal_before = _journal_baseline(workspace_path, journal_owned_paths)
     archive_path, archive = _archive_dirty_state(
@@ -738,7 +816,10 @@ def recover_failed_prechain(
             ],
             effect=effect,
             claim_class="required",
-            linked_receipts=[str(archive_path)],
+            linked_receipts=[
+                str(archive_path),
+                *([str(retry_evidence_path)] if retry_evidence_path is not None else []),
+            ],
             spec_identity=str(spec_path),
             source_identity={
                 "old_sha": old_sha,
@@ -754,6 +835,15 @@ def recover_failed_prechain(
                 "reviewed_source": str(source_path),
                 "chain_workspace": str(workspace_path),
                 "engine_runtime": str(engine_runtime_path),
+                **(
+                    {
+                        "retry_after_operation_id": retry_after,
+                        "retry_after_event_hash": retry_after_event_hash,
+                        "retry_after_evidence": str(retry_evidence_path),
+                    }
+                    if retry_after is not None
+                    else {}
+                ),
             },
             on_commit_failure=on_commit_failure,
         )
