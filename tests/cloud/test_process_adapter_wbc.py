@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -142,6 +143,90 @@ def test_on_box_provider_records_process_adapter_wbc(
 
     assert [record["payload"]["boundary_event"] for record in records] == ["started", "terminal"]
     assert records[-1]["payload"]["status"] == "completed"
+
+
+def test_on_box_manifest_probe_preserves_json_stdout_without_git_classification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A compound manifest probe must not lose its binding JSON.
+
+    The probe contains Git identity checks, but no authenticated Git
+    operation. An unreachable ``else`` branch must not classify the whole
+    command as Git and suppress its stdout at the credential boundary.
+    """
+    from arnold_pipelines.megaplan.cloud.cli import _chain_runtime_probe_and_create_command
+    from arnold_pipelines.megaplan.cloud.runtime_manifest import (
+        EPIC_REQUIRED,
+        TOP_LEVEL_REQUIRED,
+    )
+
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+    wrapper = source / "arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"
+    wrapper.parent.mkdir(parents=True)
+    (source / "arnold_pipelines/__init__.py").write_text("\n", encoding="utf-8")
+    wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.name=Test",
+            "-c", "user.email=test@example.com", "commit", "-qm", "seed",
+        ],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    manifest = manifest_dir / "demo.json"
+    payload = {key: {} for key in TOP_LEVEL_REQUIRED}
+    payload.update(
+        schema="1", generation=1, epic_id="demo", state="active",
+        owner="test", runtime_id="demo-runtime",
+    )
+    payload["base"] = {
+        "ref": "main", "commit": head, "editable_install_path": "",
+        "venv_path": str(tmp_path / "venv"),
+    }
+    payload["epic"] = {
+        key: {
+            "branch": "fixer/demo", "worktree_path": str(tmp_path / "runtime"),
+            "venv_path": str(tmp_path / "venv"), "runtime_root": str(tmp_path / "runtime"),
+            "expected_head": head, "repair_bin": str(tmp_path / "repair"),
+            "deps_lockfile": str(tmp_path / "uv.lock"),
+        }[key]
+        for key in EPIC_REQUIRED
+    }
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo", manifest_path=str(manifest), runtime_src=str(tmp_path / "runtime"),
+        manifest_dir=str(manifest_dir), base_repo=str(source), base_ref="main",
+        policy_path=None, runtime_python=sys.executable,
+    )
+    assert 'git -C "$BASE_REPO" fetch' not in command
+
+    result = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh")).ssh_exec(command)
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {
+        "created": 0, "epic_id": "demo", "present": True,
+        "runtime_id": "demo-runtime", "runtime_revision": head,
+        "runtime_src": str(tmp_path / "runtime"),
+    }
 
 
 def test_on_box_checkout_clones_after_external_wbc_evidence(

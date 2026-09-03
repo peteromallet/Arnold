@@ -4350,9 +4350,12 @@ def _chain_runtime_probe_and_create_command(
             '  done',
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             "else",
-            # Best-effort ref refresh so creation resolves the configured
-            # engine ref (the launch's own refresh would run too late).
-            '  git -C "$BASE_REPO" fetch origin "$BASE_REF" >/dev/null 2>&1 || true',
+            # The source-bound wrapper owns base-ref resolution and its Git
+            # operations are independently authenticated/redacted.  Do not
+            # inline a fetch in this compound probe: OnBoxProvider correctly
+            # treats commands containing fetch/push/clone as Git operations
+            # and suppresses their stdout to prevent credential leakage.  A
+            # probe must retain its final JSON binding record on stdout.
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             "fi",
             '"$PYTHON_BIN" - "$MANIFEST" 0 <<\'PY\'',
