@@ -354,7 +354,7 @@ def test_on_box_github_checkout_uses_file_helper_without_secret_in_argv_or_wbc(
         _cloud_spec(tmp_path, provider="ssh"),
         repo=replace(
             _cloud_spec(tmp_path, provider="ssh").repo,
-            url=f"https://user:{secret}@github.com/example/app.git",
+            url=f"https://user:{secret}@github.com:443/example/app.git",
         ),
     )
     calls: list[tuple[list[str], dict[str, object]]] = []
@@ -367,11 +367,22 @@ def test_on_box_github_checkout_uses_file_helper_without_secret_in_argv_or_wbc(
         "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", fake_run
     )
     provider = OnBoxProvider(spec)
+    auth_calls: list[str] = []
+    original_git_auth_exec = provider.git_auth_exec
+
+    def recording_git_auth_exec(command: str):
+        auth_calls.append(command)
+        return original_git_auth_exec(command)
+
+    monkeypatch.setattr(provider, "git_auth_exec", recording_git_auth_exec)
     _ensure_repo_checkout(spec, provider, relay=False)
 
     argv, kwargs = calls[0]
+    assert len(auth_calls) == 1
+    assert secret not in auth_calls[0]
     assert secret not in " ".join(argv)
     assert secret not in render_ensure_repo_command(spec.repo)
+    assert "github.com:443/example/app.git" in " ".join(argv)
     env = kwargs["env"]
     assert isinstance(env, dict)
     assert env["GIT_CONFIG_NOSYSTEM"] == "1"

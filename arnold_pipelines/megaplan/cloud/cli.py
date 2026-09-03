@@ -23,6 +23,7 @@ from importlib import resources
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -1692,6 +1693,25 @@ def _ensure_repo_command(spec: CloudSpec) -> str:
     return render_ensure_repos_block(spec)
 
 
+def _repo_requires_on_box_git_auth(repo: Any) -> bool:
+    """Return whether a repository declaration targets authenticated GitHub.
+
+    This decision is made from the structured URL after the same user-info
+    sanitization used by the rendered checkout command.  It intentionally
+    handles credentials and an explicit port, while avoiding any inspection
+    of arbitrary shell text.
+    """
+    sanitized = _sanitise_git_url(str(getattr(repo, "url", "")).strip())
+    if sanitized.lower().startswith("git@github.com:"):
+        return True
+    try:
+        parsed = urlsplit(sanitized)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in {"https", "ssh"} and hostname == "github.com"
+
+
 def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> None:
     command = _ensure_repo_command(spec)
     # Repository URLs are structured configuration, so the authenticated Git
@@ -1700,10 +1720,7 @@ def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> N
     # wrapper code). Local/file clones retain normal stdout and do not require
     # the AgentBox credential helper.
     repos = [spec.repo, *spec.extra_repos]
-    requires_git_auth = any(
-        repo.url.lower().startswith(("https://github.com/", "ssh://git@github.com/", "git@github.com:"))
-        for repo in repos
-    )
+    requires_git_auth = any(_repo_requires_on_box_git_auth(repo) for repo in repos)
     if requires_git_auth:
         result = provider.git_auth_exec(command)
     else:
