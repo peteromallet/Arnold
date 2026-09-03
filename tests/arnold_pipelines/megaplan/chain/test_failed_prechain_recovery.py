@@ -143,6 +143,41 @@ def test_recovery_is_idempotent_and_leaves_chain_state_absent(tmp_path: Path, mo
     assert second["outcome"] == "replay"
 
 
+def test_three_root_recovery_preserves_engine_and_reviewed_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source, old, new = _repo(tmp_path)
+    engine = tmp_path / "engine"
+    workspace = tmp_path / "chain-workspace"
+    project = tmp_path / "session"
+    subprocess.run(["git", "clone", "-q", str(source), str(engine)], check=True)
+    subprocess.run(["git", "clone", "-q", str(source), str(workspace)], check=True)
+    (workspace / "tracked.txt").write_text("generated reconcile\n", encoding="utf-8")
+    (workspace / "briefs").mkdir()
+    (workspace / "briefs" / "reconcile.md").write_text("generated\n", encoding="utf-8")
+    spec = workspace / ".megaplan" / "initiatives" / "x" / "chain.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    project.mkdir()
+    marker = project / "marker.json"
+    marker.write_text(json.dumps({"session": project.name, "workspace": str(workspace), "bootstrap_manifest_path": str(project / "manifest.json"), "launch_outcome": {"status": "failed", "code": "launch_not_advanced"}}) + "\n")
+    manifest = project / "manifest.json"
+    manifest.write_text("manifest-before\n")
+    current = SimpleNamespace(epic={"runtime_root": str(engine), "expected_head": old, "venv_path": "/tmp/venv", "repair_bin": "/tmp/bin"}, generation=1)
+    monkeypatch.setattr(recovery, "load_manifest", lambda _path: current)
+    monkeypatch.setattr(recovery, "cutover_runtime_manifest", lambda *_args, **_kwargs: SimpleNamespace(generation=2, epic={"runtime_root": str(workspace), "expected_head": new}))
+    monkeypatch.setattr(recovery, "write_manifest", lambda _manifest, path: path.write_text("manifest-after\n"))
+    marker_before, manifest_before = marker.read_bytes(), manifest.read_bytes()
+    kwargs = dict(marker_path=marker, manifest_path=manifest, source_path=source, workspace_path=workspace, staged_runtime_path=tmp_path / "staged", custody_dir=tmp_path / "custody", expected_session_id=project.name, expected_marker_sha256=hashlib.sha256(marker_before).hexdigest(), expected_manifest_sha256=hashlib.sha256(manifest_before).hexdigest(), expected_spec_sha256=hashlib.sha256(spec.read_bytes()).hexdigest(), expected_old_sha=old, reviewed_new_sha=new, reason="three root recovery")
+    result = recovery.recover_failed_prechain(spec, project, **kwargs)
+    assert result["outcome"] == "committed"
+    assert recovery._head(source) == old
+    assert not recovery._status(source)
+    assert recovery._head(engine) == old
+    assert not recovery._status(engine)
+    assert recovery._head(workspace) == new
+    assert not recovery._status(workspace)
+    assert recovery._head(tmp_path / "custody" / result["operation_id"] / "failed-workspace") == old
+
+
 def test_manifest_failure_rolls_back_workspace_and_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source, old, new = _repo(tmp_path)
     (source / "tracked.txt").write_text("dirty\n", encoding="utf-8")
