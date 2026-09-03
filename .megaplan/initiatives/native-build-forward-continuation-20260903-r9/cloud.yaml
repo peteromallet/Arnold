@@ -1,0 +1,49 @@
+# Prepared for the existing AgentBox; deliberately idle until an operator
+# performs the documented preflight and launch after this branch is published.
+provider: ssh
+
+repo:
+  url: https://github.com/peteromallet/Arnold.git
+  branch: main
+  workspace: /workspace/runtime-candidates/native-build-forward-c2-d58a0346-20260903-r9
+
+agents:
+  default: codex
+
+# The cloud control process is separate from the phase profile. Every
+# chain/prep/critique/execute/review route is pinned by the chain's
+# all-muse-spark-openrouter profile to Muse Spark 1.3 Contributor.
+codex:
+  model: gpt-5.6-sol
+  reasoning: high
+
+chain_session: native-build-forward-c2-d58a0346-20260903-r9
+mode: idle
+
+chain:
+  spec: /workspace/runtime-candidates/native-build-forward-c2-d58a0346-20260903-r9/.megaplan/initiatives/native-build-forward-continuation-20260903-r9/chain.yaml
+
+megaplan:
+  ref: main
+  codex_auth: chatgpt
+  repo: https://github.com/peteromallet/Arnold.git
+  src_path: /workspace/runtime-candidates/native-build-forward-c2-d58a0346-20260903-r9-arnold
+  runtime_python: /root/.pyenv/versions/3.13.6/bin/python
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent-resident-only
+
+secrets: []
+
+# Supported marker location is fixed by the AgentBox runtime. The unique
+# chain_session yields this non-colliding marker:
+# /workspace/.megaplan/cloud-sessions/native-build-forward-c2-d58a0346-20260903-r9.json
