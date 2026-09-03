@@ -525,6 +525,10 @@ def test_retry_after_requires_terminal_no_effect_predecessor(tmp_path: Path, mon
         ("disposition", "recovered", "terminal disposition"),
         ("held_event_hash", "0" * 64, "hold linkage is contradictory"),
         ("causation_id", "foreign-event", "hold linkage is contradictory"),
+        ("recovery_id", "0" * 64, "recovery identity is not deterministic"),
+        ("semantic_effect", "advance", "terminal envelope is contradictory"),
+        ("claim_class", "required", "terminal envelope is contradictory"),
+        ("failure_class", "other", "terminal envelope is contradictory"),
     ],
 )
 def test_retry_after_rejects_contradictory_terminal_or_foreign_hold_link(

@@ -561,6 +561,15 @@ def recover_failed_prechain(
         predecessor_payload = predecessor.get("payload") if isinstance(predecessor.get("payload"), Mapping) else {}
         if predecessor_payload.get("disposition") != "aborted_no_effect":
             raise _refuse("retry predecessor terminal disposition is not aborted_no_effect")
+        expected_event_kinds = (
+            "chain_control.intent",
+            "chain_control.authority_validated",
+            "chain_control.claimed",
+            "chain_control.hold",
+            "chain_control.hold_reconciled",
+        )
+        if tuple(event.get("event_kind") for event in predecessor_events) != expected_event_kinds:
+            raise _refuse("retry predecessor must contain exactly one ordered intent/validation/claim/hold/terminal lineage")
         hold_events = [
             event for event in predecessor_events
             if event.get("event_kind") == "chain_control.hold"
@@ -579,6 +588,32 @@ def recover_failed_prechain(
         claimed_event = claimed_events[0]
         intent_event = intent_events[0]
         intent_payload = intent_event.get("payload") if isinstance(intent_event.get("payload"), Mapping) else {}
+        authority_event = predecessor_events[1]
+        authority_payload = authority_event.get("payload") if isinstance(authority_event.get("payload"), Mapping) else {}
+        claimed_payload = claimed_event.get("payload") if isinstance(claimed_event.get("payload"), Mapping) else {}
+        hold_payload = hold_event.get("payload") if isinstance(hold_event.get("payload"), Mapping) else {}
+        if any(
+            _SHA256.fullmatch(str(event.get(field) or "")) is None
+            for event in predecessor_events
+            for field in ("event_id", "event_hash")
+        ):
+            raise _refuse("retry predecessor lineage contains an invalid event identity")
+        expected_lineage_identity = {
+            "session": expected_session_id,
+            "old_sha": old_sha,
+            "new_sha": new_sha,
+            "reviewed_source": str(source_path),
+            "chain_workspace": str(workspace_path),
+            "engine_runtime": str(engine_runtime_path),
+        }
+        for event, payload in (
+            (intent_event, intent_payload),
+            (authority_event, authority_payload),
+            (claimed_event, claimed_payload),
+            (hold_event, hold_payload),
+        ):
+            if any(payload.get(key) != value for key, value in expected_lineage_identity.items()):
+                raise _refuse("retry predecessor lineage payload identity is contradictory")
         if (
             predecessor_payload.get("held_operation_id") != retry_after
             or predecessor_payload.get("held_event_hash") != hold_event.get("event_hash")
@@ -592,6 +627,46 @@ def recover_failed_prechain(
             or intent_payload.get("intent_kind") != RECOVERY_INTENT
         ):
             raise _refuse("retry predecessor hold linkage is contradictory")
+        if (
+            intent_event.get("spec_identity") != str(spec_path)
+            or intent_event.get("source_identity") != {
+                "old_sha": old_sha,
+                "new_sha": new_sha,
+                "reviewed_source": str(source_path),
+                "chain_workspace": str(workspace_path),
+                "engine_runtime": str(engine_runtime_path),
+            }
+            or authority_payload.get("intent_kind") != RECOVERY_INTENT
+            or claimed_payload.get("intent_kind") != RECOVERY_INTENT
+        ):
+            raise _refuse("retry predecessor intent or validation identity is contradictory")
+        if (
+            intent_event.get("semantic_effect") != "no_change"
+            or intent_event.get("claim_class") != "required"
+            or authority_event.get("semantic_effect") != "no_change"
+            or authority_event.get("claim_class") != "required"
+            or claimed_event.get("semantic_effect") != "no_change"
+            or claimed_event.get("claim_class") != "required"
+            or hold_event.get("semantic_effect") != "no_change"
+            or hold_event.get("claim_class") != "evidence-only"
+            or hold_event.get("outcome") != "hold"
+            or not str(hold_event.get("failure_class") or "")
+        ):
+            raise _refuse("retry predecessor lineage envelope is contradictory")
+        if (
+            predecessor.get("recovery_id")
+            != hashlib.sha256(
+                f"reconcile-held-no-effect\0{chain_id}\0{retry_after}\0{hold_event.get('event_hash')}".encode()
+            ).hexdigest()
+        ):
+            raise _refuse("retry predecessor recovery identity is not deterministic")
+        if (
+            predecessor.get("semantic_effect") != "no_change"
+            or predecessor.get("claim_class") != "evidence-only"
+            or predecessor.get("failure_class") != "chain_control.hold"
+            or predecessor.get("linked_receipts") != [str(custody_dir / retry_after / "manifest.json")]
+        ):
+            raise _refuse("retry predecessor terminal envelope is contradictory")
         retry_after_event_hash = str(predecessor.get("event_hash") or "").lower()
         if _SHA256.fullmatch(retry_after_event_hash) is None:
             raise _refuse("retry predecessor terminal event hash is invalid")
