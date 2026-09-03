@@ -2042,7 +2042,7 @@ class ChainControlJournal:
             if (
                 _path_sha256(spec_path, "spec") != guarded_hashes["spec"]
                 or workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded) != guarded_hashes["workspace"]
-                or _live_occupancy_path({"marker": current_marker, "manifest": current_manifest}) is not None
+                or _migration_liveness_conflict(marker=current_marker, marker_path=marker_path) is not None
                 or not isinstance(launch_outcome, Mapping)
                 or str(launch_outcome.get("status") or "").lower() != "failed"
                 or str(launch_outcome.get("code") or "").lower() not in {"failed", "launch_not_advanced"}
@@ -2329,6 +2329,8 @@ class ChainControlJournal:
                 final_custody.chmod(0o555)
                 (final_generation / "manifest.json").chmod(0o444)
                 (final_generation / "initial-sidecar").chmod(0o444)
+                canonical_events = (final_generation / INCIDENT_EVENTS_FILE).read_bytes()
+                canonical_sidecar = (final_generation / ".events.seq").read_bytes()
                 active_generation = {
                     "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
                     "generation_id": generation_id,

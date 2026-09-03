@@ -554,6 +554,30 @@ def _trailing_collision_fixture(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def _set_collision_manifest_owner(fixture: dict[str, object], owner: str) -> None:
+    manifest_path = fixture["manifest"]
+    assert isinstance(manifest_path, Path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["owner"] = owner
+    manifest_path.write_bytes(canonical_json(manifest) + b"\n")
+    kwargs = fixture["kwargs"]
+    assert isinstance(kwargs, dict)
+    kwargs["expected_manifest_sha256"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    ledger = fixture["ledger"]
+    custody = fixture["custody"]
+    receipt = fixture["receipt"]
+    workspace = manifest_path.parent
+    assert isinstance(ledger, IncidentLedger)
+    assert isinstance(custody, Path)
+    assert isinstance(receipt, Path)
+    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        workspace,
+        excluded=(ledger.ledger_dir, custody, receipt),
+    )
+
+
 def test_guarded_trailing_collision_migration_preserves_custody_and_replays(tmp_path: Path) -> None:
     fixture = _trailing_collision_fixture(tmp_path)
     journal = fixture["journal"]
@@ -582,18 +606,8 @@ def test_collision_migration_treats_manifest_owner_as_provenance(
     tmp_path: Path, owner: str
 ) -> None:
     fixture = _trailing_collision_fixture(tmp_path)
-    manifest = json.loads(fixture["manifest"].read_text(encoding="utf-8"))
-    manifest["owner"] = owner
-    fixture["manifest"].write_bytes(canonical_json(manifest) + b"\n")
-    kwargs = fixture["kwargs"]
-    kwargs["expected_manifest_sha256"] = hashlib.sha256(
-        fixture["manifest"].read_bytes()
-    ).hexdigest()
-    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
-        tmp_path,
-        excluded=(fixture["ledger"].ledger_dir, fixture["custody"], fixture["receipt"]),
-    )
-    result = fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+    _set_collision_manifest_owner(fixture, owner)
+    result = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
     assert result["outcome"] == "committed"
 
 
@@ -669,6 +683,18 @@ def test_guarded_trailing_collision_replays_after_later_strict_appends(tmp_path:
     replayed = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
     assert replayed["outcome"] == "replay"
     assert replayed["replay"]["physical_sequence"] > migrated_tip
+
+
+@pytest.mark.parametrize("owner", ["unknown", "runner-provenance"])
+def test_collision_migration_replay_ignores_manifest_owner(
+    tmp_path: Path, owner: str
+) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    _set_collision_manifest_owner(fixture, owner)
+    first = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    replayed = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    assert first["outcome"] == "committed"
+    assert replayed["outcome"] == "replay"
 
 
 def test_guarded_trailing_collision_replay_verifies_custody_payloads(tmp_path: Path) -> None:
@@ -804,9 +830,13 @@ def test_guarded_trailing_collision_detects_noncooperative_concurrent_write(tmp_
     assert (fixture["ledger"].ledger_dir / ".active-generation.json").exists()
 
 
+@pytest.mark.parametrize("owner", ["unknown", "runner-provenance"])
 @pytest.mark.parametrize("fault_point", ["after_custody_ready", "after_generation_ready", "after_events_switch"])
-def test_guarded_trailing_collision_sigkill_phase_is_recoverable(tmp_path: Path, fault_point: str) -> None:
+def test_guarded_trailing_collision_sigkill_phase_is_recoverable(
+    tmp_path: Path, fault_point: str, owner: str
+) -> None:
     fixture = _trailing_collision_fixture(tmp_path)
+    _set_collision_manifest_owner(fixture, owner)
     child = os.fork()
     if child == 0:
         def kill(point: str) -> None:
