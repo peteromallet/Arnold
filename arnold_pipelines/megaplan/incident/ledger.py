@@ -258,15 +258,122 @@ class _IncidentEventJournal(NdjsonEventJournal):
     def __init__(self, artifact_root: Path) -> None:
         super().__init__(artifact_root)
         self._ndjson_path = self._root / _EVENTS_FILE
+        self._journal_lock_path = self._root / ".events.lock"
+        self._ledger_owner: IncidentLedger | None = None
+
+    def _active_generation_paths(self) -> tuple[Path, Path] | None:
+        pointer = self._root / ".active-generation.json"
+        if not pointer.exists():
+            return None
+        try:
+            if pointer.is_symlink() or not pointer.is_file():
+                raise RuntimeError("active incident-ledger generation pointer is not a regular file")
+            body = json.loads(pointer.read_text(encoding="utf-8"))
+            generation_id = body.get("generation_id") if isinstance(body, dict) else None
+            if (
+                not isinstance(generation_id, str)
+                or not generation_id.startswith("seq-collision-")
+                or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in generation_id)
+            ):
+                raise RuntimeError("active incident-ledger generation pointer is malformed")
+            generation = self._root / ".nbf08-generations" / generation_id
+            events = generation / _EVENTS_FILE
+            sidecar = generation / ".events.seq"
+            manifest = generation / "manifest.json"
+            if any(path.is_symlink() or not path.is_file() for path in (events, sidecar)):
+                raise RuntimeError("active incident-ledger generation is incomplete")
+            if (
+                manifest.is_symlink()
+                or not manifest.is_file()
+                or hashlib.sha256(manifest.read_bytes()).hexdigest() != body.get("generation_manifest_sha256")
+            ):
+                raise RuntimeError("active incident-ledger generation manifest differs from its pointer")
+            return events, sidecar
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("active incident-ledger generation pointer is unreadable") from exc
+
+    def journal_path(self) -> Path:
+        active = self._active_generation_paths()
+        return active[0] if active is not None else self._ndjson_path
+
+    def sequence_path(self) -> Path:
+        active = self._active_generation_paths()
+        return active[1] if active is not None else self._seq_path
+
+    def open_journal_lock(self) -> int:
+        return os.open(str(self._journal_lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+
+    def open_sequence_after_lock(self) -> int:
+        path = self.sequence_path()
+        flags = os.O_RDWR | (0 if self._active_generation_paths() is not None else os.O_CREAT)
+        return os.open(str(path), flags, 0o644)
+
+    def recover_structured_reservation_locked(self, seq_fd: int) -> None:
+        """Resolve a pending structured reservation before any new allocation."""
+        from arnold_pipelines.megaplan.incident.chain_control import (
+            ChainControlJournal,
+            parse_sidecar_bytes,
+            read_sidecar_locked,
+        )
+
+        kind, _parsed = parse_sidecar_bytes(read_sidecar_locked(seq_fd))
+        if kind == "reservation":
+            if self._ledger_owner is None:
+                raise RuntimeError("incident journal is not bound to its ledger")
+            ChainControlJournal(self._ledger_owner).recover_reservations_locked(seq_fd)
+
+    def emit(
+        self,
+        kind: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        scope: str | None = None,
+        phase: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Route legacy incident appends through the same active-generation locks."""
+        body = payload if payload is not None else {}
+        key = idempotency_key or str(
+            body.get("event_id") or body.get("occurrence_id") or _stable_id("incident", kind, json.dumps(body, sort_keys=True))
+        )
+        init_ts = self._load_init_ts()
+        lock_fd = self.open_journal_lock()
+        seq_fd: int | None = None
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            seq_fd = self.open_sequence_after_lock()
+            fcntl.flock(seq_fd, fcntl.LOCK_EX)
+            self.recover_structured_reservation_locked(seq_fd)
+            appended = self._emit_locked(
+                seq_fd,
+                kind=kind,
+                payload=body,
+                idempotency_key=key,
+                init_ts=init_ts,
+            )
+        finally:
+            if seq_fd is not None:
+                try:
+                    fcntl.flock(seq_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(seq_fd)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+        if init_ts is None:
+            self._write_init_ts(datetime.now(timezone.utc))
+        return appended
 
     # ── Maintenance routing: atomic lookup/append keyed by occurrence ──────
 
     def _read_records(self) -> list[dict[str, Any]]:
         """Parse every committed record from ``events.jsonl`` (append order)."""
-        if not self._ndjson_path.exists():
+        ndjson_path = self.journal_path()
+        if not ndjson_path.exists():
             return []
         records: list[dict[str, Any]] = []
-        with open(self._ndjson_path, "r", encoding="utf-8") as fh:
+        with open(ndjson_path, "r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -297,7 +404,6 @@ class _IncidentEventJournal(NdjsonEventJournal):
         """
         from arnold_pipelines.megaplan.incident.chain_control import (
             DurabilityUnknown,
-            canonical_json,
             empty_reservation,
             highest_complete_seq,
             ledger_id_for,
@@ -306,14 +412,19 @@ class _IncidentEventJournal(NdjsonEventJournal):
             physical_digest_after,
             read_physical_lines,
             read_sidecar_locked,
+            canonical_committed_reservation,
+            validate_reservation_tip,
             write_reservation_locked,
             write_sidecar_locked,
-            ZERO_DIGEST,
         )
 
         raw = read_sidecar_locked(seq_fd)
         sidecar_kind, parsed = parse_sidecar_bytes(raw)
-        physical = [item for item in read_physical_lines(self._ndjson_path) if not item.torn]
+        ndjson_path = self.journal_path()
+        all_physical = read_physical_lines(ndjson_path)
+        if any(item.torn for item in all_physical):
+            raise DurabilityUnknown("journal has an unrecovered torn tail")
+        physical = list(all_physical)
         highest = highest_complete_seq(physical)
         ledger_id = ledger_id_for(self._root)
         previous_digest = physical_digest_after(ledger_id, physical)
@@ -329,6 +440,12 @@ class _IncidentEventJournal(NdjsonEventJournal):
                     ledger_id=ledger_id,
                     previous_physical_digest=previous_digest,
                 )
+                if reservation.get("status") == "committed":
+                    reservation = canonical_committed_reservation(
+                        reservation,
+                        ledger_id=ledger_id,
+                        physical=physical,
+                    )
                 write_reservation_locked(seq_fd, reservation)
             elif sidecar_kind == "empty":
                 reservation = empty_reservation(
@@ -340,35 +457,64 @@ class _IncidentEventJournal(NdjsonEventJournal):
                 write_reservation_locked(seq_fd, reservation)
             elif sidecar_kind == "reservation":
                 reservation = parsed
-            if allocated_seq is None:
-                current = int(reservation.get("physical_sequence") if reservation else highest)
-                if reservation and reservation.get("status") == "reserved":
-                    new_seq = current
-                else:
-                    new_seq = (current if current >= 0 else -1) + 1
-                pending = dict(reservation or empty_reservation(
+            if reservation is None:
+                raise DurabilityUnknown("structured append has no sequence reservation")
+            reserved_recovery = reservation.get("status") == "reserved"
+            if reserved_recovery:
+                from arnold_pipelines.megaplan.incident.chain_control import validate_reservation_integrity
+
+                validate_reservation_integrity(reservation, ledger_id=ledger_id)
+                if (
+                    reservation.get("physical_sequence") != highest + 1
+                    or reservation.get("previous_physical_digest") != previous_digest
+                    or allocated_seq != highest + 1
+                ):
+                    raise DurabilityUnknown("reserved sequence is stale or mismatched before recovery append")
+            else:
+                validate_reservation_tip(
+                    reservation,
+                    ledger_id=ledger_id,
+                    physical=physical,
+                )
+            # One allocation only: the verified complete prefix owns N.  The
+            # sidecar is checked recovery evidence and can never allocate a
+            # competing outer sequence.
+            new_seq = highest + 1
+            if allocated_seq is not None and allocated_seq != new_seq:
+                raise DurabilityUnknown(
+                    "preallocated physical sequence disagrees with verified journal prefix",
+                    details={"allocated": allocated_seq, "expected": new_seq},
+                )
+            if str(kind).startswith("chain_control."):
+                if payload.get("physical_sequence") != new_seq:
+                    raise DurabilityUnknown("chain-control envelope sequence disagrees with outer record")
+                if payload.get("previous_physical_digest") != previous_digest:
+                    raise DurabilityUnknown("chain-control envelope predecessor is stale")
+            pending = (
+                dict(reservation)
+                if reserved_recovery
+                else empty_reservation(
                     ledger_id=ledger_id,
                     physical_sequence=new_seq,
                     status="reserved",
                     previous_physical_digest=previous_digest,
-                ))
-                pending["physical_sequence"] = new_seq
-                pending["status"] = "reserved"
-                pending["scope"] = "chain_control" if str(kind).startswith("chain_control.") else "chainless"
-                if str(kind).startswith("chain_control.") and isinstance(payload, dict):
-                    pending["chain_id"] = payload.get("chain_id")
-                    pending["event_id"] = payload.get("event_id")
-                    pending["event_kind"] = kind
-                    pending["operation_id"] = payload.get("operation_id")
-                    pending["causation_id"] = payload.get("causation_id")
-                    pending["correlation_id"] = payload.get("correlation_id")
-                    pending["recovery_id"] = payload.get("recovery_id") or "none"
-                    pending["evidence_sequence"] = payload.get("evidence_sequence")
-                    pending["semantic_sequence"] = payload.get("semantic_sequence")
-                write_reservation_locked(seq_fd, pending)
-            else:
-                new_seq = allocated_seq
-                pending = dict(nbf08_reservation or reservation or {})
+                )
+            )
+            if not reserved_recovery and reservation.get("migration_receipt") is not None:
+                pending["migration_receipt"] = reservation["migration_receipt"]
+            pending["byte_offset"] = ndjson_path.stat().st_size if ndjson_path.exists() else 0
+            pending["line_number"] = len(physical) + 1
+            pending["scope"] = "chain_control" if str(kind).startswith("chain_control.") else "chainless"
+            if str(kind).startswith("chain_control.") and isinstance(payload, dict):
+                pending["chain_id"] = payload.get("chain_id")
+                pending["event_id"] = payload.get("event_id")
+                pending["event_kind"] = kind
+                pending["operation_id"] = payload.get("operation_id")
+                pending["causation_id"] = payload.get("causation_id")
+                pending["correlation_id"] = payload.get("correlation_id")
+                pending["recovery_id"] = payload.get("recovery_id") or "none"
+                pending["evidence_sequence"] = payload.get("evidence_sequence")
+                pending["semantic_sequence"] = payload.get("semantic_sequence")
         else:
             try:
                 current = parsed if sidecar_kind == "integer" else (
@@ -398,7 +544,12 @@ class _IncidentEventJournal(NdjsonEventJournal):
             separators=(",", ":"),
             ensure_ascii=False,
         )
-        with open(self._ndjson_path, "a", encoding="utf-8") as fh:
+        if pending is not None:
+            # Authenticate the exact timestamped outer bytes before exposing
+            # a reserved sidecar. Recovery may adopt only this exact line.
+            pending["intended_record_sha256"] = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            write_reservation_locked(seq_fd, pending)
+        with open(ndjson_path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
             fh.flush()
             os.fsync(fh.fileno())
@@ -459,9 +610,13 @@ class _IncidentEventJournal(NdjsonEventJournal):
         strict_maintenance_digest(payload)
 
         init_ts = self._load_init_ts()
-        seq_fd = os.open(str(self._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
+        lock_fd = self.open_journal_lock()
+        seq_fd: int | None = None
         try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            seq_fd = self.open_sequence_after_lock()
             fcntl.flock(seq_fd, fcntl.LOCK_EX)
+            self.recover_structured_reservation_locked(seq_fd)
             for record in self._read_records():
                 stored = record.get("payload") or {}
                 if not record_matches_lifecycle_key(stored, idempotency_key):
@@ -481,12 +636,20 @@ class _IncidentEventJournal(NdjsonEventJournal):
                 idempotency_key=idempotency_key,
                 init_ts=init_ts,
             )
-            fcntl.flock(seq_fd, fcntl.LOCK_UN)
         finally:
+            if seq_fd is not None:
+                try:
+                    fcntl.flock(seq_fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                try:
+                    os.close(seq_fd)
+                except OSError:
+                    pass
             try:
-                os.close(seq_fd)
-            except OSError:
-                pass
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
         if init_ts is None:
             self._write_init_ts(datetime.now(timezone.utc))
         return appended
@@ -509,6 +672,7 @@ class IncidentLedger:
             raise ValueError("ledger root must be a directory")
         self._ledger_dir = self._root / _INCIDENT_LEDGER_DIR
         self._journal = _IncidentEventJournal(self._ledger_dir)
+        self._journal._ledger_owner = self
 
     @property
     def ledger_dir(self) -> Path:
@@ -516,7 +680,7 @@ class IncidentLedger:
 
     @property
     def events_path(self) -> Path:
-        return self._ledger_dir / _EVENTS_FILE
+        return self._journal.journal_path()
 
     # ── NBF single transaction authority ────────────────────────────────
     def read_nbf_events(self) -> list[dict[str, Any]]:
@@ -572,6 +736,7 @@ class IncidentLedger:
                 idempotency_key=event_id,
                 init_ts=self._journal._load_init_ts(),
                 nbf08_reservation={"schema_version": "nbf08-sequence-reservation-v1"},
+                allocated_seq=int(envelope["physical_sequence"]),
             )
         from arnold_pipelines.megaplan.incident.schema import validate_nbf_event
         payload = validate_nbf_event(payload, _changed_precondition=_changed_precondition)
@@ -597,30 +762,48 @@ class IncidentLedger:
         # locked helper so callers cannot bypass the append authority.
         from arnold_pipelines.megaplan.incident.schema import validate_nbf_event
         validate_nbf_event(payload, _changed_precondition=_changed_precondition)
-        seq_fd = os.open(str(self._journal._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
+        lock_fd = self._journal.open_journal_lock()
+        seq_fd: int | None = None
         try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            seq_fd = self._journal.open_sequence_after_lock()
             fcntl.flock(seq_fd, fcntl.LOCK_EX)
+            self._journal.recover_structured_reservation_locked(seq_fd)
             return self._append_nbf_locked(seq_fd, payload, self._journal._read_records(), event_type=event_type, _changed_precondition=_changed_precondition)
         finally:
+            if seq_fd is not None:
+                try:
+                    fcntl.flock(seq_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(seq_fd)
             try:
-                fcntl.flock(seq_fd, fcntl.LOCK_UN)
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
-                os.close(seq_fd)
+                os.close(lock_fd)
 
     def _locked(self):
         """Context manager for NBF operations needing a projected compare."""
         from contextlib import contextmanager
         @contextmanager
         def cm():
-            fd = os.open(str(self._journal._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
+            lock_fd = self._journal.open_journal_lock()
+            fd: int | None = None
             try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                fd = self._journal.open_sequence_after_lock()
                 fcntl.flock(fd, fcntl.LOCK_EX)
+                self._journal.recover_structured_reservation_locked(fd)
                 yield fd, self._journal._read_records()
             finally:
+                if fd is not None:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 finally:
-                    os.close(fd)
+                    os.close(lock_fd)
         return cm()
 
     def _project_records(self, records: list[dict[str, Any]]) -> dict[str, Any]:

@@ -15,14 +15,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
-import uuid
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 ABSENT: dict[str, bool] = {"__nbf08_absent__": True}
 ABSENT_KEY = "__nbf08_absent__"
@@ -33,6 +34,24 @@ EVENT_DOMAIN = b"NBF08-CHAIN-CONTROL-EVENT-V1\x00"
 PAYLOAD_DOMAIN = b"NBF08-CHAIN-CONTROL-PAYLOAD-V1\x00"
 PHYSICAL_DOMAIN = b"NBF08-PHYSICAL-RECORD-V1\x00"
 ZERO_DIGEST = "0" * 64
+TRAILING_COLLISION_MIGRATION_SCHEMA = "nbf08-trailing-sequence-collision-migration-v1"
+TRAILING_COLLISION_RECEIPT_SCHEMA = "nbf08-trailing-sequence-collision-receipt-v1"
+INCIDENT_EVENTS_FILE = "events.jsonl"
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_MIGRATION_OCCUPANCY_KEYS = frozenset(
+    {
+        "owner",
+        "runner",
+        "tmux_session",
+        "chain_pid",
+        "worker_pid",
+        "fixer_owner",
+        "fixer_pid",
+        "provider_owner",
+        "provider_pid",
+        "provider_session",
+    }
+)
 
 ENVELOPE_FIELDS: tuple[str, ...] = (
     "schema_version",
@@ -117,6 +136,7 @@ CLAIMLESS_KINDS = frozenset(
         "chain_control.replay",
         "chain_control.authority_validated",
         "chain_control.restart_receipt_attested",
+        "chain_control.trailing_sequence_collision_quarantined",
     }
 )
 REQUIRES_CLAIM_KINDS = frozenset(
@@ -319,6 +339,114 @@ def _now() -> str:
 
 def _stable_id(*parts: str) -> str:
     return hashlib.sha256(canonical_json(list(parts))).hexdigest()
+
+
+def _required_sha256(value: str, label: str) -> str:
+    value = str(value or "").strip().lower()
+    if _SHA256_RE.fullmatch(value) is None:
+        raise ChainControlHold("invalid_migration_guard", f"{label} must be a full lowercase SHA-256")
+    return value
+
+
+def _path_sha256(path: Path, label: str) -> str:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise ChainControlHold("migration_guard_mismatch", f"{label} must be a regular file")
+        return sha256_hex(path.read_bytes())
+    except FileNotFoundError as exc:
+        raise ChainControlHold("migration_guard_mismatch", f"{label} is missing") from exc
+
+
+def _atomic_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_dir(path.parent)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _fsync_dir(path: Path) -> None:
+    """Make a preceding create/rename/unlink durable in *path*."""
+    fd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _durable_file(path: Path, data: bytes) -> None:
+    """Create one staged file and persist its bytes before publication."""
+    with open(path, "xb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def workspace_snapshot_sha256(
+    workspace: Path,
+    *,
+    excluded: Sequence[Path] = (),
+) -> str:
+    """Content-address a workspace without trusting mtimes or status prose."""
+    workspace = Path(workspace).expanduser().resolve(strict=False)
+    excluded_paths = tuple(Path(item).expanduser().resolve(strict=False) for item in excluded)
+
+    def is_excluded(path: Path) -> bool:
+        resolved = path.resolve(strict=False)
+        return any(resolved == item or item in resolved.parents for item in excluded_paths)
+
+    if not workspace.is_dir():
+        raise ChainControlHold("migration_guard_mismatch", "workspace is not a directory")
+    rows: list[dict[str, Any]] = []
+    for path in sorted(workspace.rglob("*"), key=lambda item: item.as_posix()):
+        if is_excluded(path) or ".git" in path.relative_to(workspace).parts:
+            continue
+        relative = path.relative_to(workspace).as_posix()
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            rows.append({"path": relative, "kind": "symlink", "target": os.readlink(path)})
+        elif stat.S_ISREG(info.st_mode):
+            rows.append(
+                {
+                    "path": relative,
+                    "kind": "file",
+                    "size": info.st_size,
+                    "sha256": sha256_hex(path.read_bytes()),
+                }
+            )
+        elif stat.S_ISDIR(info.st_mode):
+            rows.append({"path": relative, "kind": "directory"})
+        else:
+            rows.append({"path": relative, "kind": "other", "mode": stat.S_IFMT(info.st_mode)})
+    return sha256_hex(b"NBF08-WORKSPACE-SNAPSHOT-V1\x00" + canonical_json(rows))
+
+
+def _live_occupancy_path(value: Any, prefix: str = "") -> str | None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if str(key) in _MIGRATION_OCCUPANCY_KEYS and child not in (None, False, "", [], {}, 0):
+                return path
+            found = _live_occupancy_path(child, path)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found = _live_occupancy_path(child, f"{prefix}[{index}]")
+            if found is not None:
+                return found
+    return None
 
 
 def ledger_id_for(ledger_dir: Path) -> str:
@@ -587,6 +715,97 @@ def read_sidecar_locked(seq_fd: int) -> bytes:
     return b"".join(chunks)
 
 
+def validate_reservation_integrity(
+    reservation: Mapping[str, Any],
+    *,
+    ledger_id: str,
+) -> None:
+    """Validate the self-authenticating portion of a sequence reservation."""
+    if reservation.get("schema_version") != RESERVATION_SCHEMA:
+        raise DurabilityUnknown("sequence reservation has the wrong schema")
+    if reservation.get("ledger_id") != ledger_id:
+        raise DurabilityUnknown("sequence reservation belongs to another ledger")
+    sequence = reservation.get("physical_sequence")
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < -1:
+        raise DurabilityUnknown("sequence reservation has an invalid physical_sequence")
+    supplied = reservation.get("reservation_digest")
+    expected = reservation_digest_for(reservation)
+    if supplied != expected:
+        raise DurabilityUnknown("sequence reservation digest mismatch")
+
+
+def validate_reservation_tip(
+    reservation: Mapping[str, Any],
+    *,
+    ledger_id: str,
+    physical: Sequence[PhysicalRecord],
+) -> None:
+    """Require a committed sidecar to describe the exact complete file tip.
+
+    The sidecar is recovery evidence, not a second sequence allocator.  A
+    writer may proceed only when its committed reservation names the final
+    complete record, its bytes, and that record's predecessor digest.
+    """
+    validate_reservation_integrity(reservation, ledger_id=ledger_id)
+    if reservation.get("status") not in {"committed", "tombstoned"}:
+        raise DurabilityUnknown(
+            "sequence reservation is not committed",
+            details={"status": reservation.get("status")},
+        )
+    complete = [item for item in physical if not item.torn]
+    highest = highest_complete_seq(complete)
+    sequence = int(reservation["physical_sequence"])
+    if sequence != highest:
+        raise DurabilityUnknown(
+            "committed sequence reservation is stale",
+            details={"reservation": sequence, "highest_complete": highest},
+        )
+    if highest < 0:
+        expected_previous = ZERO_DIGEST
+        expected_line = ZERO_DIGEST
+    else:
+        matches = [item for item in complete if item.record.get("seq") == highest]
+        if len(matches) != 1 or matches[0] is not complete[-1]:
+            raise DurabilityUnknown("committed sequence reservation does not name one final record")
+        expected_previous = (
+            physical_digest_after(ledger_id, complete, upto_seq=highest - 1)
+            if len(complete) > 1
+            else ZERO_DIGEST
+        )
+        expected_line = stored_line_sha256(matches[0].raw)
+    if reservation.get("previous_physical_digest") != expected_previous:
+        raise DurabilityUnknown("committed sequence reservation predecessor is stale")
+    if reservation.get("intended_record_sha256") != expected_line:
+        raise DurabilityUnknown("committed sequence reservation record hash is stale")
+
+
+def canonical_committed_reservation(
+    reservation: Mapping[str, Any],
+    *,
+    ledger_id: str,
+    physical: Sequence[PhysicalRecord],
+) -> dict[str, Any]:
+    """Upgrade a just-migrated integer sidecar to exact tip evidence."""
+    complete = [item for item in physical if not item.torn]
+    highest = highest_complete_seq(complete)
+    body = dict(reservation)
+    if highest < 0:
+        body["previous_physical_digest"] = ZERO_DIGEST
+        body["intended_record_sha256"] = ZERO_DIGEST
+    else:
+        final = complete[-1]
+        if final.record.get("seq") != highest:
+            raise DurabilityUnknown("integer sidecar migration has a non-final highest sequence")
+        body["previous_physical_digest"] = (
+            physical_digest_after(ledger_id, complete, upto_seq=highest - 1)
+            if len(complete) > 1
+            else ZERO_DIGEST
+        )
+        body["intended_record_sha256"] = stored_line_sha256(final.raw)
+    body["reservation_digest"] = reservation_digest_for(body)
+    return body
+
+
 @dataclass
 class PhysicalRecord:
     line_number: int
@@ -731,6 +950,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.hold_reconciled",
         "chain_control.hold_context_attested",
         "chain_control.restart_receipt_attested",
+        "chain_control.trailing_sequence_collision_quarantined",
     }
 )
 
@@ -888,6 +1108,7 @@ class LockedChainControlTransaction:
         self.expected_revision = expected_revision
         self.operation_id = operation_id
         self.actor = actor
+        self._journal_lock_fd: int | None = None
         self._seq_fd: int | None = None
         self._lock_fds: list[int] = []
         self._token: contextvars.Token | None = None
@@ -903,13 +1124,13 @@ class LockedChainControlTransaction:
     def __enter__(self) -> LockedChainControlTransaction:
         if _SCOPE_LOCKS.get():
             raise ChainControlHold("lock_reentry", "public writer re-entry under an existing lock stack is forbidden")
-        seq_path = self.journal.ledger._journal._seq_path
-        seq_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(seq_path), os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        self._seq_fd = fd
+        lock_fd = self.journal.ledger._journal.open_journal_lock()
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        self._journal_lock_fd = lock_fd
         try:
-            self.journal.recover_reservations_locked(fd)
+            self._seq_fd = self.journal.ledger._journal.open_sequence_after_lock()
+            fcntl.flock(self._seq_fd, fcntl.LOCK_EX)
+            self.journal.recover_reservations_locked(self._seq_fd)
             for chain_id in self.chain_ids:
                 lock_path = self.journal.scope_lock_path(chain_id)
                 lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -961,6 +1182,16 @@ class LockedChainControlTransaction:
             except OSError:
                 pass
             self._seq_fd = None
+        if self._journal_lock_fd is not None:
+            try:
+                fcntl.flock(self._journal_lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(self._journal_lock_fd)
+            except OSError:
+                pass
+            self._journal_lock_fd = None
 
     def append(self, envelope: dict[str, Any]) -> dict[str, Any]:
         self.assert_open()
@@ -1007,7 +1238,9 @@ class ChainControlJournal:
     def recover_reservations_locked(self, seq_fd: int) -> dict[str, Any] | None:
         raw = read_sidecar_locked(seq_fd)
         kind, parsed = parse_sidecar_bytes(raw)
-        physical = [item for item in read_physical_lines(self.ledger.events_path) if not item.torn]
+        all_physical = read_physical_lines(self.ledger.events_path)
+        torn = [item for item in all_physical if item.torn]
+        physical = [item for item in all_physical if not item.torn]
         highest = highest_complete_seq(physical)
         previous = physical_digest_after(self.ledger_id, physical)
         if kind == "empty":
@@ -1025,15 +1258,43 @@ class ChainControlJournal:
                 ledger_id=self.ledger_id,
                 previous_physical_digest=previous,
             )
+            if reservation.get("status") == "committed":
+                reservation = canonical_committed_reservation(
+                    reservation,
+                    ledger_id=self.ledger_id,
+                    physical=physical,
+                )
             write_reservation_locked(seq_fd, reservation)
             if reservation.get("status") == "reserved":
-                return self._recover_reserved_locked(seq_fd, reservation, physical, previous)
+                return self._recover_reserved_locked(seq_fd, reservation, physical, previous, torn=torn)
+            if torn:
+                raise DurabilityUnknown("journal has a torn tail without an active reservation")
+            validate_reservation_tip(
+                reservation,
+                ledger_id=self.ledger_id,
+                physical=physical,
+            )
             return reservation
         reservation = parsed
+        validate_reservation_integrity(reservation, ledger_id=self.ledger_id)
         status = reservation.get("status")
         if status == "reserved":
-            return self._recover_reserved_locked(seq_fd, reservation, physical, previous)
-        if status in {"committed", "tombstoned"}:
+            return self._recover_reserved_locked(seq_fd, reservation, physical, previous, torn=torn)
+        if torn:
+            raise DurabilityUnknown("journal has a torn tail without an active reservation")
+        if status == "committed":
+            validate_reservation_tip(
+                reservation,
+                ledger_id=self.ledger_id,
+                physical=physical,
+            )
+            return reservation
+        if status == "tombstoned":
+            validate_reservation_tip(
+                reservation,
+                ledger_id=self.ledger_id,
+                physical=physical,
+            )
             return reservation
         raise DurabilityUnknown("reservation sidecar has an unknown status", details={"status": status})
 
@@ -1043,12 +1304,68 @@ class ChainControlJournal:
         reservation: dict[str, Any],
         physical: Sequence[PhysicalRecord],
         previous: str,
+        *,
+        torn: Sequence[PhysicalRecord] = (),
     ) -> dict[str, Any]:
         reserved_seq = reservation.get("physical_sequence")
         matching = [item for item in physical if item.record.get("seq") == reserved_seq]
         reservation_id = reservation.get("reservation_id")
         intended = reservation.get("intended_record_sha256")
+        highest = highest_complete_seq(physical)
+        if reserved_seq not in {highest, highest + 1}:
+            raise DurabilityUnknown(
+                "reserved sequence is stale or ahead of the verified journal prefix",
+                details={"reservation": reserved_seq, "highest_complete": highest},
+            )
+        expected_previous = (
+            physical_digest_after(self.ledger_id, physical, upto_seq=int(reserved_seq) - 1)
+            if matching
+            else previous
+        )
+        if reservation.get("previous_physical_digest") != expected_previous:
+            raise DurabilityUnknown("reserved sequence predecessor is stale")
+        if torn:
+            if len(torn) != 1 or matching:
+                raise DurabilityUnknown("reserved sequence has ambiguous torn-tail evidence")
+            tail = torn[0]
+            if (
+                tail.line_number != reservation.get("line_number")
+                or tail.byte_offset != reservation.get("byte_offset")
+                or tail.line_number != len(physical) + 1
+            ):
+                raise DurabilityUnknown(
+                    "torn tail does not match the reserved write position",
+                    details={
+                        "tail_line": tail.line_number,
+                        "tail_offset": tail.byte_offset,
+                        "reserved_line": reservation.get("line_number"),
+                        "reserved_offset": reservation.get("byte_offset"),
+                    },
+                )
+            custody_root = self.ledger.ledger_dir / ".nbf08-torn-custody"
+            custody_root.mkdir(parents=True, exist_ok=True)
+            tail_sha = sha256_hex(tail.raw)
+            custody_path = custody_root / f"{reservation_id}.{tail_sha}.partial"
+            if custody_path.exists():
+                if custody_path.is_symlink() or custody_path.read_bytes() != tail.raw:
+                    raise DurabilityUnknown("torn-tail custody conflicts with reserved bytes")
+            else:
+                _durable_file(custody_path, tail.raw)
+                custody_path.chmod(0o444)
+                _fsync_dir(custody_root)
+            journal_path = self.ledger.events_path
+            with open(journal_path, "r+b") as handle:
+                handle.seek(tail.byte_offset)
+                if handle.read() != tail.raw:
+                    raise DurabilityUnknown("journal torn tail changed before truncation")
+                handle.truncate(tail.byte_offset)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _fsync_dir(journal_path.parent)
+            torn = ()
         if matching:
+            if len(matching) != 1 or matching[0] is not physical[-1]:
+                raise DurabilityUnknown("reserved sequence collides with more than one physical record")
             record = matching[0]
             line_sha = stored_line_sha256(record.raw)
             payload = record.record.get("payload") if isinstance(record.record.get("payload"), dict) else {}
@@ -1060,25 +1377,51 @@ class ChainControlJournal:
                         details={"reservation_id": reservation_id, "payload_id": payload_id},
                     )
                 reservation["status"] = "tombstoned"
+                reservation["reservation_digest"] = reservation_digest_for(reservation)
                 write_reservation_locked(seq_fd, reservation)
                 return reservation
-            if intended and intended != ZERO_DIGEST and intended != line_sha:
+            if not intended or intended == ZERO_DIGEST:
+                raise DurabilityUnknown("complete reserved record has no authenticated intended hash")
+            if intended != line_sha:
                 raise DurabilityUnknown(
                     "reservation intended_record_sha256 does not match complete line",
                     details={"reservation_id": reservation_id, "intended": intended, "actual": line_sha},
                 )
             payload_id = payload.get("reservation_id") if isinstance(payload, dict) else None
-            if reservation_id and payload_id not in {None, reservation_id} and payload.get("reservation_id") not in {None, reservation_id}:
+            if reservation_id and payload_id not in {None, reservation_id}:
                 raise DurabilityUnknown(
                     "reservation_id collision at reserved sequence",
                     details={"reservation_id": reservation_id, "payload_id": payload_id},
                 )
+            if reservation.get("scope") == "chain_control" and (
+                record.record.get("kind") != reservation.get("event_kind")
+                or record.record.get("idempotency_key") != reservation.get("event_id")
+                or payload.get("event_id") != reservation.get("event_id")
+                or payload.get("event_kind") != reservation.get("event_kind")
+                or payload.get("operation_id") != reservation.get("operation_id")
+                or payload.get("chain_id") != reservation.get("chain_id")
+                or payload.get("physical_sequence") != reserved_seq
+                or payload.get("previous_physical_digest") != reservation.get("previous_physical_digest")
+            ):
+                raise DurabilityUnknown("complete chain-control record contradicts its reservation lineage")
             reservation["status"] = "committed"
             reservation["intended_record_sha256"] = line_sha
+            reservation["reservation_digest"] = reservation_digest_for(reservation)
             write_reservation_locked(seq_fd, reservation)
+            validate_reservation_tip(
+                reservation,
+                ledger_id=self.ledger_id,
+                physical=physical,
+            )
             return reservation
         tombstone = self._append_tombstone_locked(seq_fd, reservation, previous_physical_digest=previous)
+        after = [item for item in read_physical_lines(self.ledger.events_path) if not item.torn]
+        if not after or after[-1].record.get("seq") != reserved_seq:
+            raise DurabilityUnknown("tombstone append did not become the verified journal tip")
         reservation["status"] = "tombstoned"
+        reservation["intended_record_sha256"] = stored_line_sha256(after[-1].raw)
+        reservation["previous_physical_digest"] = previous
+        reservation["reservation_digest"] = reservation_digest_for(reservation)
         write_reservation_locked(seq_fd, reservation)
         return tombstone
 
@@ -1141,7 +1484,14 @@ class ChainControlJournal:
         )
 
     def replay_strict(self) -> dict[str, Any]:
-        physical = read_physical_lines(self.ledger.events_path)
+        return self._replay_physical_strict(read_physical_lines(self.ledger.events_path))
+
+    def _replay_physical_strict(
+        self,
+        physical: Sequence[PhysicalRecord],
+    ) -> dict[str, Any]:
+        """Strict replay over an already captured physical generation."""
+        physical = list(physical)
         complete = [item for item in physical if not item.torn]
         torn = [item for item in physical if item.torn]
         if len(torn) > 1:
@@ -1361,6 +1711,779 @@ class ChainControlJournal:
             event.get("chain_id") == chain_id and event.get("event_kind") == "chain_control.genesis_accepted"
             for event in replay["accepted"]
         )
+
+    def quarantine_trailing_sequence_collision(
+        self,
+        *,
+        expected_journal_sha256: str,
+        expected_sidecar_sha256: str,
+        expected_prefix_sequence: int,
+        expected_prefix_line_sha256: str,
+        expected_prefix_digest: str,
+        expected_offending_line_sha256: str,
+        expected_operation_id: str,
+        expected_event_id: str,
+        marker_path: Path,
+        expected_marker_sha256: str,
+        manifest_path: Path,
+        expected_manifest_sha256: str,
+        spec_path: Path,
+        expected_spec_sha256: str,
+        workspace_path: Path,
+        expected_workspace_sha256: str,
+        custody_dir: Path,
+        receipt_path: Path,
+        actor: str,
+        fault_injector: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Quarantine one exact trailing outer/envelope sequence collision.
+
+        This is an offline, content-addressed migration authority, not a
+        general journal repair API.  The only accepted damage shape is a
+        valid strict prefix ending at ``N`` followed by one complete trailing
+        ``chain_control.intent`` whose outer sequence collides at ``N`` while
+        its independently valid envelope names ``N + 1``.  The invalid source
+        generation remains in immutable custody and the replacement generation
+        records the no-effect quarantine at ``N + 1``.
+        """
+        guarded_hashes = {
+            "journal": _required_sha256(expected_journal_sha256, "journal SHA-256"),
+            "sidecar": _required_sha256(expected_sidecar_sha256, "sidecar SHA-256"),
+            "prefix_line": _required_sha256(expected_prefix_line_sha256, "prefix line SHA-256"),
+            "prefix_digest": _required_sha256(expected_prefix_digest, "prefix digest"),
+            "offending_line": _required_sha256(expected_offending_line_sha256, "offending line SHA-256"),
+            "marker": _required_sha256(expected_marker_sha256, "marker SHA-256"),
+            "manifest": _required_sha256(expected_manifest_sha256, "manifest SHA-256"),
+            "spec": _required_sha256(expected_spec_sha256, "spec SHA-256"),
+            "workspace": _required_sha256(expected_workspace_sha256, "workspace SHA-256"),
+        }
+        if not isinstance(expected_prefix_sequence, int) or isinstance(expected_prefix_sequence, bool) or expected_prefix_sequence < 0:
+            raise ChainControlHold("invalid_migration_guard", "prefix sequence must be a non-negative integer")
+        expected_operation_id = _required_sha256(expected_operation_id, "offending operation id")
+        expected_event_id = _required_sha256(expected_event_id, "offending event id")
+        if not actor:
+            raise ChainControlHold("invalid_migration_guard", "actor identity is required")
+
+        marker_path = Path(marker_path).expanduser().resolve(strict=False)
+        manifest_path = Path(manifest_path).expanduser().resolve(strict=False)
+        spec_path = Path(spec_path).expanduser().resolve(strict=False)
+        workspace_path = Path(workspace_path).expanduser().resolve(strict=False)
+        custody_dir = Path(custody_dir).expanduser().resolve(strict=False)
+        receipt_path = Path(receipt_path).expanduser().resolve(strict=False)
+        generation_root = self.ledger.ledger_dir / ".nbf08-generations"
+        active_generation_path = self.ledger.ledger_dir / ".active-generation.json"
+        workspace_excluded = (self.ledger.ledger_dir, custody_dir, receipt_path)
+        guarded_identity = {
+            "prefix_sequence": expected_prefix_sequence,
+            "operation_id": expected_operation_id,
+            "event_id": expected_event_id,
+            "marker_path": str(marker_path),
+            "manifest_path": str(manifest_path),
+            "spec_path": str(spec_path),
+            "workspace_path": str(workspace_path),
+            "custody_dir": str(custody_dir),
+        }
+        generation_id = "seq-collision-" + _stable_id(
+            guarded_hashes["journal"], guarded_hashes["sidecar"], guarded_hashes["offending_line"]
+        )[:24]
+        final_custody = custody_dir / generation_id
+        final_generation = generation_root / generation_id
+
+        def overlaps(left: Path, right: Path) -> bool:
+            return left == right or left in right.parents or right in left.parents
+
+        ledger_dir = self.ledger.ledger_dir.resolve(strict=False)
+        if not workspace_path.is_dir() or workspace_path.is_symlink():
+            raise ChainControlHold("invalid_migration_guard", "workspace must be a regular directory")
+        if workspace_path == ledger_dir or ledger_dir in workspace_path.parents:
+            raise ChainControlHold("invalid_migration_guard", "workspace cannot be inside the excluded ledger")
+        if workspace_path == custody_dir or custody_dir in workspace_path.parents:
+            raise ChainControlHold("invalid_migration_guard", "workspace cannot be inside the excluded custody root")
+        if overlaps(ledger_dir, custody_dir):
+            raise ChainControlHold("invalid_migration_guard", "ledger and custody roots must be disjoint")
+        forbidden_receipts = {
+            marker_path,
+            manifest_path,
+            spec_path,
+            active_generation_path,
+            ledger_dir / INCIDENT_EVENTS_FILE,
+            ledger_dir / ".events.seq",
+            final_custody / "manifest.json",
+            final_custody / "original-events.jsonl",
+            final_custody / "original-sidecar",
+            final_custody / "offending-line.jsonl",
+            final_generation / "manifest.json",
+            final_generation / INCIDENT_EVENTS_FILE,
+            final_generation / ".events.seq",
+            final_generation / "initial-sidecar",
+        }
+        if receipt_path in forbidden_receipts or receipt_path == ledger_dir or receipt_path == custody_dir:
+            raise ChainControlHold("invalid_migration_guard", "receipt path overlaps guarded or migration state")
+        if overlaps(receipt_path, ledger_dir) or overlaps(receipt_path, custody_dir):
+            raise ChainControlHold("invalid_migration_guard", "receipt must be outside the ledger and custody roots")
+        if receipt_path == workspace_path:
+            raise ChainControlHold("invalid_migration_guard", "receipt path cannot be the workspace")
+
+        def inject(point: str) -> None:
+            if fault_injector is not None:
+                fault_injector(point)
+
+        def read_json_guard(path: Path, expected: str, label: str) -> dict[str, Any]:
+            if _path_sha256(path, label) != expected:
+                raise ChainControlHold("migration_guard_mismatch", f"{label} bytes changed")
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ChainControlHold("migration_guard_mismatch", f"{label} is not valid JSON") from exc
+            if not isinstance(value, dict):
+                raise ChainControlHold("migration_guard_mismatch", f"{label} must contain an object")
+            return value
+
+        def verify_custody(path: Path) -> tuple[dict[str, Any], str]:
+            manifest_file = path / "manifest.json"
+            try:
+                body = json.loads(manifest_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ChainControlHold("migration_custody_invalid", "custody manifest is unreadable") from exc
+            if (
+                not isinstance(body, dict)
+                or body.get("schema") != TRAILING_COLLISION_MIGRATION_SCHEMA
+                or body.get("generation_id") != generation_id
+                or body.get("original_journal_sha256") != guarded_hashes["journal"]
+                or body.get("original_sidecar_sha256") != guarded_hashes["sidecar"]
+                or body.get("offending_line_sha256") != guarded_hashes["offending_line"]
+                or body.get("offending_operation_id") != expected_operation_id
+                or body.get("offending_event_id") != expected_event_id
+            ):
+                raise ChainControlHold("migration_custody_invalid", "custody manifest contradicts the guarded collision")
+            original_events = path / "original-events.jsonl"
+            original_sidecar = path / "original-sidecar"
+            offending_line = path / "offending-line.jsonl"
+            if (
+                _path_sha256(original_events, "custody journal") != guarded_hashes["journal"]
+                or _path_sha256(original_sidecar, "custody sidecar") != guarded_hashes["sidecar"]
+            ):
+                raise ChainControlHold("migration_custody_invalid", "custody source bytes changed")
+            offending_bytes = offending_line.read_bytes()
+            if not offending_bytes.endswith(b"\n") or sha256_hex(offending_bytes[:-1]) != guarded_hashes["offending_line"]:
+                raise ChainControlHold("migration_custody_invalid", "custody offending line changed")
+            return body, _path_sha256(manifest_file, "custody manifest")
+
+        def verify_generation(path: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
+            manifest_file = path / "manifest.json"
+            try:
+                body = json.loads(manifest_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ChainControlHold("migration_generation_invalid", "generation manifest is unreadable") from exc
+            if (
+                not isinstance(body, dict)
+                or body.get("schema") != TRAILING_COLLISION_MIGRATION_SCHEMA
+                or body.get("generation_id") != generation_id
+                or body.get("guarded_hashes") != guarded_hashes
+                or body.get("guarded_identity") != guarded_identity
+            ):
+                raise ChainControlHold("migration_generation_invalid", "generation manifest contradicts the guarded collision")
+            generation_events = path / INCIDENT_EVENTS_FILE
+            generation_sidecar = path / ".events.seq"
+            initial_sidecar = path / "initial-sidecar"
+            if (
+                body.get("parent_events_sha256") != guarded_hashes["journal"]
+                or body.get("parent_sidecar_sha256") != guarded_hashes["sidecar"]
+                or _path_sha256(initial_sidecar, "initial generation sidecar") != body.get("sidecar_sha256")
+            ):
+                raise ChainControlHold("migration_generation_invalid", "canonical generation lineage changed")
+            physical = read_physical_lines(generation_events)
+            replay = self._replay_physical_strict(physical)
+            migration_event_id = body.get("migration_event_id")
+            migration = next(
+                (
+                    event
+                    for event in replay["accepted"]
+                    if event.get("event_id") == migration_event_id
+                    and event.get("event_kind") == "chain_control.trailing_sequence_collision_quarantined"
+                ),
+                None,
+            )
+            if (
+                not isinstance(migration, dict)
+                or migration.get("physical_sequence") != expected_prefix_sequence + 1
+                or migration.get("payload", {}).get("offending_event_id") != expected_event_id
+                or migration.get("payload", {}).get("offending_line_sha256") != guarded_hashes["offending_line"]
+                or migration.get("payload", {}).get("disposition") != "quarantined_no_effect"
+            ):
+                raise ChainControlHold("migration_generation_invalid", "canonical migration event is absent or contradictory")
+            through_migration = [
+                item for item in physical if not item.torn and item.record.get("seq") <= expected_prefix_sequence + 1
+            ]
+            initial_bytes = b"\n".join(item.raw for item in through_migration) + b"\n"
+            if sha256_hex(initial_bytes) != body.get("events_sha256"):
+                raise ChainControlHold("migration_generation_invalid", "canonical migration prefix changed")
+            sidecar_raw = generation_sidecar.read_bytes()
+            sidecar_kind, sidecar = parse_sidecar_bytes(sidecar_raw)
+            if sidecar_kind != "reservation" or not isinstance(sidecar, dict):
+                raise ChainControlHold("migration_generation_invalid", "canonical generation sidecar is malformed")
+            validate_reservation_tip(sidecar, ledger_id=self.ledger_id, physical=physical)
+            return body, replay, _path_sha256(manifest_file, "generation manifest")
+
+        def verify_zero_effect(*, conflict_code: str) -> tuple[dict[str, Any], dict[str, Any], Path]:
+            current_marker = read_json_guard(marker_path, guarded_hashes["marker"], "marker")
+            current_manifest = read_json_guard(manifest_path, guarded_hashes["manifest"], "manifest")
+            launch_outcome = current_marker.get("launch_outcome")
+            from arnold_pipelines.megaplan.chain.spec import _state_path_for
+
+            state_path = _state_path_for(spec_path)
+            if (
+                _path_sha256(spec_path, "spec") != guarded_hashes["spec"]
+                or workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded) != guarded_hashes["workspace"]
+                or _live_occupancy_path({"marker": current_marker, "manifest": current_manifest}) is not None
+                or not isinstance(launch_outcome, Mapping)
+                or str(launch_outcome.get("status") or "").lower() != "failed"
+                or str(launch_outcome.get("code") or "").lower() not in {"failed", "launch_not_advanced"}
+                or state_path.exists()
+            ):
+                raise ChainControlHold(conflict_code, "zero-effect guard changed")
+            return current_marker, current_manifest, state_path
+
+        def active_pointer() -> tuple[dict[str, Any], bytes] | None:
+            if not active_generation_path.exists():
+                return None
+            try:
+                raw = active_generation_path.read_bytes()
+                body = json.loads(raw)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ChainControlHold("migration_existing_state", "active generation pointer is unreadable") from exc
+            if not isinstance(body, dict):
+                raise ChainControlHold("migration_existing_state", "active generation pointer is malformed")
+            return body, raw
+
+        def receipt_for(
+            generation_manifest: Mapping[str, Any],
+            generation_manifest_sha: str,
+            custody_manifest_sha: str,
+        ) -> dict[str, Any]:
+            return {
+                "schema": TRAILING_COLLISION_RECEIPT_SCHEMA,
+                "outcome": "committed",
+                "external_effect": False,
+                "generation_id": generation_id,
+                "migration_event_id": generation_manifest["migration_event_id"],
+                "migration_operation_id": generation_manifest["migration_operation_id"],
+                "guarded_hashes": guarded_hashes,
+                "guarded_identity": guarded_identity,
+                "old_journal_sha256": guarded_hashes["journal"],
+                "old_sidecar_sha256": guarded_hashes["sidecar"],
+                "new_journal_sha256": generation_manifest["events_sha256"],
+                "new_sidecar_sha256": generation_manifest["sidecar_sha256"],
+                "custody_manifest": str(final_custody / "manifest.json"),
+                "custody_manifest_sha256": custody_manifest_sha,
+                "generation_manifest": str(final_generation / "manifest.json"),
+                "generation_manifest_sha256": generation_manifest_sha,
+                "created_at": generation_manifest["created_at"],
+                "actor": generation_manifest["actor"],
+            }
+
+        journal_lock_fd = self.ledger._journal.open_journal_lock()
+        seq_fd: int | None = None
+        chain_lock_fd: int | None = None
+        staged_roots: list[Path] = []
+        finalized_roots: list[Path] = []
+        old_events: bytes | None = None
+        old_sidecar: bytes | None = None
+        published_pointer: bytes | None = None
+        switched = False
+        try:
+            fcntl.flock(journal_lock_fd, fcntl.LOCK_EX)
+            events_path = self.ledger.events_path
+            sidecar_path = self.ledger._journal.sequence_path()
+            if (
+                not events_path.is_file()
+                or events_path.is_symlink()
+                or not sidecar_path.is_file()
+                or sidecar_path.is_symlink()
+            ):
+                raise ChainControlHold("migration_guard_mismatch", "journal and regular sidecar must already exist")
+            seq_fd = self.ledger._journal.open_sequence_after_lock()
+            fcntl.flock(seq_fd, fcntl.LOCK_EX)
+            # A prior commit is replayable after later legitimate appends: the
+            # immutable generation/custody manifests prove the migration
+            # prefix, while strict replay proves the current mutable tip.
+            if receipt_path.is_file():
+                try:
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ChainControlHold("migration_receipt_invalid", "migration receipt is unreadable") from exc
+                expected_guard = receipt.get("guarded_hashes") if isinstance(receipt, dict) else None
+                if (
+                    receipt.get("schema") != TRAILING_COLLISION_RECEIPT_SCHEMA
+                    or expected_guard != guarded_hashes
+                    or receipt.get("guarded_identity") != guarded_identity
+                    or receipt.get("generation_id") != generation_id
+                ):
+                    raise ChainControlHold("migration_receipt_conflict", "migration replay guard differs from receipt")
+                pointer = active_pointer()
+                if (
+                    pointer is None
+                    or pointer[0].get("generation_id") != generation_id
+                    or pointer[0].get("generation_manifest_sha256") != receipt.get("generation_manifest_sha256")
+                ):
+                    raise ChainControlHold("migration_receipt_conflict", "active generation differs from migration receipt")
+                custody_body, custody_sha = verify_custody(final_custody)
+                generation_body, replay, generation_sha = verify_generation(final_generation)
+                if (
+                    custody_sha != receipt.get("custody_manifest_sha256")
+                    or generation_sha != receipt.get("generation_manifest_sha256")
+                    or generation_body.get("custody_manifest_sha256") != custody_sha
+                    or generation_body.get("migration_event_id") != receipt.get("migration_event_id")
+                    or custody_body.get("generation_id") != generation_id
+                ):
+                    raise ChainControlHold("migration_receipt_conflict", "preserved migration evidence changed")
+                verify_zero_effect(conflict_code="migration_receipt_conflict")
+                for path in final_custody.rglob("*"):
+                    if path.is_file():
+                        path.chmod(0o444)
+                final_custody.chmod(0o555)
+                receipt_path.chmod(0o444)
+                return {"outcome": "replay", "external_effect": False, "receipt": receipt, "replay": replay}
+
+            # A process may have died after the one atomic pointer publication
+            # and before writing the receipt.  The pointer plus both immutable
+            # manifests is sufficient to finish that exact transaction.
+            pointer = active_pointer()
+            if pointer is not None:
+                pointer_body, _pointer_raw = pointer
+                if pointer_body.get("generation_id") != generation_id:
+                    raise ChainControlHold("migration_existing_state", "another active migration generation exists")
+                custody_body, custody_sha = verify_custody(final_custody)
+                generation_body, replay, generation_sha = verify_generation(final_generation)
+                if (
+                    pointer_body.get("generation_manifest_sha256") != generation_sha
+                    or generation_body.get("custody_manifest_sha256") != custody_sha
+                    or custody_body.get("generation_id") != generation_id
+                ):
+                    raise ChainControlHold("migration_existing_state", "unreceipted generation evidence conflicts")
+                verify_zero_effect(conflict_code="migration_concurrent_change")
+                receipt = receipt_for(generation_body, generation_sha, custody_sha)
+                _atomic_bytes(receipt_path, canonical_json(receipt) + b"\n")
+                for path in final_custody.rglob("*"):
+                    if path.is_file():
+                        path.chmod(0o444)
+                final_custody.chmod(0o555)
+                receipt_path.chmod(0o444)
+                return {"outcome": "recovered", "external_effect": False, "receipt": receipt, "replay": replay}
+
+            old_events = events_path.read_bytes()
+            old_sidecar = read_sidecar_locked(seq_fd)
+            if sha256_hex(old_events) != guarded_hashes["journal"] or sha256_hex(old_sidecar) != guarded_hashes["sidecar"]:
+                raise ChainControlHold("migration_guard_mismatch", "journal or sidecar bytes changed")
+            marker = read_json_guard(marker_path, guarded_hashes["marker"], "marker")
+            manifest = read_json_guard(manifest_path, guarded_hashes["manifest"], "manifest")
+            if _path_sha256(spec_path, "spec") != guarded_hashes["spec"]:
+                raise ChainControlHold("migration_guard_mismatch", "spec bytes changed")
+            observed_workspace = workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded)
+            if observed_workspace != guarded_hashes["workspace"]:
+                raise ChainControlHold("migration_guard_mismatch", "workspace bytes changed")
+            occupied = _live_occupancy_path({"marker": marker, "manifest": manifest})
+            if occupied is not None:
+                raise ChainControlHold("migration_live_authority", f"live owner/tmux/provider/fixer evidence at {occupied}")
+            launch_outcome = marker.get("launch_outcome")
+            if (
+                not isinstance(launch_outcome, Mapping)
+                or str(launch_outcome.get("status") or "").lower() != "failed"
+                or str(launch_outcome.get("code") or "").lower() not in {"failed", "launch_not_advanced"}
+            ):
+                raise ChainControlHold(
+                    "migration_effect_unknown",
+                    "marker does not prove a failed, non-advanced launch",
+                )
+            from arnold_pipelines.megaplan.chain.spec import _state_path_for
+
+            state_path = _state_path_for(spec_path)
+            if state_path.exists():
+                raise ChainControlHold("migration_chain_state_present", "chain state exists; no-effect migration refused")
+
+            physical = read_physical_lines(events_path)
+            if len(physical) < 2 or any(item.torn for item in physical):
+                raise ChainControlHold("migration_shape_mismatch", "migration requires one complete trailing collision")
+            try:
+                self._replay_physical_strict(physical)
+            except ChainControlHold as full_failure:
+                if full_failure.code != "duplicate_seq":
+                    raise ChainControlHold(
+                        "migration_shape_mismatch",
+                        "full replay did not fail on the exact trailing sequence collision",
+                        details={"failure": full_failure.code},
+                    ) from full_failure
+            else:
+                raise ChainControlHold("migration_shape_mismatch", "full replay succeeds; migration is not authorized")
+            prefix = physical[:-1]
+            offending = physical[-1]
+            try:
+                prefix_replay = self._replay_physical_strict(prefix)
+            except ChainControlHold as prefix_failure:
+                raise ChainControlHold(
+                    "migration_shape_mismatch",
+                    "strict prefix replay failed; collision is multiple or interior",
+                    details={"failure": prefix_failure.code},
+                ) from prefix_failure
+            if prefix_replay["physical_sequence"] != expected_prefix_sequence:
+                raise ChainControlHold("migration_guard_mismatch", "prefix sequence differs from the guarded tip")
+            if stored_line_sha256(prefix[-1].raw) != guarded_hashes["prefix_line"]:
+                raise ChainControlHold("migration_guard_mismatch", "prefix tip line hash differs")
+            if prefix_replay["physical_tip_digest"] != guarded_hashes["prefix_digest"]:
+                raise ChainControlHold("migration_guard_mismatch", "prefix physical digest differs")
+            if stored_line_sha256(offending.raw) != guarded_hashes["offending_line"]:
+                raise ChainControlHold("migration_guard_mismatch", "offending line hash differs")
+            outer_sequence = offending.record.get("seq")
+            envelope = offending.record.get("payload")
+            if (
+                outer_sequence != expected_prefix_sequence
+                or not isinstance(envelope, dict)
+                or envelope.get("physical_sequence") != expected_prefix_sequence + 1
+                or envelope.get("event_kind") != "chain_control.intent"
+                or offending.record.get("kind") != envelope.get("event_kind")
+                or offending.record.get("idempotency_key") != envelope.get("event_id")
+                or envelope.get("operation_id") != expected_operation_id
+                or envelope.get("event_id") != expected_event_id
+                or envelope.get("semantic_effect") != "no_change"
+                or envelope.get("claim_class") != "required"
+            ):
+                raise ChainControlHold("migration_shape_mismatch", "trailing record is not the exact no-effect outer/envelope collision")
+            chain_id = str(envelope.get("chain_id") or "")
+            if not chain_id or chain_id == "chainless":
+                raise ChainControlHold("migration_shape_mismatch", "offending intent has no chain identity")
+            self._verify_envelope(
+                envelope,
+                expected_physical=expected_prefix_sequence + 1,
+                previous_physical_digest=prefix_replay["physical_tip_digest"],
+                previous_evidence_digest=prefix_replay["evidence_digest_by_chain"].get(chain_id, ZERO_DIGEST),
+                previous_evidence_sequence=prefix_replay["evidence_by_chain"].get(chain_id, 0),
+                previous_semantic_sequence=prefix_replay["semantic_by_chain"].get(chain_id, 0),
+                genesis=prefix_replay["genesis_by_chain"].get(chain_id),
+                nbf01_prefix_tip=prefix_replay["nbf01_prefix_tip"],
+                nbf01_prefix_digest=prefix_replay["nbf01_prefix_digest"],
+            )
+            sidecar_kind, sidecar = parse_sidecar_bytes(old_sidecar)
+            if sidecar_kind != "reservation" or not isinstance(sidecar, dict):
+                raise ChainControlHold("migration_shape_mismatch", "collision migration requires the exact structured stale reservation")
+            validate_reservation_integrity(sidecar, ledger_id=self.ledger_id)
+            if sidecar.get("status") != "reserved" or sidecar.get("physical_sequence") != expected_prefix_sequence:
+                raise ChainControlHold("migration_shape_mismatch", "stale reservation does not name the collided sequence")
+
+            chain_lock = self.scope_lock_path(chain_id)
+            chain_lock.parent.mkdir(parents=True, exist_ok=True)
+            chain_lock_fd = os.open(str(chain_lock), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(chain_lock_fd, fcntl.LOCK_EX)
+            # Re-check all independently mutable evidence after taking the
+            # complete authority lock stack.
+            if events_path.read_bytes() != old_events or read_sidecar_locked(seq_fd) != old_sidecar:
+                raise ChainControlHold("migration_concurrent_change", "journal changed while acquiring migration locks")
+            if (
+                _path_sha256(marker_path, "marker") != guarded_hashes["marker"]
+                or _path_sha256(manifest_path, "manifest") != guarded_hashes["manifest"]
+                or _path_sha256(spec_path, "spec") != guarded_hashes["spec"]
+                or workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded) != guarded_hashes["workspace"]
+                or state_path.exists()
+            ):
+                raise ChainControlHold("migration_concurrent_change", "guard evidence changed while acquiring migration locks")
+
+            generation_id = "seq-collision-" + _stable_id(
+                guarded_hashes["journal"], guarded_hashes["sidecar"], guarded_hashes["offending_line"]
+            )[:24]
+            final_custody = custody_dir / generation_id
+            final_generation = generation_root / generation_id
+            if final_custody.exists() != final_generation.exists():
+                # A kill between the two directory renames leaves one exact,
+                # unreferenced half. Verify it before removal, then rebuild
+                # both halves from the still-guarded legacy source.
+                partial = final_custody if final_custody.exists() else final_generation
+                if partial == final_custody:
+                    verify_custody(partial)
+                else:
+                    verify_generation(partial)
+                partial.chmod(0o755)
+                for path in partial.rglob("*"):
+                    if path.is_file():
+                        path.chmod(0o644)
+                shutil.rmtree(partial)
+                _fsync_dir(partial.parent)
+            if final_custody.exists() and final_generation.exists():
+                if not final_custody.is_dir() or not final_generation.is_dir():
+                    raise ChainControlHold("migration_existing_state", "invalid unreceipted migration state exists")
+                custody_body, custody_sha = verify_custody(final_custody)
+                generation_body, replay, generation_sha = verify_generation(final_generation)
+                if (
+                    custody_body.get("generation_id") != generation_id
+                    or generation_body.get("custody_manifest_sha256") != custody_sha
+                ):
+                    raise ChainControlHold("migration_existing_state", "unreceipted migration state conflicts")
+                for path in final_custody.rglob("*"):
+                    if path.is_file():
+                        path.chmod(0o444)
+                final_custody.chmod(0o555)
+                (final_generation / "manifest.json").chmod(0o444)
+                (final_generation / "initial-sidecar").chmod(0o444)
+                active_generation = {
+                    "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
+                    "generation_id": generation_id,
+                    "generation_manifest": str(final_generation / "manifest.json"),
+                    "generation_manifest_sha256": generation_sha,
+                }
+                published_pointer = canonical_json(active_generation) + b"\n"
+                _atomic_bytes(active_generation_path, published_pointer)
+                switched = True
+                inject("after_events_switch")
+                inject("after_sidecar_switch")
+                verify_zero_effect(conflict_code="migration_concurrent_change")
+                receipt = receipt_for(generation_body, generation_sha, custody_sha)
+                _atomic_bytes(receipt_path, canonical_json(receipt) + b"\n")
+                inject("after_receipt")
+                receipt_path.chmod(0o444)
+                return {"outcome": "recovered", "external_effect": False, "receipt": receipt, "replay": replay}
+            if active_generation_path.exists():
+                raise ChainControlHold("migration_existing_state", "unreceipted migration pointer appeared")
+            custody_dir.mkdir(parents=True, exist_ok=True)
+            generation_root.mkdir(parents=True, exist_ok=True)
+            custody_stage = Path(tempfile.mkdtemp(prefix=generation_id + ".", dir=str(custody_dir)))
+            generation_stage = Path(tempfile.mkdtemp(prefix=generation_id + ".", dir=str(generation_root)))
+            staged_roots.extend([custody_stage, generation_stage])
+            (custody_stage / "original-events.jsonl").write_bytes(old_events)
+            (custody_stage / "original-sidecar").write_bytes(old_sidecar)
+            (custody_stage / "offending-line.jsonl").write_bytes(offending.raw + b"\n")
+            custody_manifest = {
+                "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
+                "generation_id": generation_id,
+                "ledger_id": self.ledger_id,
+                "original_journal_sha256": guarded_hashes["journal"],
+                "original_sidecar_sha256": guarded_hashes["sidecar"],
+                "prefix_sequence": expected_prefix_sequence,
+                "prefix_line_sha256": guarded_hashes["prefix_line"],
+                "prefix_digest": guarded_hashes["prefix_digest"],
+                "offending_line_sha256": guarded_hashes["offending_line"],
+                "offending_operation_id": expected_operation_id,
+                "offending_event_id": expected_event_id,
+                "disposition": "quarantined_no_effect",
+            }
+            (custody_stage / "manifest.json").write_bytes(canonical_json(custody_manifest) + b"\n")
+            custody_manifest_sha = sha256_hex((custody_stage / "manifest.json").read_bytes())
+
+            migration_operation_id = _stable_id("quarantine-trailing-sequence-collision", generation_id)
+            migration_envelope = build_envelope(
+                event_kind="chain_control.trailing_sequence_collision_quarantined",
+                operation_id=migration_operation_id,
+                causation_id=expected_event_id,
+                correlation_id=expected_operation_id,
+                recovery_id=migration_operation_id,
+                chain_id=chain_id,
+                authority_mode="file",
+                ledger_id=self.ledger_id,
+                physical_sequence=expected_prefix_sequence + 1,
+                evidence_sequence=prefix_replay["evidence_by_chain"].get(chain_id, 0) + 1,
+                semantic_sequence=prefix_replay["semantic_by_chain"].get(chain_id, 0),
+                previous_physical_digest=prefix_replay["physical_tip_digest"],
+                previous_evidence_digest=prefix_replay["evidence_digest_by_chain"].get(chain_id, ZERO_DIGEST),
+                payload={
+                    "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
+                    "generation_id": generation_id,
+                    "disposition": "quarantined_no_effect",
+                    "offending_operation_id": expected_operation_id,
+                    "offending_event_id": expected_event_id,
+                    "offending_line_sha256": guarded_hashes["offending_line"],
+                    "original_journal_sha256": guarded_hashes["journal"],
+                    "original_sidecar_sha256": guarded_hashes["sidecar"],
+                    "prefix_sequence": expected_prefix_sequence,
+                    "prefix_line_sha256": guarded_hashes["prefix_line"],
+                    "prefix_digest": guarded_hashes["prefix_digest"],
+                    "custody_manifest": str(final_custody / "manifest.json"),
+                    "custody_manifest_sha256": custody_manifest_sha,
+                    "zero_effect_guards": {
+                        "marker_sha256": guarded_hashes["marker"],
+                        "manifest_sha256": guarded_hashes["manifest"],
+                        "spec_sha256": guarded_hashes["spec"],
+                        "workspace_sha256": guarded_hashes["workspace"],
+                        "chain_state": "absent",
+                        "live_authority": "absent",
+                    },
+                },
+                semantic_effect="no_change",
+                claim_class="evidence-only",
+                actor={"id": actor, "class": "operator"},
+                intent="quarantine-trailing-sequence-collision",
+                outcome="quarantined_no_effect",
+                failure_class="outer_envelope_sequence_collision",
+                linked_receipts=[str(final_custody / "manifest.json")],
+                spec_identity=str(spec_path),
+                source_identity={"journal_sha256": guarded_hashes["journal"]},
+            )
+            ts_utc = datetime.now(timezone.utc)
+            migration_record = {
+                "seq": expected_prefix_sequence + 1,
+                "schema_version": 1,
+                "ts_utc": ts_utc.isoformat(),
+                "ts_rel_init_s": None,
+                "kind": migration_envelope["event_kind"],
+                "payload": migration_envelope,
+                "idempotency_key": migration_envelope["event_id"],
+            }
+            migration_line = canonical_json(migration_record)
+            canonical_events = b"\n".join(item.raw for item in prefix) + b"\n" + migration_line + b"\n"
+            committed_sidecar = empty_reservation(
+                ledger_id=self.ledger_id,
+                physical_sequence=expected_prefix_sequence + 1,
+                status="committed",
+                previous_physical_digest=prefix_replay["physical_tip_digest"],
+            )
+            committed_sidecar.update(
+                {
+                    "scope": "chain_control",
+                    "chain_id": chain_id,
+                    "event_id": migration_envelope["event_id"],
+                    "event_kind": migration_envelope["event_kind"],
+                    "operation_id": migration_operation_id,
+                    "causation_id": expected_event_id,
+                    "correlation_id": expected_operation_id,
+                    "recovery_id": migration_operation_id,
+                    "evidence_sequence": migration_envelope["evidence_sequence"],
+                    "semantic_sequence": migration_envelope["semantic_sequence"],
+                    "record_type": "chain_control",
+                    "intended_record_sha256": sha256_hex(migration_line),
+                }
+            )
+            committed_sidecar["reservation_digest"] = reservation_digest_for(committed_sidecar)
+            canonical_sidecar = canonical_json(committed_sidecar)
+            new_journal_sha = sha256_hex(canonical_events)
+            new_sidecar_sha = sha256_hex(canonical_sidecar)
+            generation_manifest = {
+                "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
+                "generation_id": generation_id,
+                "ledger_id": self.ledger_id,
+                "guarded_hashes": guarded_hashes,
+                "guarded_identity": guarded_identity,
+                "events_sha256": new_journal_sha,
+                "sidecar_sha256": new_sidecar_sha,
+                "parent_events_sha256": guarded_hashes["journal"],
+                "parent_sidecar_sha256": guarded_hashes["sidecar"],
+                "custody_manifest": str(final_custody / "manifest.json"),
+                "custody_manifest_sha256": custody_manifest_sha,
+                "migration_event_id": migration_envelope["event_id"],
+                "migration_operation_id": migration_operation_id,
+                "tip_sequence": expected_prefix_sequence + 1,
+                "tip_event_id": migration_envelope["event_id"],
+                "created_at": ts_utc.isoformat(),
+                "actor": actor,
+            }
+            _durable_file(generation_stage / INCIDENT_EVENTS_FILE, canonical_events)
+            _durable_file(generation_stage / ".events.seq", canonical_sidecar)
+            _durable_file(generation_stage / "initial-sidecar", canonical_sidecar)
+            _durable_file(generation_stage / "manifest.json", canonical_json(generation_manifest) + b"\n")
+            _fsync_dir(generation_stage)
+            for path in custody_stage.iterdir():
+                with open(path, "rb") as handle:
+                    os.fsync(handle.fileno())
+            _fsync_dir(custody_stage)
+            inject("after_stage")
+            if events_path.read_bytes() != old_events or read_sidecar_locked(seq_fd) != old_sidecar:
+                raise ChainControlHold("migration_concurrent_change", "journal changed before generation switch")
+            os.replace(custody_stage, final_custody)
+            _fsync_dir(custody_dir)
+            staged_roots.remove(custody_stage)
+            finalized_roots.append(final_custody)
+            inject("after_custody_ready")
+            os.replace(generation_stage, final_generation)
+            _fsync_dir(generation_root)
+            staged_roots.remove(generation_stage)
+            finalized_roots.append(final_generation)
+            inject("after_generation_ready")
+            for path in final_custody.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o444)
+            final_custody.chmod(0o555)
+            (final_generation / "manifest.json").chmod(0o444)
+            (final_generation / "initial-sidecar").chmod(0o444)
+            generation_manifest_sha = _path_sha256(final_generation / "manifest.json", "generation manifest")
+            active_generation = {
+                "schema": TRAILING_COLLISION_MIGRATION_SCHEMA,
+                "generation_id": generation_id,
+                "generation_manifest": str(final_generation / "manifest.json"),
+                "generation_manifest_sha256": generation_manifest_sha,
+            }
+            published_pointer = canonical_json(active_generation) + b"\n"
+            _atomic_bytes(active_generation_path, published_pointer)
+            switched = True
+            inject("after_events_switch")
+            inject("after_sidecar_switch")
+            generation_body, replay, verified_generation_sha = verify_generation(final_generation)
+            _custody_body, verified_custody_sha = verify_custody(final_custody)
+            if verified_generation_sha != generation_manifest_sha or generation_body.get("custody_manifest_sha256") != verified_custody_sha:
+                raise ChainControlHold("migration_verification_failed", "published generation evidence is inconsistent")
+            if replay["physical_sequence"] != expected_prefix_sequence + 1:
+                raise ChainControlHold("migration_verification_failed", "canonical generation has the wrong tip")
+            if (
+                _path_sha256(marker_path, "marker") != guarded_hashes["marker"]
+                or _path_sha256(manifest_path, "manifest") != guarded_hashes["manifest"]
+                or _path_sha256(spec_path, "spec") != guarded_hashes["spec"]
+                or workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded) != guarded_hashes["workspace"]
+                or state_path.exists()
+            ):
+                raise ChainControlHold("migration_concurrent_change", "zero-effect guard changed before receipt")
+            receipt = receipt_for(generation_body, verified_generation_sha, verified_custody_sha)
+            _atomic_bytes(receipt_path, canonical_json(receipt) + b"\n")
+            inject("after_receipt")
+            receipt_path.chmod(0o444)
+            return {"outcome": "committed", "external_effect": False, "receipt": receipt, "replay": replay}
+        except BaseException as original_error:
+            concurrent_after_publish = False
+            if switched and published_pointer is not None:
+                try:
+                    pointer_unchanged = active_generation_path.read_bytes() == published_pointer
+                    generation_unchanged = (
+                        (final_generation / INCIDENT_EVENTS_FILE).read_bytes() == canonical_events
+                        and (final_generation / ".events.seq").read_bytes() == canonical_sidecar
+                    )
+                except OSError:
+                    pointer_unchanged = generation_unchanged = False
+                if pointer_unchanged and generation_unchanged:
+                    try:
+                        receipt_path.chmod(0o600)
+                    except OSError:
+                        pass
+                    try:
+                        receipt_path.unlink()
+                        _fsync_dir(receipt_path.parent)
+                    except FileNotFoundError:
+                        pass
+                    active_generation_path.unlink()
+                    _fsync_dir(active_generation_path.parent)
+                else:
+                    concurrent_after_publish = True
+            if not concurrent_after_publish:
+                for root in reversed(staged_roots + finalized_roots):
+                    if root == final_custody and root.exists():
+                        root.chmod(0o755)
+                        for path in root.rglob("*"):
+                            if path.is_file():
+                                path.chmod(0o644)
+                    shutil.rmtree(root, ignore_errors=True)
+            if concurrent_after_publish:
+                raise DurabilityUnknown(
+                    "migration generation changed after atomic publication",
+                    details={"generation_id": generation_id},
+                ) from original_error
+            raise
+        finally:
+            if chain_lock_fd is not None:
+                try:
+                    fcntl.flock(chain_lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(chain_lock_fd)
+            if seq_fd is not None:
+                try:
+                    fcntl.flock(seq_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(seq_fd)
+            try:
+                fcntl.flock(journal_lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(journal_lock_fd)
 
     def append_under_lock(
         self,
@@ -2426,6 +3549,27 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     dep.add_argument("--framed-diff-sha256", required=True)
     dep.add_argument("--actor", required=True)
     dep.add_argument("--receipt", required=True)
+    quarantine = sub.add_parser("quarantine-trailing-sequence-collision")
+    quarantine.add_argument("--ledger", required=True)
+    quarantine.add_argument("--expected-journal-sha256", required=True)
+    quarantine.add_argument("--expected-sidecar-sha256", required=True)
+    quarantine.add_argument("--expected-prefix-sequence", required=True, type=int)
+    quarantine.add_argument("--expected-prefix-line-sha256", required=True)
+    quarantine.add_argument("--expected-prefix-digest", required=True)
+    quarantine.add_argument("--expected-offending-line-sha256", required=True)
+    quarantine.add_argument("--expected-operation-id", required=True)
+    quarantine.add_argument("--expected-event-id", required=True)
+    quarantine.add_argument("--marker", required=True)
+    quarantine.add_argument("--expected-marker-sha256", required=True)
+    quarantine.add_argument("--manifest", required=True)
+    quarantine.add_argument("--expected-manifest-sha256", required=True)
+    quarantine.add_argument("--spec", required=True)
+    quarantine.add_argument("--expected-spec-sha256", required=True)
+    quarantine.add_argument("--workspace", required=True)
+    quarantine.add_argument("--expected-workspace-sha256", required=True)
+    quarantine.add_argument("--custody-dir", required=True)
+    quarantine.add_argument("--receipt", required=True)
+    quarantine.add_argument("--actor", required=True)
     args = parser.parse_args(argv)
     from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 
@@ -2446,6 +3590,30 @@ def _cli(argv: Sequence[str] | None = None) -> int:
                 actor=args.actor,
                 receipt=Path(args.receipt),
             )
+            return 0
+        if args.action == "quarantine-trailing-sequence-collision":
+            result = journal.quarantine_trailing_sequence_collision(
+                expected_journal_sha256=args.expected_journal_sha256,
+                expected_sidecar_sha256=args.expected_sidecar_sha256,
+                expected_prefix_sequence=args.expected_prefix_sequence,
+                expected_prefix_line_sha256=args.expected_prefix_line_sha256,
+                expected_prefix_digest=args.expected_prefix_digest,
+                expected_offending_line_sha256=args.expected_offending_line_sha256,
+                expected_operation_id=args.expected_operation_id,
+                expected_event_id=args.expected_event_id,
+                marker_path=Path(args.marker),
+                expected_marker_sha256=args.expected_marker_sha256,
+                manifest_path=Path(args.manifest),
+                expected_manifest_sha256=args.expected_manifest_sha256,
+                spec_path=Path(args.spec),
+                expected_spec_sha256=args.expected_spec_sha256,
+                workspace_path=Path(args.workspace),
+                expected_workspace_sha256=args.expected_workspace_sha256,
+                custody_dir=Path(args.custody_dir),
+                receipt_path=Path(args.receipt),
+                actor=args.actor,
+            )
+            sys.stdout.write(json.dumps(result["receipt"], sort_keys=True) + "\n")
             return 0
         journal.rebind_nbf07_dependency(
             chain_id=args.chain_id,

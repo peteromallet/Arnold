@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlJournal,
     ChainStateAdapter,
     DurabilityUnknown,
+    build_envelope,
     canonical_json,
     chain_id_for_spec,
     compute_event_hash,
@@ -20,9 +22,13 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     frame_bytes,
     frame_utf8,
     observed_repo_base_sha256,
+    parse_sidecar_bytes,
     physical_record_digest,
+    read_physical_lines,
     reservation_digest_for,
+    stored_line_sha256,
     verify_bound_state_matches_journal,
+    workspace_snapshot_sha256,
     u64be,
     write_reservation_locked,
 )
@@ -404,6 +410,488 @@ def test_reservation_recovery_matches_identity_and_rejects_collision_and_ahead(t
             journal2.recover_reservations_locked(fd)
     finally:
         os.close(fd)
+
+
+def test_nonempty_migrated_ledger_multi_append_has_one_exact_physical_sequence(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    ledger.append_event({**_nbf01("evt-2"), "outcome": "verified", "type": "updated"})
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    journal.mutate(
+        chain_id="chain-demo",
+        operation_id="op-multi",
+        intent_kind="advance",
+        actor={"id": "t", "class": "test"},
+        effect=lambda _txn: {"pre_state_digest": "0" * 64, "post_state_digest": "1" * 64},
+    )
+    physical = read_physical_lines(ledger.events_path)
+    seqs = [item.record["seq"] for item in physical]
+    assert seqs == list(range(seqs[0], seqs[0] + len(seqs)))
+    for item in physical:
+        if str(item.record.get("kind") or "").startswith("chain_control."):
+            assert item.record["seq"] == item.record["payload"]["physical_sequence"]
+    replay = journal.replay_strict()
+    _, sidecar = parse_sidecar_bytes((ledger.ledger_dir / ".events.seq").read_bytes())
+    assert sidecar["physical_sequence"] == replay["physical_sequence"]
+    assert sidecar["intended_record_sha256"] == stored_line_sha256(physical[-1].raw)
+
+
+def test_stale_committed_reservation_rejects_before_append(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    sidecar_path = ledger.ledger_dir / ".events.seq"
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar["physical_sequence"] -= 1
+    sidecar["reservation_digest"] = reservation_digest_for(sidecar)
+    sidecar_path.write_bytes(canonical_json(sidecar))
+    before_events = ledger.events_path.read_bytes()
+    before_sidecar = sidecar_path.read_bytes()
+    with pytest.raises(DurabilityUnknown, match="stale"):
+        journal.mutate(
+            chain_id="chain-demo",
+            operation_id="op-stale-sidecar",
+            intent_kind="advance",
+            actor={"id": "t", "class": "test"},
+            effect=lambda _txn: {"pre_state_digest": "0" * 64, "post_state_digest": "1" * 64},
+        )
+    assert ledger.events_path.read_bytes() == before_events
+    assert sidecar_path.read_bytes() == before_sidecar
+
+
+def _trailing_collision_fixture(tmp_path: Path) -> dict[str, object]:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    prefix_replay = journal.replay_strict()
+    prefix_physical = read_physical_lines(ledger.events_path)
+    prefix_sequence = prefix_replay["physical_sequence"]
+    operation_id = hashlib.sha256(b"offending-intent").hexdigest()
+    envelope = build_envelope(
+        event_kind="chain_control.intent",
+        operation_id=operation_id,
+        causation_id=operation_id,
+        correlation_id=operation_id,
+        recovery_id="none",
+        chain_id="chain-demo",
+        authority_mode="file",
+        ledger_id=journal.ledger_id,
+        physical_sequence=prefix_sequence + 1,
+        evidence_sequence=prefix_replay["evidence_by_chain"]["chain-demo"] + 1,
+        semantic_sequence=prefix_replay["semantic_by_chain"]["chain-demo"],
+        previous_physical_digest=prefix_replay["physical_tip_digest"],
+        previous_evidence_digest=prefix_replay["evidence_digest_by_chain"]["chain-demo"],
+        payload={"intent_kind": "failed_prechain_recovery", "expected_revision": None},
+        semantic_effect="no_change",
+        claim_class="required",
+        actor={"id": "operator", "class": "operator"},
+        intent="failed_prechain_recovery",
+    )
+    outer = {
+        "seq": prefix_sequence,
+        "schema_version": 1,
+        "ts_utc": "2026-09-02T00:00:00+00:00",
+        "ts_rel_init_s": None,
+        "kind": "chain_control.intent",
+        "payload": envelope,
+        "idempotency_key": envelope["event_id"],
+    }
+    offending_line = canonical_json(outer)
+    ledger.events_path.write_bytes(ledger.events_path.read_bytes() + offending_line + b"\n")
+    sidecar_path = ledger.ledger_dir / ".events.seq"
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar["status"] = "reserved"
+    sidecar["physical_sequence"] = prefix_sequence
+    sidecar["previous_physical_digest"] = "0" * 64
+    sidecar["reservation_digest"] = reservation_digest_for(sidecar)
+    sidecar_path.write_bytes(canonical_json(sidecar))
+    marker = tmp_path / "marker.json"
+    manifest = tmp_path / "manifest.json"
+    spec = tmp_path / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text('{"launch_outcome":{"code":"launch_not_advanced","status":"failed"}}\n')
+    manifest.write_text('{"generation":1,"status":"failed"}\n')
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    custody = tmp_path / "custody"
+    receipt = tmp_path / "migration-receipt.json"
+    kwargs: dict[str, object] = {
+        "expected_journal_sha256": hashlib.sha256(ledger.events_path.read_bytes()).hexdigest(),
+        "expected_sidecar_sha256": hashlib.sha256(sidecar_path.read_bytes()).hexdigest(),
+        "expected_prefix_sequence": prefix_sequence,
+        "expected_prefix_line_sha256": stored_line_sha256(prefix_physical[-1].raw),
+        "expected_prefix_digest": prefix_replay["physical_tip_digest"],
+        "expected_offending_line_sha256": hashlib.sha256(offending_line).hexdigest(),
+        "expected_operation_id": operation_id,
+        "expected_event_id": envelope["event_id"],
+        "marker_path": marker,
+        "expected_marker_sha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+        "manifest_path": manifest,
+        "expected_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "spec_path": spec,
+        "expected_spec_sha256": hashlib.sha256(spec.read_bytes()).hexdigest(),
+        "workspace_path": tmp_path,
+        "custody_dir": custody,
+        "receipt_path": receipt,
+        "actor": "operator",
+    }
+    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path, excluded=(ledger.ledger_dir, custody, receipt)
+    )
+    return {
+        "ledger": ledger,
+        "journal": journal,
+        "sidecar": sidecar_path,
+        "offending_line": offending_line,
+        "kwargs": kwargs,
+        "marker": marker,
+        "manifest": manifest,
+        "spec": spec,
+        "custody": custody,
+        "receipt": receipt,
+    }
+
+
+def test_guarded_trailing_collision_migration_preserves_custody_and_replays(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    journal = fixture["journal"]
+    kwargs = fixture["kwargs"]
+    old_events = fixture["ledger"].events_path.read_bytes()
+    old_sidecar = fixture["sidecar"].read_bytes()
+    first = journal.quarantine_trailing_sequence_collision(**kwargs)
+    assert first["outcome"] == "committed"
+    replay = journal.replay_strict()
+    assert replay["physical_sequence"] == kwargs["expected_prefix_sequence"] + 1
+    assert replay["accepted"][-1]["event_kind"] == "chain_control.trailing_sequence_collision_quarantined"
+    receipt = first["receipt"]
+    custody_manifest = Path(receipt["custody_manifest"])
+    custody_root = custody_manifest.parent
+    assert (custody_root / "original-events.jsonl").read_bytes() == old_events
+    assert (custody_root / "original-sidecar").read_bytes() == old_sidecar
+    assert (custody_root / "offending-line.jsonl").read_bytes() == fixture["offending_line"] + b"\n"
+    assert hashlib.sha256(fixture["ledger"].events_path.read_bytes()).hexdigest() == receipt["new_journal_sha256"]
+    second = journal.quarantine_trailing_sequence_collision(**kwargs)
+    assert second["outcome"] == "replay"
+    assert second["receipt"]["migration_event_id"] == receipt["migration_event_id"]
+
+
+def test_guarded_trailing_collision_replays_after_later_strict_appends(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    first = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    migrated_tip = first["replay"]["physical_sequence"]
+    fixture["journal"].mutate(
+        chain_id="chain-demo",
+        operation_id="op-after-migration",
+        intent_kind="advance",
+        actor={"id": "t", "class": "test"},
+        effect=lambda _txn: {"pre_state_digest": "0" * 64, "post_state_digest": "a" * 64},
+    )
+    replayed = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    assert replayed["outcome"] == "replay"
+    assert replayed["replay"]["physical_sequence"] > migrated_tip
+
+
+def test_guarded_trailing_collision_replay_verifies_custody_payloads(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    first = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    preserved = Path(first["receipt"]["custody_manifest"]).parent / "offending-line.jsonl"
+    preserved.chmod(0o644)
+    preserved.write_bytes(b"tampered\n")
+    with pytest.raises(ChainControlHold, match="custody offending line changed"):
+        fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+
+
+def test_guarded_trailing_collision_cli_commits_exact_guarded_generation(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    kwargs = fixture["kwargs"]
+    cmd = [
+        sys.executable,
+        "-m",
+        "arnold_pipelines.megaplan.incident.chain_control",
+        "quarantine-trailing-sequence-collision",
+        "--ledger", str(tmp_path),
+        "--expected-journal-sha256", str(kwargs["expected_journal_sha256"]),
+        "--expected-sidecar-sha256", str(kwargs["expected_sidecar_sha256"]),
+        "--expected-prefix-sequence", str(kwargs["expected_prefix_sequence"]),
+        "--expected-prefix-line-sha256", str(kwargs["expected_prefix_line_sha256"]),
+        "--expected-prefix-digest", str(kwargs["expected_prefix_digest"]),
+        "--expected-offending-line-sha256", str(kwargs["expected_offending_line_sha256"]),
+        "--expected-operation-id", str(kwargs["expected_operation_id"]),
+        "--expected-event-id", str(kwargs["expected_event_id"]),
+        "--marker", str(kwargs["marker_path"]),
+        "--expected-marker-sha256", str(kwargs["expected_marker_sha256"]),
+        "--manifest", str(kwargs["manifest_path"]),
+        "--expected-manifest-sha256", str(kwargs["expected_manifest_sha256"]),
+        "--spec", str(kwargs["spec_path"]),
+        "--expected-spec-sha256", str(kwargs["expected_spec_sha256"]),
+        "--workspace", str(kwargs["workspace_path"]),
+        "--expected-workspace-sha256", str(kwargs["expected_workspace_sha256"]),
+        "--custody-dir", str(kwargs["custody_dir"]),
+        "--receipt", str(kwargs["receipt_path"]),
+        "--actor", str(kwargs["actor"]),
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=str(Path(__file__).resolve().parents[3]),
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(completed.stdout)
+    assert receipt["outcome"] == "committed"
+    assert fixture["journal"].replay_strict()["accepted"][-1]["event_kind"] == "chain_control.trailing_sequence_collision_quarantined"
+
+
+def test_guarded_trailing_collision_wrong_multiple_and_effectful_inputs_reject(tmp_path: Path) -> None:
+    wrong = _trailing_collision_fixture(tmp_path / "wrong")
+    before = wrong["ledger"].events_path.read_bytes()
+    wrong_kwargs = dict(wrong["kwargs"])
+    wrong_kwargs["expected_offending_line_sha256"] = "f" * 64
+    with pytest.raises(ChainControlHold):
+        wrong["journal"].quarantine_trailing_sequence_collision(**wrong_kwargs)
+    assert wrong["ledger"].events_path.read_bytes() == before
+
+    multiple = _trailing_collision_fixture(tmp_path / "multiple")
+    multiple["ledger"].events_path.write_bytes(
+        multiple["ledger"].events_path.read_bytes() + multiple["offending_line"] + b"\n"
+    )
+    multiple_kwargs = dict(multiple["kwargs"])
+    multiple_kwargs["expected_journal_sha256"] = hashlib.sha256(multiple["ledger"].events_path.read_bytes()).hexdigest()
+    with pytest.raises(ChainControlHold, match="prefix"):
+        multiple["journal"].quarantine_trailing_sequence_collision(**multiple_kwargs)
+
+    effectful = _trailing_collision_fixture(tmp_path / "effectful")
+    effectful["marker"].write_text('{"fixer_owner":"live","launch_outcome":{"status":"failed"}}\n')
+    effect_kwargs = dict(effectful["kwargs"])
+    effect_kwargs["expected_marker_sha256"] = hashlib.sha256(effectful["marker"].read_bytes()).hexdigest()
+    effect_kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path / "effectful",
+        excluded=(effectful["ledger"].ledger_dir, effectful["custody"], effectful["receipt"]),
+    )
+    with pytest.raises(ChainControlHold, match="live owner"):
+        effectful["journal"].quarantine_trailing_sequence_collision(**effect_kwargs)
+
+    stateful = _trailing_collision_fixture(tmp_path / "stateful")
+    state_path = _state_path_for(stateful["spec"])
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text('{"last_state":"running"}\n', encoding="utf-8")
+    state_kwargs = dict(stateful["kwargs"])
+    state_kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path / "stateful",
+        excluded=(stateful["ledger"].ledger_dir, stateful["custody"], stateful["receipt"]),
+    )
+    with pytest.raises(ChainControlHold, match="chain state"):
+        stateful["journal"].quarantine_trailing_sequence_collision(**state_kwargs)
+
+
+@pytest.mark.parametrize("fault_point", ["after_stage", "after_custody_ready", "after_generation_ready", "after_events_switch", "after_sidecar_switch", "after_receipt"])
+def test_guarded_trailing_collision_faults_restore_exact_active_bytes(tmp_path: Path, fault_point: str) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    old_events = fixture["ledger"].events_path.read_bytes()
+    old_sidecar = fixture["sidecar"].read_bytes()
+
+    def fail(point: str) -> None:
+        if point == fault_point:
+            raise RuntimeError("injected migration fault")
+
+    with pytest.raises(RuntimeError, match="injected migration fault"):
+        fixture["journal"].quarantine_trailing_sequence_collision(
+            **fixture["kwargs"], fault_injector=fail
+        )
+    assert fixture["ledger"].events_path.read_bytes() == old_events
+    assert fixture["sidecar"].read_bytes() == old_sidecar
+    assert not fixture["receipt"].exists()
+    assert not (fixture["ledger"].ledger_dir / ".active-generation.json").exists()
+
+
+def test_guarded_trailing_collision_detects_noncooperative_concurrent_write(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    old_sidecar = fixture["sidecar"].read_bytes()
+
+    def race(point: str) -> None:
+        if point == "after_events_switch":
+            fixture["ledger"].events_path.write_bytes(
+                fixture["ledger"].events_path.read_bytes() + b'{"seq":999,"kind":"racing-writer"}\n'
+            )
+
+    with pytest.raises(DurabilityUnknown, match="changed after atomic publication"):
+        fixture["journal"].quarantine_trailing_sequence_collision(
+            **fixture["kwargs"], fault_injector=race
+        )
+    assert fixture["ledger"].events_path.read_bytes().endswith(b'"racing-writer"}\n')
+    assert fixture["sidecar"].read_bytes() == old_sidecar
+    assert not fixture["receipt"].exists()
+    assert (fixture["ledger"].ledger_dir / ".active-generation.json").exists()
+
+
+@pytest.mark.parametrize("fault_point", ["after_custody_ready", "after_generation_ready", "after_events_switch"])
+def test_guarded_trailing_collision_sigkill_phase_is_recoverable(tmp_path: Path, fault_point: str) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    child = os.fork()
+    if child == 0:
+        def kill(point: str) -> None:
+            if point == fault_point:
+                os._exit(77)
+
+        fixture["journal"].quarantine_trailing_sequence_collision(
+            **fixture["kwargs"], fault_injector=kill
+        )
+        os._exit(0)
+    _, status = os.waitpid(child, 0)
+    assert os.waitstatus_to_exitcode(status) == 77
+    recovered = fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    assert recovered["outcome"] in {"committed", "recovered"}
+    assert fixture["journal"].replay_strict()["accepted"][-1]["event_kind"] == "chain_control.trailing_sequence_collision_quarantined"
+
+
+def test_guarded_trailing_collision_rejects_overlapping_paths(tmp_path: Path) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    kwargs = dict(fixture["kwargs"])
+    kwargs["receipt_path"] = fixture["ledger"].ledger_dir / ".active-generation.json"
+    with pytest.raises(ChainControlHold, match="receipt"):
+        fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+    kwargs = dict(fixture["kwargs"])
+    kwargs["custody_dir"] = tmp_path
+    with pytest.raises(ChainControlHold, match="workspace"):
+        fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+
+
+def test_reserved_torn_tail_is_preserved_then_replaced_by_tombstone(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    physical = read_physical_lines(ledger.events_path)
+    replay = journal.replay_strict()
+    partial = b'{"seq":3,"schema_version":1'
+    reservation = empty_reservation(
+        ledger_id=journal.ledger_id,
+        physical_sequence=replay["physical_sequence"] + 1,
+        status="reserved",
+        previous_physical_digest=replay["physical_tip_digest"],
+    )
+    reservation["reservation_id"] = "torn-reservation"
+    reservation["byte_offset"] = ledger.events_path.stat().st_size
+    reservation["line_number"] = len(physical) + 1
+    reservation["reservation_digest"] = reservation_digest_for(reservation)
+    sidecar = ledger.ledger_dir / ".events.seq"
+    fd = os.open(str(sidecar), os.O_RDWR)
+    try:
+        write_reservation_locked(fd, reservation)
+        with open(ledger.events_path, "ab") as handle:
+            handle.write(partial)
+            handle.flush()
+            os.fsync(handle.fileno())
+        journal.recover_reservations_locked(fd)
+    finally:
+        os.close(fd)
+    assert not any(item.torn for item in read_physical_lines(ledger.events_path))
+    assert journal.replay_strict()["accepted"][-1]["event_kind"] == "chain_control.sequence_reserved_tombstone"
+    custody = ledger.ledger_dir / ".nbf08-torn-custody"
+    assert [path.read_bytes() for path in custody.iterdir()] == [partial]
+
+
+def test_complete_reserved_line_recovery_verifies_identity_on_first_attempt(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    sidecar = ledger.ledger_dir / ".events.seq"
+    reservation = json.loads(sidecar.read_text(encoding="utf-8"))
+    reservation["status"] = "reserved"
+    reservation["reservation_digest"] = reservation_digest_for(reservation)
+    fd = os.open(str(sidecar), os.O_RDWR)
+    try:
+        write_reservation_locked(fd, reservation)
+        recovered = journal.recover_reservations_locked(fd)
+    finally:
+        os.close(fd)
+    assert recovered["status"] == "committed"
+    stored = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert stored["status"] == "committed"
+    assert stored["reservation_digest"] == reservation_digest_for(stored)
+
+
+def test_complete_foreign_line_at_reserved_sequence_is_not_adopted(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    replay = journal.replay_strict()
+    physical = read_physical_lines(ledger.events_path)
+    reservation = empty_reservation(
+        ledger_id=journal.ledger_id,
+        physical_sequence=replay["physical_sequence"] + 1,
+        status="reserved",
+        previous_physical_digest=replay["physical_tip_digest"],
+    )
+    reservation.update(
+        {
+            "event_id": "reserved-event",
+            "event_kind": "incident.nbf.detection",
+            "byte_offset": ledger.events_path.stat().st_size,
+            "line_number": len(physical) + 1,
+        }
+    )
+    reservation["reservation_digest"] = reservation_digest_for(reservation)
+    expected_record = {
+        "seq": replay["physical_sequence"] + 1,
+        "schema_version": 1,
+        "ts_utc": "2026-09-02T00:00:00+00:00",
+        "ts_rel_init_s": None,
+        "kind": "incident.nbf.detection",
+        "payload": {"event_id": "reserved-event", "value": "expected"},
+        "idempotency_key": "reserved-event",
+    }
+    reservation["intended_record_sha256"] = hashlib.sha256(canonical_json(expected_record)).hexdigest()
+    reservation["reservation_digest"] = reservation_digest_for(reservation)
+    foreign_record = dict(expected_record)
+    foreign_record["payload"] = {"event_id": "reserved-event", "value": "foreign"}
+    foreign = canonical_json(foreign_record)
+    with open(ledger.events_path, "ab") as handle:
+        handle.write(foreign + b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    sidecar = ledger.ledger_dir / ".events.seq"
+    fd = os.open(str(sidecar), os.O_RDWR)
+    try:
+        write_reservation_locked(fd, reservation)
+        with pytest.raises(DurabilityUnknown, match="intended_record_sha256"):
+            journal.recover_reservations_locked(fd)
+    finally:
+        os.close(fd)
+
+
+def test_ordinary_append_after_genesis_and_migration_uses_structured_active_tip(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path / "genesis")
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    appended = ledger.append_event(_nbf01("evt-2"))
+    sidecar = json.loads((ledger.ledger_dir / ".events.seq").read_text(encoding="utf-8"))
+    assert sidecar["status"] == "committed"
+    assert sidecar["physical_sequence"] == appended["seq"]
+    assert sidecar["scope"] == "chainless"
+    assert sidecar["chain_id"] is None and sidecar["event_id"] is None and sidecar["operation_id"] is None
+    assert journal.replay_strict()["physical_sequence"] == appended["seq"]
+    sidecar["status"] = "reserved"
+    sidecar["reservation_digest"] = reservation_digest_for(sidecar)
+    sidecar_path = ledger.ledger_dir / ".events.seq"
+    fd = os.open(str(sidecar_path), os.O_RDWR)
+    try:
+        write_reservation_locked(fd, sidecar)
+        assert journal.recover_reservations_locked(fd)["status"] == "committed"
+    finally:
+        os.close(fd)
+
+    fixture = _trailing_collision_fixture(tmp_path / "migrated")
+    fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
+    legacy_bytes = (fixture["ledger"].ledger_dir / "events.jsonl").read_bytes()
+    active_before = fixture["ledger"].events_path.read_bytes()
+    migrated_append = fixture["ledger"].append_event(_nbf01("evt-after-migration"))
+    assert fixture["ledger"].events_path.read_bytes() != active_before
+    assert (fixture["ledger"].ledger_dir / "events.jsonl").read_bytes() == legacy_bytes
+    assert fixture["journal"].replay_strict()["physical_sequence"] == migrated_append["seq"]
 
 
 def test_mutate_replay_key_rejects_tuple_mismatch(tmp_path: Path) -> None:
