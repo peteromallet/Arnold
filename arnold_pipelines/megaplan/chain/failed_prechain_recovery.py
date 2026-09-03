@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.runtime_manifest import (
@@ -59,6 +59,91 @@ def _full(value: Any, *, label: str) -> str:
     if _SHA256.fullmatch(result) is None:
         raise _refuse(f"{label} must be a full SHA-256")
     return result
+
+
+def _assert_event_integrity(event: Mapping[str, Any]) -> None:
+    """Re-verify one projected event without trusting replay's object aliases."""
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ENVELOPE_FIELDS,
+        canonical_json,
+        compute_event_hash,
+        payload_digest_for,
+    )
+
+    if any(field not in event for field in ENVELOPE_FIELDS):
+        raise _refuse("retry predecessor lineage contains an incomplete event envelope")
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise _refuse("retry predecessor lineage contains a malformed payload")
+    event_id = str(event.get("event_id") or "")
+    event_hash = str(event.get("event_hash") or "")
+    payload_digest = payload_digest_for(payload)
+    if (
+        _SHA256.fullmatch(event_id) is None
+        or _SHA256.fullmatch(event_hash) is None
+        or event.get("payload_digest") != payload_digest
+    ):
+        raise _refuse("retry predecessor lineage contains an invalid event identity")
+    try:
+        expected_event_id = hashlib.sha256(
+            canonical_json(
+                [
+                    str(event["event_kind"]),
+                    str(event["operation_id"]),
+                    str(event["physical_sequence"]),
+                    payload_digest,
+                ]
+            )
+        ).hexdigest()
+        expected_event_hash = compute_event_hash(
+            authority_mode=str(event["authority_mode"]),
+            ledger_id=str(event["ledger_id"]),
+            chain_id=str(event["chain_id"] or "chainless"),
+            physical_sequence=event["physical_sequence"],
+            evidence_sequence=event["evidence_sequence"],
+            semantic_sequence=event["semantic_sequence"],
+            event_id=event_id,
+            event_kind=str(event["event_kind"]),
+            operation_id=str(event["operation_id"] or "none"),
+            causation_id=str(event["causation_id"] or "none"),
+            correlation_id=str(event["correlation_id"] or "none"),
+            recovery_id=str(event["recovery_id"] or "none"),
+            previous_physical_digest=str(event["previous_physical_digest"]),
+            previous_evidence_digest=str(event["previous_evidence_digest"]),
+            payload=payload,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _refuse("retry predecessor lineage contains an invalid event identity") from exc
+    if event_id != expected_event_id or event_hash != expected_event_hash:
+        raise _refuse("retry predecessor lineage event identity or hash is contradictory")
+
+
+def _receipt_stub_identity(receipt_path: Path) -> dict[str, Any] | None:
+    """Return the exact preserved empty regular-file stub identity."""
+    try:
+        info = receipt_path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _refuse("held recovery receipt stub is unreadable") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise _refuse("held recovery receipt stub must be a regular file")
+    if info.st_size != 0:
+        raise _refuse("recovery receipt already exists for held operation")
+    try:
+        digest = _sha(receipt_path)
+    except OSError as exc:
+        raise _refuse("held recovery receipt stub is unreadable") from exc
+    if digest != hashlib.sha256(b"").hexdigest():
+        raise _refuse("held recovery receipt stub content is not the empty digest")
+    return {
+        "path": str(receipt_path),
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": stat.S_IMODE(info.st_mode),
+        "size": info.st_size,
+        "sha256": digest,
+    }
 
 
 def _safe_text(value: Any, *, label: str) -> str:
@@ -535,6 +620,7 @@ def recover_failed_prechain(
         if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
             raise _refuse("immutable engine runtime is not the clean failed revision")
     from arnold_pipelines.megaplan.incident.chain_control import (
+        SCHEMA_VERSION,
         ChainControlHold,
         chain_id_for_spec,
         journal_for,
@@ -548,14 +634,14 @@ def recover_failed_prechain(
         predecessor = replay["operations"].get(retry_after)
         predecessor_events = [
             event for event in replay.get("accepted", [])
-            if event.get("chain_id") == chain_id and event.get("operation_id") == retry_after
+            if isinstance(event, Mapping) and event.get("operation_id") == retry_after
         ]
         if (
             not isinstance(predecessor, Mapping)
             or predecessor.get("event_kind") != "chain_control.hold_reconciled"
             or predecessor.get("outcome") != "aborted_no_effect"
             or not predecessor_events
-            or predecessor_events[-1].get("event_hash") != predecessor.get("event_hash")
+            or predecessor_events[-1] != predecessor
         ):
             raise _refuse("retry predecessor must be a terminal aborted_no_effect hold reconciliation")
         predecessor_payload = predecessor.get("payload") if isinstance(predecessor.get("payload"), Mapping) else {}
@@ -570,34 +656,52 @@ def recover_failed_prechain(
         )
         if tuple(event.get("event_kind") for event in predecessor_events) != expected_event_kinds:
             raise _refuse("retry predecessor must contain exactly one ordered intent/validation/claim/hold/terminal lineage")
-        hold_events = [
-            event for event in predecessor_events
-            if event.get("event_kind") == "chain_control.hold"
-        ]
-        claimed_events = [
-            event for event in predecessor_events
-            if event.get("event_kind") == "chain_control.claimed"
-        ]
-        intent_events = [
-            event for event in predecessor_events
-            if event.get("event_kind") == "chain_control.intent"
-        ]
-        if len(hold_events) != 1 or len(claimed_events) != 1 or len(intent_events) != 1:
-            raise _refuse("retry predecessor hold linkage is missing or ambiguous")
-        hold_event = hold_events[0]
-        claimed_event = claimed_events[0]
-        intent_event = intent_events[0]
+        intent_event, authority_event, claimed_event, hold_event, terminal_event = predecessor_events
         intent_payload = intent_event.get("payload") if isinstance(intent_event.get("payload"), Mapping) else {}
-        authority_event = predecessor_events[1]
         authority_payload = authority_event.get("payload") if isinstance(authority_event.get("payload"), Mapping) else {}
         claimed_payload = claimed_event.get("payload") if isinstance(claimed_event.get("payload"), Mapping) else {}
         hold_payload = hold_event.get("payload") if isinstance(hold_event.get("payload"), Mapping) else {}
-        if any(
-            _SHA256.fullmatch(str(event.get(field) or "")) is None
-            for event in predecessor_events
-            for field in ("event_id", "event_hash")
+        if any(event.get("chain_id") != chain_id for event in predecessor_events):
+            raise _refuse("retry predecessor operation is attributed to a foreign chain")
+        if any(event.get("operation_id") != retry_after for event in predecessor_events):
+            raise _refuse("retry predecessor operation identity is contradictory")
+        if any(event.get("correlation_id") != retry_after for event in predecessor_events):
+            raise _refuse("retry predecessor correlation identity is contradictory")
+        if terminal_event.get("causation_id") != hold_event.get("event_id"):
+            raise _refuse("retry predecessor hold linkage is contradictory")
+        if intent_event.get("causation_id") != retry_after or any(
+            event.get("causation_id") != prior.get("event_id")
+            for prior, event in zip(predecessor_events[:-1], predecessor_events[1:-1])
         ):
-            raise _refuse("retry predecessor lineage contains an invalid event identity")
+            raise _refuse("retry predecessor causation lineage is contradictory")
+        event_ids = [str(event.get("event_id") or "") for event in predecessor_events]
+        event_hashes = [str(event.get("event_hash") or "") for event in predecessor_events]
+        if (
+            any(_SHA256.fullmatch(value) is None for value in (*event_ids, *event_hashes))
+            or len(set(event_ids)) != len(event_ids)
+            or len(set(event_hashes)) != len(event_hashes)
+        ):
+            raise _refuse("retry predecessor lineage contains an invalid or duplicate event identity")
+        if any(
+            current.get("previous_evidence_digest") != prior.get("event_hash")
+            for prior, current in zip(predecessor_events, predecessor_events[1:])
+        ):
+            raise _refuse("retry predecessor evidence hash lineage is contradictory")
+        try:
+            if any(
+                current.get("evidence_sequence") != prior.get("evidence_sequence") + 1
+                for prior, current in zip(predecessor_events, predecessor_events[1:])
+            ):
+                raise _refuse("retry predecessor evidence sequence is contradictory")
+            if len({event.get("semantic_sequence") for event in predecessor_events}) != 1:
+                raise _refuse("retry predecessor no-effect semantic sequence is contradictory")
+            if any(
+                current.get("physical_sequence") <= prior.get("physical_sequence")
+                for prior, current in zip(predecessor_events, predecessor_events[1:])
+            ):
+                raise _refuse("retry predecessor physical sequence is contradictory")
+        except TypeError as exc:
+            raise _refuse("retry predecessor lineage sequence is malformed") from exc
         expected_lineage_identity = {
             "session": expected_session_id,
             "old_sha": old_sha,
@@ -606,72 +710,78 @@ def recover_failed_prechain(
             "chain_workspace": str(workspace_path),
             "engine_runtime": str(engine_runtime_path),
         }
-        for event, payload in (
-            (intent_event, intent_payload),
-            (authority_event, authority_payload),
-            (claimed_event, claimed_payload),
-            (hold_event, hold_payload),
+        expected_source_identity = {
+            key: value for key, value in expected_lineage_identity.items() if key != "session"
+        }
+        expected_intent_payload = {
+            "intent_kind": RECOVERY_INTENT,
+            "expected_revision": None,
+            **expected_lineage_identity,
+        }
+        expected_authority_payload = {
+            "intent_kind": RECOVERY_INTENT,
+            **expected_lineage_identity,
+        }
+        expected_claimed_payload = {
+            "intent_kind": RECOVERY_INTENT,
+            "claim": "single-use",
+            **expected_lineage_identity,
+        }
+        if (
+            intent_payload != expected_intent_payload
+            or authority_payload != expected_authority_payload
+            or claimed_payload != expected_claimed_payload
         ):
-            if any(payload.get(key) != value for key, value in expected_lineage_identity.items()):
-                raise _refuse("retry predecessor lineage payload identity is contradictory")
+            raise _refuse("retry predecessor intent/authority/claim payload is contradictory")
+        expected_hold_keys = {
+            *expected_lineage_identity,
+            "reason",
+            "code",
+            "details",
+        }
+        if (
+            set(hold_payload) != expected_hold_keys
+            or any(hold_payload.get(key) != value for key, value in expected_lineage_identity.items())
+            or not isinstance(hold_payload.get("reason"), str)
+            or not hold_payload.get("reason")
+            or not isinstance(hold_payload.get("code"), str)
+            or not hold_payload.get("code")
+            or not isinstance(hold_payload.get("details"), Mapping)
+        ):
+            raise _refuse("retry predecessor hold payload identity is contradictory")
         if (
             predecessor_payload.get("held_operation_id") != retry_after
             or predecessor_payload.get("held_event_hash") != hold_event.get("event_hash")
             or predecessor_payload.get("held_event_id") != hold_event.get("event_id")
-            or predecessor.get("causation_id") != hold_event.get("event_id")
-            or predecessor.get("correlation_id") != retry_after
-            or hold_event.get("causation_id") != claimed_event.get("event_id")
-            or hold_event.get("correlation_id") != retry_after
-            or claimed_event.get("correlation_id") != retry_after
-            or intent_event.get("intent") != RECOVERY_INTENT
-            or intent_payload.get("intent_kind") != RECOVERY_INTENT
         ):
             raise _refuse("retry predecessor hold linkage is contradictory")
-        if (
-            intent_event.get("spec_identity") != str(spec_path)
-            or intent_event.get("source_identity") != {
-                "old_sha": old_sha,
-                "new_sha": new_sha,
-                "reviewed_source": str(source_path),
-                "chain_workspace": str(workspace_path),
-                "engine_runtime": str(engine_runtime_path),
-            }
-            or authority_payload.get("intent_kind") != RECOVERY_INTENT
-            or claimed_payload.get("intent_kind") != RECOVERY_INTENT
-        ):
-            raise _refuse("retry predecessor intent or validation identity is contradictory")
-        if (
-            intent_event.get("semantic_effect") != "no_change"
-            or intent_event.get("claim_class") != "required"
-            or authority_event.get("semantic_effect") != "no_change"
-            or authority_event.get("claim_class") != "required"
-            or claimed_event.get("semantic_effect") != "no_change"
-            or claimed_event.get("claim_class") != "required"
-            or hold_event.get("semantic_effect") != "no_change"
-            or hold_event.get("claim_class") != "evidence-only"
-            or hold_event.get("outcome") != "hold"
-            or not str(hold_event.get("failure_class") or "")
-        ):
-            raise _refuse("retry predecessor lineage envelope is contradictory")
-        if (
-            predecessor.get("recovery_id")
-            != hashlib.sha256(
-                f"reconcile-held-no-effect\0{chain_id}\0{retry_after}\0{hold_event.get('event_hash')}".encode()
-            ).hexdigest()
-        ):
+        reconciliation_id = hashlib.sha256(
+            f"reconcile-held-no-effect\0{chain_id}\0{retry_after}\0{hold_event.get('event_hash')}".encode()
+        ).hexdigest()
+        if predecessor.get("recovery_id") != reconciliation_id:
             raise _refuse("retry predecessor recovery identity is not deterministic")
-        if (
-            predecessor.get("semantic_effect") != "no_change"
-            or predecessor.get("claim_class") != "evidence-only"
-            or predecessor.get("failure_class") != "chain_control.hold"
-            or predecessor.get("linked_receipts") != [str(custody_dir / retry_after / "manifest.json")]
-        ):
-            raise _refuse("retry predecessor terminal envelope is contradictory")
         retry_after_event_hash = str(predecessor.get("event_hash") or "").lower()
-        if _SHA256.fullmatch(retry_after_event_hash) is None:
-            raise _refuse("retry predecessor terminal event hash is invalid")
+        expected_evidence = custody_dir / retry_after / "manifest.json"
+        retry_evidence_path = expected_evidence
+        if not expected_evidence.is_file():
+            raise _refuse("retry predecessor custody evidence is unavailable or changed")
+        evidence_sha = _sha(expected_evidence)
+        receipt_identity = _receipt_stub_identity(expected_evidence.parent / "recovery-receipt.json")
+        expected_zero_effect_identity = {
+            "marker_sha256": expected_marker_sha256,
+            "manifest_sha256": expected_manifest_sha256,
+            "source_head": old_sha,
+            "workspace_head": old_sha,
+            "engine_runtime": str(engine_runtime_path),
+            "engine_head": old_sha,
+            "receipt_state": "empty_stub" if receipt_identity is not None else "absent",
+            "receipt_identity": receipt_identity,
+        }
         expected_predecessor = {
+            "disposition": "aborted_no_effect",
             "held_operation_id": retry_after,
+            "held_event_hash": hold_event.get("event_hash"),
+            "held_event_id": hold_event.get("event_id"),
             "session": expected_session_id,
             "spec_path": str(spec_path),
             "spec_sha256": expected_spec_sha256,
@@ -684,36 +794,112 @@ def recover_failed_prechain(
             "reviewed_source": str(source_path),
             "chain_workspace": str(workspace_path),
             "engine_runtime": str(engine_runtime_path),
+            "recovery_evidence": {"path": str(expected_evidence), "sha256": evidence_sha},
+            "reason": predecessor_payload.get("reason"),
+            "actor": predecessor_payload.get("actor"),
+            "zero_effect_identity": expected_zero_effect_identity,
         }
-        if any(predecessor_payload.get(key) != value for key, value in expected_predecessor.items()):
+        if (
+            predecessor_payload != expected_predecessor
+            or not isinstance(predecessor_payload.get("reason"), str)
+            or not predecessor_payload.get("reason")
+            or not isinstance(predecessor_payload.get("actor"), str)
+            or not predecessor_payload.get("actor")
+        ):
             raise _refuse("retry predecessor identity does not match current recovery guards")
-        if predecessor.get("spec_identity") != str(spec_path):
-            raise _refuse("retry predecessor spec identity does not match")
-        if predecessor.get("intent") != "reconcile-held-no-effect":
-            raise _refuse("retry predecessor intent is not held-operation reconciliation")
-        if predecessor.get("source_identity") != {
-            "old_sha": old_sha,
-            "new_sha": new_sha,
-            "reviewed_source": str(source_path),
-            "chain_workspace": str(workspace_path),
-            "engine_runtime": str(engine_runtime_path),
-        }:
-            raise _refuse("retry predecessor source identity does not match")
-        evidence = predecessor_payload.get("recovery_evidence")
-        expected_evidence = custody_dir / retry_after / "manifest.json"
-        retry_evidence_path = expected_evidence
-        if not isinstance(evidence, Mapping) or Path(str(evidence.get("path") or "")).resolve(strict=False) != expected_evidence:
-            raise _refuse("retry predecessor custody evidence identity does not match")
-        if not expected_evidence.is_file() or _sha(expected_evidence) != str(evidence.get("sha256") or ""):
-            raise _refuse("retry predecessor custody evidence is unavailable or changed")
+        lineage_actor = intent_event.get("actor")
+        if (
+            not isinstance(lineage_actor, Mapping)
+            or lineage_actor.get("class") != "operator"
+            or not isinstance(lineage_actor.get("id"), str)
+            or not lineage_actor.get("id")
+            or any(event.get("actor") != lineage_actor for event in predecessor_events[:4])
+            or terminal_event.get("actor")
+            != {"id": predecessor_payload.get("actor"), "class": "operator"}
+        ):
+            raise _refuse("retry predecessor actor authority is contradictory")
+        common_envelope = {
+            "schema_version": SCHEMA_VERSION,
+            "operation_id": retry_after,
+            "chain_id": chain_id,
+            "parent_chain_id": None,
+            "child_id": None,
+            "run_id": None,
+            "authority_mode": "file",
+            "ledger_id": journal.ledger_id,
+            "semantic_effect": "no_change",
+            "expected_cursor": None,
+            "expected_revision": None,
+            "actual_cursor": None,
+            "actual_revision": None,
+            "pre_state_digest": None,
+            "post_state_digest": None,
+            "config_identity": None,
+            "runtime_identity": None,
+        }
+        event_specific_envelopes = (
+            {
+                "recovery_id": "none",
+                "intent": RECOVERY_INTENT,
+                "source_identity": expected_source_identity,
+                "spec_identity": str(spec_path),
+                "linked_receipts": [],
+                "outcome": None,
+                "failure_class": None,
+                "claim_class": "required",
+            },
+            {
+                "recovery_id": "none",
+                "intent": RECOVERY_INTENT,
+                "source_identity": None,
+                "spec_identity": None,
+                "linked_receipts": [],
+                "outcome": None,
+                "failure_class": None,
+                "claim_class": "required",
+            },
+            {
+                "recovery_id": "none",
+                "intent": RECOVERY_INTENT,
+                "source_identity": None,
+                "spec_identity": None,
+                "linked_receipts": [],
+                "outcome": None,
+                "failure_class": None,
+                "claim_class": "required",
+            },
+            {
+                "recovery_id": "none",
+                "intent": None,
+                "source_identity": None,
+                "spec_identity": None,
+                "linked_receipts": [],
+                "outcome": "hold",
+                "failure_class": hold_payload.get("code"),
+                "claim_class": "evidence-only",
+            },
+            {
+                "recovery_id": reconciliation_id,
+                "intent": "reconcile-held-no-effect",
+                "source_identity": expected_source_identity,
+                "spec_identity": str(spec_path),
+                "linked_receipts": [str(expected_evidence)],
+                "outcome": "aborted_no_effect",
+                "failure_class": "chain_control.hold",
+                "claim_class": "evidence-only",
+            },
+        )
+        for index, (event, specific) in enumerate(zip(predecessor_events, event_specific_envelopes)):
+            expected_envelope = {**common_envelope, **specific}
+            if any(event.get(key) != value for key, value in expected_envelope.items()):
+                subject = "terminal" if index == len(predecessor_events) - 1 else "lineage"
+                raise _refuse(f"retry predecessor {subject} envelope is contradictory")
+            _assert_event_integrity(event)
         try:
             evidence_payload = json.loads(expected_evidence.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise _refuse("retry predecessor custody evidence is unreadable") from exc
         _verify_archive(expected_evidence, evidence_payload, retry_after)
-        linked = predecessor.get("linked_receipts") or []
-        if str(expected_evidence) not in {str(item) for item in linked}:
-            raise _refuse("retry predecessor terminal is not linked to its custody evidence")
     journal_owned_paths = _journal_owned_paths(journal, chain_id, workspace_path)
     journal_before = _journal_baseline(workspace_path, journal_owned_paths)
     archive_path, archive = _archive_dirty_state(
@@ -1062,35 +1248,7 @@ def reconcile_failed_prechain_hold(
         "engine_runtime": str(engine_runtime_path),
     }
     receipt_path = recovery_evidence.parent / "recovery-receipt.json"
-
-    def _receipt_stub_identity() -> dict[str, Any] | None:
-        """Return the exact preserved empty regular-file stub identity."""
-        try:
-            info = receipt_path.lstat()
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            raise _refuse("held recovery receipt stub is unreadable") from exc
-        if not stat.S_ISREG(info.st_mode):
-            raise _refuse("held recovery receipt stub must be a regular file")
-        if info.st_size != 0:
-            raise _refuse("recovery receipt already exists for held operation")
-        try:
-            digest = _sha(receipt_path)
-        except OSError as exc:
-            raise _refuse("held recovery receipt stub is unreadable") from exc
-        if digest != hashlib.sha256(b"").hexdigest():
-            raise _refuse("held recovery receipt stub content is not the empty digest")
-        return {
-            "path": str(receipt_path),
-            "device": info.st_dev,
-            "inode": info.st_ino,
-            "mode": stat.S_IMODE(info.st_mode),
-            "size": info.st_size,
-            "sha256": digest,
-        }
-
-    receipt_before = _receipt_stub_identity()
+    receipt_before = _receipt_stub_identity(receipt_path)
 
     def _live_identity() -> dict[str, Any]:
         """Re-read every authoritative identity under the final lock."""
@@ -1120,7 +1278,7 @@ def reconcile_failed_prechain_hold(
             raise ChainControlHold("workspace_effect_present", "chain workspace HEAD changed")
         if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
             raise ChainControlHold("engine_effect_present", "engine runtime is not the unchanged clean held revision")
-        receipt_now = _receipt_stub_identity()
+        receipt_now = _receipt_stub_identity(receipt_path)
         if receipt_now != receipt_before:
             raise ChainControlHold("receipt_cas_conflict", "preserved recovery receipt stub changed")
         return {

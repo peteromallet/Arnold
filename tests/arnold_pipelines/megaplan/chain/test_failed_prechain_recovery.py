@@ -321,7 +321,7 @@ def _held_recovery_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> d
         "chain_workspace": str(workspace),
         "engine_runtime": str(engine),
     }
-    hold_result = journal.mutate(
+    journal.mutate(
         chain_id=chain_id,
         operation_id=operation_id,
         intent_kind=recovery.RECOVERY_INTENT,
@@ -363,6 +363,49 @@ def _held_recovery_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> d
         "marker_sha": hashlib.sha256(marker.read_bytes()).hexdigest(),
         "manifest_sha": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "spec_sha": hashlib.sha256(spec.read_bytes()).hexdigest(),
+    }
+
+
+def _reconciled_retry_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, object], dict[str, object]]:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    recovery.reconcile_failed_prechain_hold(
+        f["spec"],
+        f["project"],
+        marker_path=f["marker"],
+        manifest_path=f["manifest"],
+        source_path=f["source"],
+        workspace_path=f["workspace"],
+        custody_dir=f["custody"],
+        held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"],
+        expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"],
+        expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"],
+        expected_old_sha=f["old"],
+        held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"],
+        reason="reconcile before retry-lineage tamper test",
+        actor="operator",
+    )
+    return f, {
+        "marker_path": f["marker"],
+        "manifest_path": f["manifest"],
+        "source_path": f["source"],
+        "workspace_path": f["workspace"],
+        "staged_runtime_path": tmp_path / "staged-retry",
+        "custody_dir": f["custody"],
+        "expected_session_id": f["project"].name,
+        "expected_marker_sha256": f["marker_sha"],
+        "expected_manifest_sha256": f["manifest_sha"],
+        "expected_spec_sha256": f["spec_sha"],
+        "expected_old_sha": f["old"],
+        "reviewed_new_sha": f["new"],
+        "retry_after_operation_id": f["operation_id"],
+        "reason": "reject tampered retry predecessor",
+        "actor": "operator",
     }
 
 
@@ -572,6 +615,102 @@ def test_retry_after_rejects_contradictory_terminal_or_foreign_hold_link(
     )
     with pytest.raises(CliError, match=message):
         recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "field"),
+    [
+        ("chain_control.authority_validated", "causation_id"),
+        ("chain_control.claimed", "causation_id"),
+        ("chain_control.intent", "correlation_id"),
+        ("chain_control.authority_validated", "correlation_id"),
+        ("chain_control.claimed", "correlation_id"),
+        ("chain_control.intent", "intent"),
+        ("chain_control.authority_validated", "intent"),
+        ("chain_control.claimed", "intent"),
+        ("chain_control.authority_validated", "operation_id"),
+        ("chain_control.claimed", "chain_id"),
+        ("chain_control.intent", "event_id"),
+        ("chain_control.authority_validated", "event_hash"),
+        ("chain_control.claimed", "recovery_id"),
+        ("chain_control.authority_validated", "semantic_effect"),
+        ("chain_control.hold", "claim_class"),
+        ("chain_control.intent", "source_identity"),
+        ("chain_control.intent", "spec_identity"),
+        ("chain_control.authority_validated", "expected_revision"),
+        ("chain_control.claimed", "previous_evidence_digest"),
+        ("chain_control.hold", "semantic_sequence"),
+    ],
+)
+def test_retry_after_rejects_missing_lineage_envelope_fields_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event_kind: str,
+    field: str,
+) -> None:
+    f, retry_kwargs = _reconciled_retry_fixture(tmp_path, monkeypatch)
+    events_path = f["project"] / ".megaplan" / "incident-ledger" / "events.jsonl"
+    events_before = events_path.read_bytes()
+
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlJournal
+    original_replay = ChainControlJournal.replay_strict
+
+    def tampered_replay(self: object) -> dict[str, object]:
+        replay = deepcopy(original_replay(self))
+        event = next(
+            item for item in replay["accepted"]
+            if item.get("operation_id") == f["operation_id"]
+            and item.get("event_kind") == event_kind
+        )
+        event.pop(field)
+        return replay
+
+    monkeypatch.setattr(ChainControlJournal, "replay_strict", tampered_replay)
+    with pytest.raises(CliError):
+        recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
+    assert events_path.read_bytes() == events_before
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "field"),
+    [
+        ("chain_control.intent", "intent_kind"),
+        ("chain_control.authority_validated", "intent_kind"),
+        ("chain_control.claimed", "intent_kind"),
+        ("chain_control.intent", "session"),
+        ("chain_control.authority_validated", "old_sha"),
+        ("chain_control.claimed", "reviewed_source"),
+        ("chain_control.hold", "engine_runtime"),
+        ("chain_control.hold_reconciled", "zero_effect_identity"),
+    ],
+)
+def test_retry_after_rejects_missing_frozen_payload_fields_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event_kind: str,
+    field: str,
+) -> None:
+    f, retry_kwargs = _reconciled_retry_fixture(tmp_path, monkeypatch)
+    events_path = f["project"] / ".megaplan" / "incident-ledger" / "events.jsonl"
+    events_before = events_path.read_bytes()
+
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlJournal
+    original_replay = ChainControlJournal.replay_strict
+
+    def tampered_replay(self: object) -> dict[str, object]:
+        replay = deepcopy(original_replay(self))
+        event = next(
+            item for item in replay["accepted"]
+            if item.get("operation_id") == f["operation_id"]
+            and item.get("event_kind") == event_kind
+        )
+        event["payload"].pop(field)
+        return replay
+
+    monkeypatch.setattr(ChainControlJournal, "replay_strict", tampered_replay)
+    with pytest.raises(CliError):
+        recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
+    assert events_path.read_bytes() == events_before
 
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "directory"])
