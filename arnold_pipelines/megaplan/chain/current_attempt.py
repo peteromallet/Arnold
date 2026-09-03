@@ -67,6 +67,27 @@ class CurrentAttemptGuards:
     expected_hold: Mapping[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class AbortedC2AuthorityGuards:
+    """Complete pre-state for admitting a paused, null-plan aborted C2."""
+
+    expected_session_id: str
+    expected_plan_name: str
+    expected_chain_state_sha256: str
+    expected_plan_state_sha256: str
+    expected_marker_sha256: str
+    expected_spec_sha256: str
+    expected_chain_revision: Any
+    expected_completed_prefix: tuple[Mapping[str, Any], ...]
+    expected_source_binding: Mapping[str, Any]
+    expected_runtime_identity: Mapping[str, Any]
+    expected_hold: Mapping[str, Any]
+    expected_operation_rows: tuple[Mapping[str, Any], ...]
+    expected_historical_spec_sha256: str | None = None
+    expected_runtime_manifest_sha256: str | None = None
+    expected_operation_rows_sha256: str | None = None
+
+
 def _require_complete_guards(guards: CurrentAttemptGuards) -> None:
     """Reject an incomplete authority tuple before any journal access/write."""
     missing = [
@@ -650,4 +671,363 @@ def restart_current_attempt(
     return result
 
 
-__all__ = ["CurrentAttemptAdoptionError", "CurrentAttemptGuards", "restart_current_attempt", "SCHEMA", "CONTINUATION_SCHEMA"]
+ABORTED_ADMISSION_SCHEMA = "arnold.megaplan.aborted-c2-authority-admission.v1"
+ABORTED_ADMISSION_KIND = "chain_control.aborted_c2_authority_admitted"
+ABORTED_ADMISSION_INTENT = "reconcile-aborted-c2-authority"
+
+
+def _read_operation_rows(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        _fail("missing_or_malformed", "operation-row snapshot is unavailable or malformed", path=str(path))
+    rows = value.get("operations") if isinstance(value, Mapping) else value
+    if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+        _fail("operation_rows_mismatch", "operation-row snapshot must be a list of objects", path=str(path))
+    return raw, [dict(row) for row in rows]
+
+
+def _operation_rows_digest(rows: list[Mapping[str, Any]]) -> str:
+    return sha256_hex(b"NBF08-OPERATION-ROWS-V1\x00" + canonical_json([dict(row) for row in rows]))
+
+
+def _aborted_nonchain_guards(
+    *,
+    spec_path: Path,
+    marker_path: Path,
+    plan_path: Path,
+    guards: AbortedC2AuthorityGuards,
+    spec_raw: bytes,
+    marker_raw: bytes,
+    marker: Mapping[str, Any],
+    plan_raw: bytes,
+    plan: Mapping[str, Any],
+    runtime_manifest_path: Path | None,
+    operation_rows_path: Path | None,
+    operation_rows_raw: bytes | None,
+    operation_rows: list[Mapping[str, Any]],
+) -> None:
+    _assert_equal("chain spec SHA-256", hashlib.sha256(spec_raw).hexdigest(), _sha(guards.expected_spec_sha256, "spec SHA-256"))
+    _assert_equal("plan state SHA-256", hashlib.sha256(plan_raw).hexdigest(), _sha(guards.expected_plan_state_sha256, "plan-state SHA-256"))
+    _assert_equal("marker SHA-256", hashlib.sha256(marker_raw).hexdigest(), _sha(guards.expected_marker_sha256, "marker SHA-256"))
+    if runtime_manifest_path is not None:
+        if guards.expected_runtime_manifest_sha256 is None:
+            _fail("missing_guard", "runtime-manifest path requires its SHA-256 guard")
+        _assert_equal(
+            "runtime manifest SHA-256",
+            hashlib.sha256(runtime_manifest_path.read_bytes()).hexdigest(),
+            _sha(guards.expected_runtime_manifest_sha256, "runtime-manifest SHA-256"),
+        )
+    if operation_rows_path is not None:
+        if operation_rows_raw is None or guards.expected_operation_rows_sha256 is None:
+            _fail("missing_guard", "operation-row path requires its raw SHA-256 guard")
+        _assert_equal(
+            "operation-row snapshot SHA-256",
+            hashlib.sha256(operation_rows_raw).hexdigest(),
+            _sha(guards.expected_operation_rows_sha256, "operation-row snapshot SHA-256"),
+        )
+    expected_rows = [dict(row) for row in guards.expected_operation_rows]
+    _assert_equal("operation-row projection", [dict(row) for row in operation_rows], expected_rows)
+    _assert_equal("operation-row projection digest", _operation_rows_digest(operation_rows), _operation_rows_digest(expected_rows))
+    if plan.get("name") != guards.expected_plan_name:
+        _fail("plan_mismatch", "aborted plan name does not match the guard")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        _fail("plan_mismatch", "admission requires an immutable aborted plan with no active step")
+    _guard_marker(marker, CurrentAttemptGuards(
+        expected_session_id=guards.expected_session_id,
+        expected_current_plan=guards.expected_plan_name,
+        expected_current_milestone="",
+        expected_cursor=6,
+        expected_spec_sha256=guards.expected_spec_sha256,
+        expected_chain_state_sha256=guards.expected_chain_state_sha256,
+        expected_plan_state_sha256=guards.expected_plan_state_sha256,
+        expected_marker_sha256=guards.expected_marker_sha256,
+        expected_attempt_identity={},
+        expected_completed_prefix=(),
+        expected_source_binding=guards.expected_source_binding,
+        expected_runtime_identity=guards.expected_runtime_identity,
+        expected_hold=guards.expected_hold,
+    ), spec_path)
+
+
+def _aborted_chain_guard(
+    *,
+    chain_raw: bytes,
+    chain: Mapping[str, Any],
+    guards: AbortedC2AuthorityGuards,
+    spec_path: Path,
+    marker: Mapping[str, Any],
+) -> str:
+    _assert_equal("chain state SHA-256", hashlib.sha256(chain_raw).hexdigest(), _sha(guards.expected_chain_state_sha256, "chain-state SHA-256"))
+    _assert_equal("chain revision", (chain.get("metadata") or {}).get("_nbf08_revision"), guards.expected_chain_revision)
+    _assert_equal("chain cursor", chain.get("current_milestone_index"), 6)
+    _assert_equal("chain active plan", chain.get("current_plan_name"), None)
+    _assert_equal("chain lifecycle", chain.get("last_state"), "paused")
+    prefix = chain.get("completed")
+    expected_prefix = [dict(row) for row in guards.expected_completed_prefix]
+    if len(expected_prefix) != 6 or not isinstance(prefix, list):
+        _fail("prefix_mismatch", "exactly six completed records are required")
+    _assert_equal("completed prefix", prefix, expected_prefix)
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    _assert_equal("chain pause authority", chain_meta.get("operator_pause"), marker.get("operator_pause"))
+    _assert_equal("source binding", chain_meta.get("project_source_binding"), dict(guards.expected_source_binding))
+    binding = chain_meta.get("execution_binding") if isinstance(chain_meta.get("execution_binding"), Mapping) else {}
+    launched = binding.get("launched_identity") if isinstance(binding.get("launched_identity"), Mapping) else {}
+    _assert_equal("runtime identity", launched.get("runtime"), dict(guards.expected_runtime_identity))
+    if guards.expected_historical_spec_sha256 is not None:
+        _assert_equal("historical spec SHA-256", chain_meta.get("chain_spec_sha256"), guards.expected_historical_spec_sha256)
+    return state_digest_for(chain)
+
+
+def _aborted_post_chain(
+    chain: Mapping[str, Any],
+    *,
+    operation_id: str,
+    continuation_id: str,
+    guard_digest: str,
+) -> dict[str, Any]:
+    post = copy.deepcopy(dict(chain))
+    metadata = dict(post.get("metadata") or {})
+    metadata["aborted_c2_authority_admission"] = {
+        "schema": ABORTED_ADMISSION_SCHEMA,
+        "operation_id": operation_id,
+        "continuation_id": continuation_id,
+        "guard_digest": guard_digest,
+        "state": "pending_materialization",
+    }
+    metadata["_nbf08_revision"] = int(metadata.get("_nbf08_revision") or 0) + 1
+    post["metadata"] = metadata
+    post["current_plan_name"] = None
+    post["current_milestone_index"] = 6
+    post["last_state"] = "paused"
+    return post
+
+
+def reconcile_aborted_c2_authority(
+    *,
+    spec_path: Path,
+    project_dir: Path,
+    marker_path: Path,
+    aborted_plan_path: Path,
+    guards: AbortedC2AuthorityGuards,
+    expected_operation_rows_path: Path | None = None,
+    runtime_manifest_path: Path | None = None,
+    reason: str,
+    actor: str = "operator",
+    operation_id: str | None = None,
+    failure_injector: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Admit the exact paused/null-plan aborted-C2 contradiction, without dispatch."""
+    if not reason.strip() or not actor.strip():
+        _fail("invalid_guard", "reason and actor are required")
+    if guards.expected_plan_name.strip() == "":
+        _fail("invalid_guard", "aborted plan name is required")
+    if len(guards.expected_completed_prefix) != 6 or len(guards.expected_operation_rows) != 9:
+        _fail("invalid_guard", "exact six-prefix and nine operation rows are required")
+    spec_path = spec_path.resolve(strict=False)
+    project_dir = project_dir.resolve(strict=False)
+    marker_path = marker_path.resolve(strict=False)
+    aborted_plan_path = aborted_plan_path.resolve(strict=False)
+    for path in (spec_path, marker_path, aborted_plan_path):
+        try:
+            path.relative_to(project_dir)
+        except ValueError:
+            _fail("invalid_guard", "authority paths must be inside the guarded project directory")
+    chain_path = chain_spec._state_path_for(spec_path)
+    spec_raw = spec_path.read_bytes()
+    chain_raw, chain = _read_json(chain_path, "chain state")
+    plan_raw, plan = _read_json(aborted_plan_path, "aborted C2 plan")
+    marker_raw, marker = _read_json(marker_path, "session marker")
+    rows_raw: bytes | None = None
+    rows: list[dict[str, Any]] = [dict(row) for row in guards.expected_operation_rows]
+    if expected_operation_rows_path is not None:
+        rows_raw, rows = _read_operation_rows(expected_operation_rows_path.resolve(strict=False))
+    _aborted_nonchain_guards(
+        spec_path=spec_path,
+        marker_path=marker_path,
+        plan_path=aborted_plan_path,
+        guards=guards,
+        spec_raw=spec_raw,
+        marker_raw=marker_raw,
+        marker=marker,
+        plan_raw=plan_raw,
+        plan=plan,
+        runtime_manifest_path=runtime_manifest_path,
+        operation_rows_path=expected_operation_rows_path,
+        operation_rows_raw=rows_raw,
+        operation_rows=rows,
+    )
+    chain_id = chain_id_for_spec(spec_path)
+    guard_material = {
+        "schema": ABORTED_ADMISSION_SCHEMA,
+        "session": guards.expected_session_id,
+        "plan": guards.expected_plan_name,
+        "chain_id": chain_id,
+        "chain_state_sha256": guards.expected_chain_state_sha256,
+        "plan_state_sha256": guards.expected_plan_state_sha256,
+        "marker_sha256": guards.expected_marker_sha256,
+        "spec_sha256": guards.expected_spec_sha256,
+        "historical_spec_sha256": guards.expected_historical_spec_sha256,
+        "chain_revision": guards.expected_chain_revision,
+        "prefix": [dict(row) for row in guards.expected_completed_prefix],
+        "source_binding": dict(guards.expected_source_binding),
+        "runtime_identity": dict(guards.expected_runtime_identity),
+        "hold": dict(guards.expected_hold),
+        "operation_rows": rows,
+    }
+    guard_digest = sha256_hex(canonical_json(guard_material))
+    derived_operation_id = "c2-authority-" + guard_digest
+    if operation_id is not None and operation_id != derived_operation_id:
+        _fail("operation_identity_mismatch", "operation identity does not match the guarded pre-state")
+    operation_id = derived_operation_id
+    continuation_id = "c2-pending-" + sha256_hex(canonical_json({"operation_id": operation_id, "cursor": 6}))
+    journal = journal_for(project_dir)
+    replay = journal.replay_strict()
+    existing = replay["operations"].get(operation_id)
+    if existing is not None and existing.get("event_kind") == ABORTED_ADMISSION_KIND:
+        payload = existing.get("payload") if isinstance(existing.get("payload"), Mapping) else {}
+        effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+        post_digest = effect.get("post_chain_digest")
+        _, current = _read_json(chain_path, "chain state")
+        _assert_equal("committed chain state", state_digest_for(current), post_digest)
+        _assert_equal("aborted plan bytes", hashlib.sha256(plan_raw).hexdigest(), effect.get("plan_state_sha256"))
+        return _replay(journal, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor, state_paths=[chain_path, marker_path, spec_path])
+    incomplete = replay.get("operations", {}).get(operation_id)
+    if incomplete is not None and incomplete.get("event_kind") == "chain_control.intent":
+        context = incomplete.get("payload") if isinstance(incomplete.get("payload"), Mapping) else {}
+        effect = context.get("effect") if isinstance(context.get("effect"), Mapping) else {}
+        post_chain = effect.get("post_chain")
+        if not isinstance(post_chain, Mapping):
+            raise DurabilityUnknown("aborted-C2 admission intent lacks its post-state")
+    elif any(
+        value.get("event_kind") == "chain_control.intent"
+        for key, value in replay.get("operations", {}).items()
+        if key != operation_id and isinstance(value, Mapping)
+    ):
+        raise DurabilityUnknown("an unrelated chain-control operation is incomplete")
+    with journal.transaction(
+        chain_ids=[chain_id],
+        state_paths=[chain_path, marker_path, spec_path, aborted_plan_path]
+        + ([expected_operation_rows_path] if expected_operation_rows_path is not None else [])
+        + ([runtime_manifest_path] if runtime_manifest_path is not None else []),
+        expected_revision=guards.expected_chain_revision,
+        operation_id=operation_id,
+        actor={"id": actor, "class": "operator"},
+    ) as txn:
+        locked_spec_raw = spec_path.read_bytes()
+        locked_chain_raw, locked_chain = _read_json(chain_path, "chain state")
+        locked_plan_raw, locked_plan = _read_json(aborted_plan_path, "aborted C2 plan")
+        locked_marker_raw, locked_marker = _read_json(marker_path, "session marker")
+        locked_rows_raw: bytes | None = None
+        locked_rows = rows
+        if expected_operation_rows_path is not None:
+            locked_rows_raw, locked_rows = _read_operation_rows(expected_operation_rows_path)
+        locked_pre_digest = state_digest_for(locked_chain)
+        if existing is None:
+            existing = journal.operation_result(operation_id)
+        if existing is not None and existing.get("event_kind") == ABORTED_ADMISSION_KIND:
+            payload = existing.get("payload") if isinstance(existing.get("payload"), Mapping) else {}
+            effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+            _assert_equal("locked committed chain", locked_pre_digest, effect.get("post_chain_digest"))
+            replay_event = _append_replay_under_lock(journal, txn, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor)
+            return {"outcome": "replay", "receipt": dict(existing), "replay_event": replay_event, "external_effect": False}
+        _aborted_nonchain_guards(
+            spec_path=spec_path, marker_path=marker_path, plan_path=aborted_plan_path, guards=guards,
+            spec_raw=locked_spec_raw, marker_raw=locked_marker_raw, marker=locked_marker,
+            plan_raw=locked_plan_raw, plan=locked_plan, runtime_manifest_path=runtime_manifest_path,
+            operation_rows_path=expected_operation_rows_path, operation_rows_raw=locked_rows_raw,
+            operation_rows=locked_rows,
+        )
+        if incomplete is not None:
+            effect = dict(effect)
+            admission = dict(effect.get("admission") or {})
+            post_chain = dict(post_chain)
+            pre_chain_digest = str(effect.get("pre_chain_digest"))
+            if locked_pre_digest not in {effect.get("pre_chain_digest"), effect.get("post_chain_digest")}:
+                raise DurabilityUnknown("chain state diverged during aborted-C2 admission")
+        else:
+            pre_chain_digest = _aborted_chain_guard(
+                chain_raw=locked_chain_raw, chain=locked_chain, guards=guards, spec_path=spec_path, marker=locked_marker
+            )
+            admission = {
+                "schema": ABORTED_ADMISSION_SCHEMA,
+                "operation_id": operation_id,
+                "continuation_id": continuation_id,
+                "chain_id": chain_id,
+                "plan": guards.expected_plan_name,
+                "cursor": 6,
+                "guard_digest": guard_digest,
+                "state": "pending_materialization",
+            }
+            post_chain = _aborted_post_chain(
+                locked_chain, operation_id=operation_id, continuation_id=continuation_id, guard_digest=guard_digest
+            )
+            effect = {
+                "schema": ABORTED_ADMISSION_SCHEMA,
+                "pre_chain_digest": pre_chain_digest,
+                "post_chain_digest": state_digest_for(post_chain),
+                "pre_chain_revision": guards.expected_chain_revision,
+                "post_chain_revision": int(guards.expected_chain_revision) + 1,
+                "plan_state_sha256": hashlib.sha256(locked_plan_raw).hexdigest(),
+                "marker_sha256": hashlib.sha256(locked_marker_raw).hexdigest(),
+                "spec_sha256": hashlib.sha256(locked_spec_raw).hexdigest(),
+                "operation_rows_digest": _operation_rows_digest(locked_rows),
+                "post_chain": post_chain,
+                "admission": admission,
+            }
+            if not journal.is_bound(chain_id):
+                journal_state = journal.replay_strict()
+                journal.append_under_lock(
+                    txn, event_kind="chain_control.genesis_accepted", chain_id=chain_id,
+                    operation_id="genesis-" + chain_id, causation_id="genesis-" + chain_id,
+                    correlation_id=operation_id,
+                    payload={
+                        "authority_mode": "file", "schema_version": "nbf08-chain-control-v1",
+                        "prefix_tip_seq": journal_state["nbf01_prefix_tip"],
+                        "prefix_digest": journal_state["nbf01_prefix_digest"],
+                    },
+                    semantic_effect="no_change", claim_class="required", actor={"id": actor, "class": "operator"},
+                    outcome="committed", expected_cursor=6, expected_revision=guards.expected_chain_revision,
+                    source_identity=guards.expected_source_binding, spec_identity=str(spec_path),
+                )
+                if failure_injector is not None:
+                    failure_injector("after_genesis")
+            intent = journal.append_under_lock(
+                txn, event_kind="chain_control.intent", chain_id=chain_id, operation_id=operation_id,
+                causation_id=operation_id, correlation_id=operation_id,
+                payload={"schema": ABORTED_ADMISSION_SCHEMA, "effect": effect},
+                semantic_effect="no_change", claim_class="required", actor={"id": actor, "class": "operator"},
+                intent=ABORTED_ADMISSION_INTENT, outcome="pending", expected_cursor=6,
+                expected_revision=guards.expected_chain_revision, source_identity=guards.expected_source_binding,
+                spec_identity=str(spec_path), pre_state_digest=pre_chain_digest,
+                post_state_digest=state_digest_for(post_chain),
+            )
+            if failure_injector is not None:
+                failure_injector("after_intent")
+        from arnold_pipelines.megaplan.incident.chain_control import ChainStateAdapter
+        if locked_pre_digest == effect.get("pre_chain_digest"):
+            ChainStateAdapter(txn, chain_path).cas_write(post_chain, expected_revision=guards.expected_chain_revision)
+            if failure_injector is not None and incomplete is None:
+                failure_injector("after_chain_cas")
+        _, actual_chain = _read_json(chain_path, "chain state")
+        _assert_equal("committed chain post-state", state_digest_for(actual_chain), effect["post_chain_digest"])
+        intent = incomplete or {"event_id": operation_id}
+        terminal = journal.append_under_lock(
+            txn, event_kind=ABORTED_ADMISSION_KIND, chain_id=chain_id, operation_id=operation_id,
+            causation_id=str(intent.get("event_id") or operation_id), correlation_id=operation_id,
+            payload={"schema": ABORTED_ADMISSION_SCHEMA, "effect": effect}, semantic_effect="metadata_only",
+            claim_class="required", actor={"id": actor, "class": "operator"}, intent=ABORTED_ADMISSION_INTENT,
+            outcome="committed", expected_cursor=6, expected_revision=guards.expected_chain_revision,
+            actual_cursor=6, actual_revision=effect["post_chain_revision"], pre_state_digest=pre_chain_digest,
+            post_state_digest=effect["post_chain_digest"], source_identity=guards.expected_source_binding,
+            spec_identity=str(spec_path), linked_receipts=[str(intent.get("event_id") or operation_id)],
+        )
+    return {"outcome": "committed", "receipt": terminal, "admission": admission, "external_effect": False}
+
+
+__all__ = [
+    "CurrentAttemptAdoptionError", "CurrentAttemptGuards", "AbortedC2AuthorityGuards",
+    "restart_current_attempt", "reconcile_aborted_c2_authority", "SCHEMA", "CONTINUATION_SCHEMA",
+    "ABORTED_ADMISSION_SCHEMA", "ABORTED_ADMISSION_KIND",
+]
