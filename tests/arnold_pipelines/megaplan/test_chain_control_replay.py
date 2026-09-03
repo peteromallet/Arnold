@@ -880,9 +880,12 @@ def test_ordinary_append_after_genesis_and_migration_uses_structured_active_tip(
     fd = os.open(str(sidecar_path), os.O_RDWR)
     try:
         write_reservation_locked(fd, sidecar)
-        assert journal.recover_reservations_locked(fd)["status"] == "committed"
     finally:
         os.close(fd)
+    replayed_after_line_fsync = ledger.append_event(_nbf01("evt-2"))
+    assert replayed_after_line_fsync == appended
+    assert json.loads(sidecar_path.read_text(encoding="utf-8"))["status"] == "committed"
+    assert sum(item.record.get("payload", {}).get("event_id") == "evt-2" for item in read_physical_lines(ledger.events_path)) == 1
 
     fixture = _trailing_collision_fixture(tmp_path / "migrated")
     fixture["journal"].quarantine_trailing_sequence_collision(**fixture["kwargs"])
@@ -892,6 +895,27 @@ def test_ordinary_append_after_genesis_and_migration_uses_structured_active_tip(
     assert fixture["ledger"].events_path.read_bytes() != active_before
     assert (fixture["ledger"].ledger_dir / "events.jsonl").read_bytes() == legacy_bytes
     assert fixture["journal"].replay_strict()["physical_sequence"] == migrated_append["seq"]
+
+
+def test_ordinary_append_lost_ack_retries_once_and_rejects_divergent_reuse(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_nbf01("evt-1"))
+    journal = ChainControlJournal(ledger)
+    journal.ensure_genesis(chain_id="chain-demo", actor={"id": "t", "class": "test"})
+    event = _nbf01("evt-lost-ack")
+    first = ledger.append_event(event)
+    tip_after_first = journal.replay_strict()["physical_sequence"]
+    retry = ledger.append_event(event)
+    assert retry == first
+    assert journal.replay_strict()["physical_sequence"] == tip_after_first
+    assert sum(
+        item.record.get("payload", {}).get("event_id") == "evt-lost-ack"
+        for item in read_physical_lines(ledger.events_path)
+    ) == 1
+    divergent = {**event, "summary": "different durable payload"}
+    with pytest.raises(DurabilityUnknown, match="divergent durable content"):
+        ledger.append_event(divergent)
+    assert journal.replay_strict()["physical_sequence"] == tip_after_first
 
 
 def test_mutate_replay_key_rejects_tuple_mismatch(tmp_path: Path) -> None:

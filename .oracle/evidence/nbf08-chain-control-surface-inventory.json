@@ -1,6 +1,6 @@
 {
   "schema_version": "nbf08-chain-control-surface-inventory-v1",
-  "base_revision": "2b6b01989e173e5bbeecfa9dac6eaacafd290937",
+  "base_revision": "c0137ae791e110ca42921120464f6944ae11987e",
   "generator_version": "nbf08-surface-inventory-v1",
   "research_inventory_path": ".oracle/research/nbf08-control-surface-inventory.md",
   "research_inventory_sha256": "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
@@ -322,7 +322,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "3b60719ca8247008363e9bef93b43b78a657f768cd31b65bec21364a4c9fabae",
-        "9555f251aa02f99495f9be5b8b53eb1589bc5013c31604bb4e88eb32899edf5c"
+        "dbf5ed7b7d4f2b7b31c951ba998aee21af8a7423662b5affd301f03942d2485c"
       ],
       "authority_mode": "file",
       "replay_contract": "same operation_id returns the prior receipt; no second journal or external effect",
@@ -2464,7 +2464,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "3b60719ca8247008363e9bef93b43b78a657f768cd31b65bec21364a4c9fabae",
-        "71b471d0bf8b94d524f8d6f76390abb903e0f5471f1010ff4ee12ed6dd19e7d6",
+        "1c17964ac0d9f4cba7962cdf211951f60913a996b73869f3cad68b34586ca4cf",
         "b745da48f44329651f63cdb6d6082843709f0a4e34f2e50a3d3ead245f6fd1e2",
         "a3cbc3bcfa468c1088752e438f10f5c2a78edcad4ccb3991bdeae7850cc27a99"
       ],
@@ -3866,7 +3866,7 @@
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "e7882d57ed32a237ad0aa6f0774ea35776717e6891a5724d4e97360f0618d5d8",
         "3b60719ca8247008363e9bef93b43b78a657f768cd31b65bec21364a4c9fabae",
-        "71b471d0bf8b94d524f8d6f76390abb903e0f5471f1010ff4ee12ed6dd19e7d6",
+        "1c17964ac0d9f4cba7962cdf211951f60913a996b73869f3cad68b34586ca4cf",
         "b745da48f44329651f63cdb6d6082843709f0a4e34f2e50a3d3ead245f6fd1e2",
         "aed2ed197b4486097bca5e96addc9adbd943e64861051e6c803119825b66b886"
       ],
@@ -5253,5 +5253,5 @@
       "reason": ""
     }
   ],
-  "inventory_digest": "e6b269446647ef1d5a2592401273aee7387c4513e16341152ed20492f599245b"
+  "inventory_digest": "1fd2450167a55dc3cd5759ffa4095641b6a64f1c93d576aaacbcccd622bf5114"
 }

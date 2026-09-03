@@ -308,7 +308,7 @@ class _IncidentEventJournal(NdjsonEventJournal):
         flags = os.O_RDWR | (0 if self._active_generation_paths() is not None else os.O_CREAT)
         return os.open(str(path), flags, 0o644)
 
-    def recover_structured_reservation_locked(self, seq_fd: int) -> None:
+    def recover_structured_reservation_locked(self, seq_fd: int) -> dict[str, Any] | None:
         """Resolve a pending structured reservation before any new allocation."""
         from arnold_pipelines.megaplan.incident.chain_control import (
             ChainControlJournal,
@@ -320,7 +320,8 @@ class _IncidentEventJournal(NdjsonEventJournal):
         if kind == "reservation":
             if self._ledger_owner is None:
                 raise RuntimeError("incident journal is not bound to its ledger")
-            ChainControlJournal(self._ledger_owner).recover_reservations_locked(seq_fd)
+            return ChainControlJournal(self._ledger_owner).recover_reservations_locked(seq_fd)
+        return None
 
     def emit(
         self,
@@ -343,7 +344,20 @@ class _IncidentEventJournal(NdjsonEventJournal):
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             seq_fd = self.open_sequence_after_lock()
             fcntl.flock(seq_fd, fcntl.LOCK_EX)
-            self.recover_structured_reservation_locked(seq_fd)
+            recovery = self.recover_structured_reservation_locked(seq_fd)
+            from arnold_pipelines.megaplan.incident.chain_control import DurabilityUnknown
+
+            for record in self._read_records():
+                stored = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+                stored_key = record.get("idempotency_key") or stored.get("event_id") or stored.get("occurrence_id")
+                if stored_key != key:
+                    continue
+                if record.get("kind") == kind and stored == body:
+                    return record
+                raise DurabilityUnknown(
+                    "incident idempotency key has divergent durable content",
+                    details={"idempotency_key": key, "recovery": recovery},
+                )
             appended = self._emit_locked(
                 seq_fd,
                 kind=kind,
