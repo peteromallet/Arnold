@@ -2943,6 +2943,25 @@ def _materialize_canonical_epic_input(
         raise CliError("invalid_epic_slug", f"unable to derive epic slug from {source}")
 
     project_root = _chain_project_root(source_spec if source_spec.exists() else source_dir, root)
+    # A canonical initiative is already the reviewed source of truth.  Do not
+    # rewrite it as part of launch canonicalization: even a semantically
+    # equivalent YAML dump changes bytes and makes the source-bound runtime
+    # guard reject the checkout.  Require canonical bytes up front and fail
+    # closed before mkdir/copy/write side effects when they drift.
+    source_is_canonical = source_spec.exists() and is_canonical_chain_spec(source_spec, project_root)
+    if source_is_canonical:
+        source_raw = _read_chain_yaml(source_spec)
+        canonical_text = yaml.safe_dump(source_raw, sort_keys=False)
+        source_text = source_spec.read_text(encoding="utf-8")
+        if source_text != canonical_text:
+            raise CliError(
+                "chain_spec_not_canonical",
+                (
+                    "canonical chain source has non-canonical YAML bytes; "
+                    "format it in a separate working copy before launch"
+                ),
+                extra={"spec": str(source_spec)},
+            )
     canonical_dir = project_root / ".megaplan" / "initiatives" / slug
     canonical_brief_dir = canonical_dir / "briefs"
     canonical_dir.mkdir(parents=True, exist_ok=True)
@@ -2971,7 +2990,7 @@ def _materialize_canonical_epic_input(
         else:
             north_dest = canonical_dir / north_source.name
         north_existed = north_dest.exists()
-        if _copy_if_different(north_source, north_dest):
+        if not source_is_canonical and _copy_if_different(north_source, north_dest):
             copied.append(str(north_dest))
             if not north_existed:
                 created.append(str(north_dest))
@@ -2999,7 +3018,7 @@ def _materialize_canonical_epic_input(
             seen_dest_names.add(dest_name)
             idea_dest = canonical_brief_dir / dest_name
             idea_existed = idea_dest.exists()
-            if _copy_if_different(idea_source, idea_dest):
+            if not source_is_canonical and _copy_if_different(idea_source, idea_dest):
                 copied.append(str(idea_dest))
                 if not idea_existed:
                     created.append(str(idea_dest))
@@ -3043,7 +3062,18 @@ def _materialize_canonical_epic_input(
         )
         generated_chain = True
 
-    canonical_spec = canonical_dir / "chain.yaml"
+    canonical_spec = source_spec if source_is_canonical else canonical_dir / "chain.yaml"
+    if source_is_canonical:
+        # The bytes were checked above.  Reuse the path without writing it.
+        return CanonicalEpicMaterialization(
+            spec_path=canonical_spec,
+            project_root=project_root,
+            slug=slug,
+            brief_dir=canonical_dir,
+            copied_files=[],
+            created_files=[],
+            generated_chain=False,
+        )
     canonical_spec_existed = canonical_spec.exists()
     canonical_spec.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     copied.append(str(canonical_spec))

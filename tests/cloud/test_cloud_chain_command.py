@@ -2429,6 +2429,76 @@ def test_launch_epic_materializes_canonical_layout_from_brief_dir(tmp_path: Path
     assert str(materialized.spec_path) in materialized.created_files
 
 
+def test_canonical_launch_reuses_reviewed_bytes_without_mutating_source(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    initiative = app / ".megaplan" / "initiatives" / "demo"
+    briefs = initiative / "briefs"
+    briefs.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (initiative / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
+    (briefs / "m1.md").write_text("M1\n", encoding="utf-8")
+    raw = {
+        "base_branch": "main",
+        "anchors": {"north_star": "NORTHSTAR.md"},
+        "milestones": [{
+            "label": "m1",
+            "idea": ".megaplan/initiatives/demo/briefs/m1.md",
+            "branch": "epic/demo/m1",
+            "profile": "all-muse-spark-openrouter",
+        }],
+    }
+    spec_path = initiative / "chain.yaml"
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    before = spec_path.read_bytes()
+
+    materialized = _materialize_canonical_epic_input(
+        root=tmp_path,
+        spec=_cloud_spec(),
+        spec_or_dir=str(spec_path),
+    )
+
+    assert materialized.spec_path == spec_path
+    assert materialized.copied_files == []
+    assert spec_path.read_bytes() == before
+    assert not list(app.glob(".megaplan/initiatives/demo/chain.yaml.*"))
+
+
+def test_noncanonical_reviewed_source_fails_before_any_write(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    initiative = app / ".megaplan" / "initiatives" / "demo"
+    briefs = initiative / "briefs"
+    briefs.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (initiative / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
+    (briefs / "m1.md").write_text("M1\n", encoding="utf-8")
+    spec_path = initiative / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "- label: m1\n"
+        "  idea: .megaplan/initiatives/demo/briefs/m1.md\n"
+        "  branch: epic/demo/m1\n"
+        "  profile: all-muse-spark-openrouter\n"
+        "driver:\n"
+        "  execution_binding_assets:\n"
+        "    - arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml\n",
+        encoding="utf-8",
+    )
+    before = spec_path.read_bytes()
+
+    with pytest.raises(CliError) as excinfo:
+        _materialize_canonical_epic_input(
+            root=tmp_path,
+            spec=_cloud_spec(),
+            spec_or_dir=str(spec_path),
+        )
+
+    assert excinfo.value.code == "chain_spec_not_canonical"
+    assert spec_path.read_bytes() == before
+    assert not (initiative / "reconcile.md").exists()
+
+
 class _LaunchEpicProvider:
     def __init__(self) -> None:
         self.uploads: list[tuple[Path, str]] = []
