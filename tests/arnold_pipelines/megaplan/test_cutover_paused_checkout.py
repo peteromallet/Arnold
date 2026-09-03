@@ -229,6 +229,28 @@ def test_cutover_rejects_divergent_plan_binding_without_mutation(tmp_path: Path)
         _call(f)
 
 
+@pytest.mark.parametrize("location", ["chain", "marker", "plan"])
+def test_cutover_rejects_malformed_present_binding_without_mutation(tmp_path: Path, location: str) -> None:
+    f = _fixture(tmp_path)
+    if location == "chain":
+        chain = _json(f["state"])
+        chain["metadata"]["project_source_binding"] = "forged"
+        _write(f["state"], chain)
+    elif location == "marker":
+        marker = _json(f["marker"])
+        marker["project_source_binding"] = "forged"
+        _write(f["marker"], marker)
+    else:
+        plan = _json(f["plan"])
+        plan["meta"]["project_source_binding"] = "forged"
+        _write(f["plan"], plan)
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    with pytest.raises(CliError, match=f"existing {location} source binding is malformed"):
+        _call(f)
+    assert _git(f["root"], "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
 def test_cutover_rejects_foreign_pending_journal_before_remote(tmp_path: Path) -> None:
     f = _fixture(tmp_path)
 

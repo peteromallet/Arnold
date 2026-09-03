@@ -1254,6 +1254,8 @@ def cutover_paused_checkout(
     if target_milestone.branch not in (None, to_branch):
         refuse("target milestone branch does not match guarded target branch")
     for binding_name, binding in (("chain", chain_meta.get("project_source_binding")), ("marker", marker.get("project_source_binding")), ("plan", (plan.get("meta") or {}).get("project_source_binding") if isinstance(plan.get("meta"), Mapping) else None)):
+        if binding is not None and not isinstance(binding, Mapping):
+            refuse(f"existing {binding_name} source binding is malformed")
         if isinstance(binding, Mapping):
             admission = binding.get("admission") if isinstance(binding.get("admission"), Mapping) else {}
             committed_replay = binding.get("current") == early_target and admission.get("operation_id") == early_operation_id
@@ -1373,13 +1375,19 @@ def cutover_paused_checkout(
     if chain_meta.get("chain_policy", {}).get("milestone_base_sha") not in (None, from_milestone_base):
         refuse("source milestone base does not match chain policy")
     existing_binding = chain_meta.get("project_source_binding")
+    if existing_binding is not None and not isinstance(existing_binding, Mapping):
+        refuse("existing chain source binding is malformed")
     if isinstance(existing_binding, Mapping) and existing_binding.get("current") not in (None, early_source):
         refuse("existing chain source binding diverges from guarded source")
     marker_binding = marker.get("project_source_binding")
+    if marker_binding is not None and not isinstance(marker_binding, Mapping):
+        refuse("existing marker source binding is malformed")
     if isinstance(marker_binding, Mapping) and marker_binding.get("current") not in (None, early_source):
         refuse("existing marker source binding diverges from guarded source")
     plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
     plan_binding = plan_meta.get("project_source_binding")
+    if plan_binding is not None and not isinstance(plan_binding, Mapping):
+        refuse("existing plan source binding is malformed")
     if isinstance(plan_binding, Mapping) and plan_binding.get("current") not in (None, early_source):
         refuse("existing plan source binding diverges from guarded source")
     if dict(hold) != dict(expected_hold) or hold.get("session") != expected_session_id:
