@@ -892,7 +892,7 @@ def reconcile_failed_prechain_hold(
         if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
             raise ChainControlHold("engine_effect_present", "engine runtime is not the unchanged clean held revision")
         receipt_path = recovery_evidence.parent / "recovery-receipt.json"
-        if receipt_path.exists():
+        if receipt_path.exists() and receipt_path.stat().st_size:
             raise ChainControlHold("receipt_effect_present", "recovery receipt already exists for held operation")
         return {
             "marker_sha256": hashlib.sha256(current_marker_raw).hexdigest(),
@@ -901,6 +901,7 @@ def reconcile_failed_prechain_hold(
             "workspace_head": _head(workspace_path),
             "engine_runtime": str(current_engine),
             "engine_head": _head(current_engine),
+            "receipt_state": "empty_stub" if receipt_path.exists() else "absent",
         }
 
     replay = journal.replay_strict()
