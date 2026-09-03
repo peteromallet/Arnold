@@ -764,4 +764,288 @@ def recover_failed_prechain(
     return {"outcome": "committed", "operation_id": operation_id, "event": result.get("event"), "effect": result.get("effect"), "archive_manifest": str(archive_path), "receipt": str(receipt_path)}
 
 
-__all__ = ["RECOVERY_ERROR", "RECOVERY_SCHEMA", "RECOVERY_INTENT", "recover_failed_prechain"]
+def reconcile_failed_prechain_hold(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    marker_path: Path,
+    manifest_path: Path,
+    source_path: Path,
+    workspace_path: Path,
+    custody_dir: Path,
+    held_operation_id: str,
+    expected_hold_event_hash: str,
+    expected_session_id: str,
+    expected_marker_sha256: str,
+    expected_manifest_sha256: str,
+    expected_spec_sha256: str,
+    expected_old_sha: str,
+    held_reviewed_new_sha: str,
+    recovery_evidence: Path,
+    reason: str,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    """Close exactly one legacy failed-prechain hold with no external effect.
+
+    This is deliberately not a general hold release.  It accepts only the
+    exact hold produced by ``failed_prechain_recovery`` and writes one linked,
+    no-effect terminal event using that same operation id.  That lets strict
+    replay close the old operation while preserving its original hold and all
+    source/runtime/marker authority bytes.
+    """
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlHold,
+        chain_id_for_spec,
+        journal_for,
+    )
+
+    spec_path = spec_path.expanduser().resolve(strict=False)
+    project_root = project_root.expanduser().resolve(strict=False)
+    marker_path = marker_path.expanduser().resolve(strict=False)
+    manifest_path = manifest_path.expanduser().resolve(strict=False)
+    source_path = source_path.expanduser().resolve(strict=False)
+    workspace_path = workspace_path.expanduser().resolve(strict=False)
+    custody_dir = custody_dir.expanduser().resolve(strict=False)
+    recovery_evidence = recovery_evidence.expanduser().resolve(strict=False)
+    held_operation_id = _safe_text(held_operation_id, label="held operation")
+    expected_hold_event_hash = _full(expected_hold_event_hash, label="held event SHA-256")
+    expected_marker_sha256 = _full(expected_marker_sha256, label="marker SHA-256")
+    expected_manifest_sha256 = _full(expected_manifest_sha256, label="manifest SHA-256")
+    expected_spec_sha256 = _full(expected_spec_sha256, label="spec SHA-256")
+    old_sha = str(expected_old_sha or "").strip().lower()
+    new_sha = str(held_reviewed_new_sha or "").strip().lower()
+    if _SHA40.fullmatch(old_sha) is None or _SHA40.fullmatch(new_sha) is None:
+        raise _refuse("held old and reviewed source revisions must be full Git SHAs")
+    expected_session_id = _safe_text(expected_session_id, label="session")
+    reason = _safe_text(reason, label="reason")
+    actor = _safe_text(actor, label="actor")
+    if not recovery_evidence.is_file():
+        raise _refuse("held recovery evidence is unavailable")
+    evidence_sha = _sha(recovery_evidence)
+    if not spec_path.is_file() or _sha(spec_path) != expected_spec_sha256:
+        raise _refuse("chain spec identity does not match")
+    if project_root.name != expected_session_id:
+        raise _refuse("project root is not the guarded session")
+    state_path = chain_spec._state_path_for(spec_path)
+    chain_id = chain_id_for_spec(spec_path)
+    journal = journal_for(project_root)
+
+    try:
+        marker_raw = marker_path.read_bytes()
+        marker = json.loads(marker_raw)
+        manifest_raw = manifest_path.read_bytes()
+        manifest = load_manifest(manifest_path)
+    except (OSError, json.JSONDecodeError, ManifestError) as exc:
+        raise _refuse("marker or runtime manifest is unavailable") from exc
+    if hashlib.sha256(marker_raw).hexdigest() != expected_marker_sha256:
+        raise _refuse("session marker changed since held operation")
+    if hashlib.sha256(manifest_raw).hexdigest() != expected_manifest_sha256:
+        raise _refuse("runtime manifest changed since held operation")
+    _assert_marker(marker, session=expected_session_id, workspace=workspace_path, manifest_path=manifest_path)
+    if isinstance(marker.get("failed_prechain_recovery"), Mapping):
+        raise _refuse("failed-prechain recovery effect is already present")
+    if state_path.exists():
+        raise _refuse("held recovery requires absent chain state")
+    engine_runtime_path = Path(str(manifest.epic.get("runtime_root") or "")).expanduser().resolve(strict=False)
+    held_identity = {
+        "session": expected_session_id,
+        "old_sha": old_sha,
+        "new_sha": new_sha,
+        "reviewed_source": str(source_path),
+        "chain_workspace": str(workspace_path),
+        "engine_runtime": str(engine_runtime_path),
+    }
+    expected_source_identity = {
+        "old_sha": old_sha,
+        "new_sha": new_sha,
+        "reviewed_source": str(source_path),
+        "chain_workspace": str(workspace_path),
+        "engine_runtime": str(engine_runtime_path),
+    }
+
+    def _live_identity() -> dict[str, Any]:
+        """Re-read every authoritative identity under the final lock."""
+        current_marker_raw = marker_path.read_bytes()
+        current_manifest_raw = manifest_path.read_bytes()
+        current_marker = json.loads(current_marker_raw)
+        current_manifest = load_manifest(manifest_path)
+        if hashlib.sha256(spec_path.read_bytes()).hexdigest() != expected_spec_sha256:
+            raise ChainControlHold("spec_cas_conflict", "chain spec changed while reconciling held operation")
+        if hashlib.sha256(current_marker_raw).hexdigest() != expected_marker_sha256:
+            raise ChainControlHold("marker_cas_conflict", "session marker changed while reconciling held operation")
+        if hashlib.sha256(current_manifest_raw).hexdigest() != expected_manifest_sha256:
+            raise ChainControlHold("manifest_cas_conflict", "runtime manifest changed while reconciling held operation")
+        _assert_marker(current_marker, session=expected_session_id, workspace=workspace_path, manifest_path=manifest_path)
+        if isinstance(current_marker.get("failed_prechain_recovery"), Mapping):
+            raise ChainControlHold("effect_present", "failed-prechain recovery effect is already present")
+        if state_path.exists():
+            raise ChainControlHold("chain_state_present", "chain state appeared while reconciling held operation")
+        current_engine = Path(str(current_manifest.epic.get("runtime_root") or "")).expanduser().resolve(strict=False)
+        if current_engine != engine_runtime_path:
+            raise ChainControlHold("engine_identity_conflict", "runtime manifest engine identity changed")
+        if str(current_manifest.epic.get("expected_head") or "").lower() != old_sha:
+            raise ChainControlHold("manifest_identity_conflict", "runtime manifest no longer describes held source")
+        if _head(source_path) != old_sha or _status(source_path):
+            raise ChainControlHold("source_effect_present", "reviewed source is not the unchanged clean held revision")
+        if _head(workspace_path) != old_sha:
+            raise ChainControlHold("workspace_effect_present", "chain workspace HEAD changed")
+        if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
+            raise ChainControlHold("engine_effect_present", "engine runtime is not the unchanged clean held revision")
+        receipt_path = recovery_evidence.parent / "recovery-receipt.json"
+        if receipt_path.exists():
+            raise ChainControlHold("receipt_effect_present", "recovery receipt already exists for held operation")
+        return {
+            "marker_sha256": hashlib.sha256(current_marker_raw).hexdigest(),
+            "manifest_sha256": hashlib.sha256(current_manifest_raw).hexdigest(),
+            "source_head": _head(source_path),
+            "workspace_head": _head(workspace_path),
+            "engine_runtime": str(current_engine),
+            "engine_head": _head(current_engine),
+        }
+
+    replay = journal.replay_strict()
+    operation_events = [
+        event for event in replay["accepted"]
+        if event.get("chain_id") == chain_id and event.get("operation_id") == held_operation_id
+    ]
+    if not operation_events:
+        raise _refuse("held operation does not belong to this chain")
+    holds = [
+        event for event in operation_events
+        if event.get("event_kind") == "chain_control.hold" and event.get("event_hash") == expected_hold_event_hash
+    ]
+    if len(holds) != 1:
+        raise _refuse("exact held operation/event was not found")
+    intent = next((event for event in operation_events if event.get("event_kind") == "chain_control.intent"), None)
+    if not isinstance(intent, Mapping):
+        raise _refuse("held operation has no authoritative intent")
+    intent_payload = intent.get("payload") if isinstance(intent.get("payload"), Mapping) else {}
+    if intent.get("spec_identity") != str(spec_path) or intent.get("intent") != RECOVERY_INTENT:
+        raise _refuse("held operation kind or spec identity does not match")
+    if {key: intent_payload.get(key) for key in held_identity} != held_identity:
+        raise _refuse("held operation session/source/workspace identity does not match")
+    if intent.get("source_identity") != expected_source_identity:
+        raise _refuse("held operation source identity does not match")
+    # ``mutate`` historically attached the archive only to the eventual
+    # committed event, while a held operation has no committed event.  Bind
+    # the evidence by its canonical custody location and content-addressed
+    # archive schema instead of trusting a caller-provided receipt link.
+    expected_evidence = custody_dir / held_operation_id / "manifest.json"
+    if recovery_evidence != expected_evidence:
+        raise _refuse("held recovery evidence is not the canonical operation archive")
+    try:
+        archive_payload = json.loads(recovery_evidence.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise _refuse("held recovery evidence archive is unreadable") from exc
+    _verify_archive(recovery_evidence, archive_payload, held_operation_id)
+    hold = holds[0]
+    hold_payload = hold.get("payload") if isinstance(hold.get("payload"), Mapping) else {}
+    if any(hold_payload.get(key) != value for key, value in held_identity.items()):
+        raise _refuse("held hold identity does not match its intent")
+    latest = operation_events[-1]
+    terminal_events = [event for event in operation_events if event.get("event_kind") == "chain_control.hold_reconciled"]
+    reconciliation_id = hashlib.sha256(
+        f"reconcile-held-no-effect\0{chain_id}\0{held_operation_id}\0{expected_hold_event_hash}".encode()
+    ).hexdigest()
+    if terminal_events:
+        terminal = terminal_events[-1]
+        payload = terminal.get("payload") if isinstance(terminal.get("payload"), Mapping) else {}
+        expected_terminal = {
+            "disposition": "aborted_no_effect",
+            "held_operation_id": held_operation_id,
+            "held_event_hash": expected_hold_event_hash,
+            "session": expected_session_id,
+            "spec_path": str(spec_path),
+            "spec_sha256": expected_spec_sha256,
+            "marker_path": str(marker_path),
+            "marker_sha256": expected_marker_sha256,
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": expected_manifest_sha256,
+            **held_identity,
+            "recovery_evidence": {"path": str(recovery_evidence), "sha256": evidence_sha},
+        }
+        if terminal.get("recovery_id") != reconciliation_id or any(payload.get(k) != v for k, v in expected_terminal.items()):
+            raise _refuse("held operation has a contradictory reconciliation terminal")
+        if latest.get("event_kind") != "chain_control.hold_reconciled":
+            raise _refuse("held operation has a later nonterminal event")
+    elif latest.get("event_hash") != expected_hold_event_hash:
+        raise _refuse("held operation is no longer an unresolved exact hold")
+
+    lock_paths = [
+        spec_path,
+        marker_path,
+        manifest_path,
+        custody_dir / "locks" / (hashlib.sha256(str(source_path).encode()).hexdigest() + ".source.lock"),
+        custody_dir / "locks" / (hashlib.sha256(str(workspace_path).encode()).hexdigest() + ".workspace.lock"),
+        custody_dir / "locks" / (hashlib.sha256(str(engine_runtime_path).encode()).hexdigest() + ".engine.lock"),
+        custody_dir / f"{state_path.name}.recovery.lock",
+    ]
+    with journal.transaction(
+        chain_ids=[chain_id],
+        state_paths=lock_paths,
+        expected_revision=None,
+        operation_id=held_operation_id,
+        actor={"id": actor, "class": "operator"},
+    ) as txn:
+        live = _live_identity()
+        if terminal_events:
+            return {
+                "outcome": "replay",
+                "operation_id": held_operation_id,
+                "reconciliation_id": reconciliation_id,
+                "event": terminal_events[-1],
+                "external_effect": False,
+            }
+        payload = {
+            "disposition": "aborted_no_effect",
+            "held_operation_id": held_operation_id,
+            "held_event_hash": expected_hold_event_hash,
+            "held_event_id": hold.get("event_id"),
+            "session": expected_session_id,
+            "spec_path": str(spec_path),
+            "spec_sha256": expected_spec_sha256,
+            "marker_path": str(marker_path),
+            "marker_sha256": expected_marker_sha256,
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": expected_manifest_sha256,
+            **held_identity,
+            "recovery_evidence": {"path": str(recovery_evidence), "sha256": evidence_sha},
+            "reason": reason,
+            "actor": actor,
+            "zero_effect_identity": live,
+        }
+        event = journal.append_under_lock(
+            txn,
+            event_kind="chain_control.hold_reconciled",
+            chain_id=chain_id,
+            operation_id=held_operation_id,
+            causation_id=str(hold.get("event_id") or held_operation_id),
+            correlation_id=held_operation_id,
+            recovery_id=reconciliation_id,
+            payload=payload,
+            semantic_effect="no_change",
+            claim_class="evidence-only",
+            actor={"id": actor, "class": "operator"},
+            outcome="aborted_no_effect",
+            failure_class="chain_control.hold",
+            intent="reconcile-held-no-effect",
+            linked_receipts=[str(recovery_evidence)],
+            spec_identity=str(spec_path),
+            source_identity=expected_source_identity,
+        )
+        return {
+            "outcome": "committed",
+            "operation_id": held_operation_id,
+            "reconciliation_id": reconciliation_id,
+            "event": event.get("payload", event),
+            "external_effect": False,
+        }
+
+
+__all__ = [
+    "RECOVERY_ERROR",
+    "RECOVERY_SCHEMA",
+    "RECOVERY_INTENT",
+    "recover_failed_prechain",
+    "reconcile_failed_prechain_hold",
+]

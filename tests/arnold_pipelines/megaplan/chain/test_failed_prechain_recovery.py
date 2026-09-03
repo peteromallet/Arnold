@@ -269,3 +269,156 @@ def test_committed_event_failure_rolls_back_and_leaves_durable_hold(tmp_path: Pa
     assert any(item.get("payload", {}).get("failure_class") == "committed_event_append_failed" for item in events)
     with pytest.raises(CliError, match="no durable terminal result"):
         recovery.recover_failed_prechain(spec, project, **kwargs)
+
+
+def _held_recovery_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    (tmp_path / "source-repo").mkdir()
+    source, old, new = _repo(tmp_path / "source-repo")
+    engine = tmp_path / "engine"
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "clone", "-q", str(source), str(engine)], check=True)
+    subprocess.run(["git", "clone", "-q", str(source), str(workspace)], check=True)
+    project = tmp_path / "native-build-forward-c2-test-session"
+    spec = project / ".megaplan" / "initiatives" / "continuation" / "chain.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    marker = project / "marker.json"
+    manifest = project / "manifest.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "session": project.name,
+                "workspace": str(workspace),
+                "bootstrap_manifest_path": str(manifest),
+                "launch_outcome": {"status": "failed", "code": "launch_not_advanced"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest.write_text("manifest-before\n", encoding="utf-8")
+    current = SimpleNamespace(
+        epic={"runtime_root": str(engine), "expected_head": old},
+        generation=1,
+    )
+    monkeypatch.setattr(recovery, "load_manifest", lambda _path: current)
+    custody = project / "custody"
+    operation_id = "held-recovery-operation"
+    evidence = custody / operation_id / "manifest.json"
+    (workspace / "generated-reconcile.md").write_text("immutable failed-launch evidence\n", encoding="utf-8")
+    evidence, _archive = recovery._archive_dirty_state(workspace, custody, operation_id)
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold, chain_id_for_spec, journal_for
+
+    journal = journal_for(project)
+    chain_id = chain_id_for_spec(spec)
+    journal.ensure_genesis(chain_id=chain_id, actor={"id": "operator", "class": "operator"}, spec_identity=str(spec))
+    source_identity = {
+        "old_sha": old,
+        "new_sha": new,
+        "reviewed_source": str(source),
+        "chain_workspace": str(workspace),
+        "engine_runtime": str(engine),
+    }
+    hold_result = journal.mutate(
+        chain_id=chain_id,
+        operation_id=operation_id,
+        intent_kind=recovery.RECOVERY_INTENT,
+        actor={"id": "operator", "class": "operator"},
+        linked_receipts=[str(evidence)],
+        spec_identity=str(spec),
+        source_identity=source_identity,
+        intent_context={
+            "session": project.name,
+            "old_sha": old,
+            "new_sha": new,
+            "reviewed_source": str(source),
+            "chain_workspace": str(workspace),
+            "engine_runtime": str(engine),
+        },
+        effect=lambda _txn: (_ for _ in ()).throw(
+            ChainControlHold("source_cas_conflict", "archived dirty state differs")
+        ),
+    )
+    # Avoid depending on a private journal projection: the hold is the durable
+    # operation's latest event and its hash is the only accepted target.
+    events = journal.replay_strict()["accepted"]
+    hold = next(event for event in events if event.get("operation_id") == operation_id and event.get("event_kind") == "chain_control.hold")
+    return {
+        "source": source,
+        "engine": engine,
+        "workspace": workspace,
+        "project": project,
+        "spec": spec,
+        "marker": marker,
+        "manifest": manifest,
+        "custody": custody,
+        "evidence": evidence,
+        "old": old,
+        "new": new,
+        "operation_id": operation_id,
+        "chain_id": chain_id,
+        "hold_hash": hold["event_hash"],
+        "marker_sha": hashlib.sha256(marker.read_bytes()).hexdigest(),
+        "manifest_sha": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "spec_sha": hashlib.sha256(spec.read_bytes()).hexdigest(),
+    }
+
+
+def test_reconcile_exact_held_prechain_operation_is_terminal_and_replayable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="reconcile exact held operation", actor="operator",
+    )
+    before = {path: path.read_bytes() for path in (f["marker"], f["manifest"], f["spec"])}
+    first = recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+    assert first["outcome"] == "committed"
+    from arnold_pipelines.megaplan.incident.chain_control import journal_for
+    journal = journal_for(f["project"])
+    replay = journal.replay_strict()
+    assert replay["operations"][f["operation_id"]]["event_kind"] == "chain_control.hold_reconciled"
+    from arnold_pipelines.megaplan.incident.chain_control import _incomplete_operation_statuses
+    assert not _incomplete_operation_statuses(replay, f["chain_id"])
+    assert not recovery.chain_spec._state_path_for(f["spec"]).exists()
+    assert {path: path.read_bytes() for path in (f["marker"], f["manifest"], f["spec"])} == before
+    second = recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+    assert second["outcome"] == "replay"
+
+
+def test_reconcile_rejects_wrong_identity_and_existing_effect_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id="wrong-session",
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="wrong identity", actor="operator",
+    )
+    events_before = (f["project"] / ".megaplan" / "incident-ledger" / "events.jsonl").read_bytes()
+    kwargs["expected_session_id"] = f["project"].name
+    kwargs["held_operation_id"] = "wrong-operation"
+    with pytest.raises(CliError, match="does not belong to this chain"):
+        recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+    kwargs["held_operation_id"] = f["operation_id"]
+    kwargs["expected_session_id"] = "wrong-session"
+    with pytest.raises(CliError, match="guarded session"):
+        recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+    assert (f["project"] / ".megaplan" / "incident-ledger" / "events.jsonl").read_bytes() == events_before
+
+    marker_before = f["marker"].read_bytes()
+    marker = json.loads(marker_before)
+    marker["failed_prechain_recovery"] = {"operation_id": "forged-effect"}
+    f["marker"].write_text(json.dumps(marker) + "\n", encoding="utf-8")
+    kwargs["expected_session_id"] = f["project"].name
+    kwargs["expected_marker_sha256"] = hashlib.sha256(f["marker"].read_bytes()).hexdigest()
+    with pytest.raises(CliError, match="effect is already present"):
+        recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)

@@ -11474,6 +11474,19 @@ def build_chain_parser(subparsers: Any) -> None:
     failed_prechain_parser.add_argument("--expected-spec-sha256", required=True)
     failed_prechain_parser.add_argument("--expected-old-sha", required=True)
     failed_prechain_parser.add_argument("--reviewed-new-sha", required=True)
+    failed_prechain_parser.add_argument(
+        "--reconcile-held",
+        metavar="OPERATION_ID",
+        help="Close one exact prior failed-prechain hold with an auditable no-effect disposition",
+    )
+    failed_prechain_parser.add_argument(
+        "--expected-held-event-hash",
+        help="Exact SHA-256 event hash of the held operation's durable hold",
+    )
+    failed_prechain_parser.add_argument(
+        "--recovery-evidence",
+        help="Exact linked custody archive manifest for a held-operation reconciliation",
+    )
     failed_prechain_parser.add_argument("--reason", required=True)
     failed_prechain_parser.add_argument("--actor", default="operator")
 
@@ -12470,27 +12483,54 @@ def run_chain_cli(
     if action == "failed-prechain-recover":
         try:
             from arnold_pipelines.megaplan.chain.failed_prechain_recovery import (
+                reconcile_failed_prechain_hold,
                 recover_failed_prechain,
             )
 
-            result = recover_failed_prechain(
-                spec_path,
-                Path(args.project_dir).expanduser().resolve(),
+            common = dict(
                 marker_path=Path(args.marker).expanduser().resolve(),
                 manifest_path=Path(args.manifest).expanduser().resolve(),
                 source_path=Path(args.source).expanduser().resolve(),
                 workspace_path=Path(args.workspace).expanduser().resolve(),
-                staged_runtime_path=Path(args.staged_runtime).expanduser().resolve(),
                 custody_dir=Path(args.custody_dir).expanduser().resolve(),
                 expected_session_id=args.expected_session_id,
                 expected_marker_sha256=args.expected_marker_sha256,
                 expected_manifest_sha256=args.expected_manifest_sha256,
                 expected_spec_sha256=args.expected_spec_sha256,
                 expected_old_sha=args.expected_old_sha,
-                reviewed_new_sha=args.reviewed_new_sha,
                 reason=args.reason,
                 actor=args.actor,
             )
+            if args.reconcile_held:
+                if not args.expected_held_event_hash:
+                    raise CliError(
+                        "missing_held_event_hash",
+                        "--reconcile-held requires --expected-held-event-hash",
+                    )
+                evidence = (
+                    Path(args.recovery_evidence).expanduser().resolve()
+                    if args.recovery_evidence
+                    else Path(args.custody_dir).expanduser().resolve()
+                    / args.reconcile_held
+                    / "manifest.json"
+                )
+                result = reconcile_failed_prechain_hold(
+                    spec_path,
+                    Path(args.project_dir).expanduser().resolve(),
+                    held_operation_id=args.reconcile_held,
+                    expected_hold_event_hash=args.expected_held_event_hash,
+                    held_reviewed_new_sha=args.reviewed_new_sha,
+                    recovery_evidence=evidence,
+                    **common,
+                )
+            else:
+                result = recover_failed_prechain(
+                    spec_path,
+                    Path(args.project_dir).expanduser().resolve(),
+                    staged_runtime_path=Path(args.staged_runtime).expanduser().resolve(),
+                    reviewed_new_sha=args.reviewed_new_sha,
+                    **common,
+                )
         except CliError as exc:
             return _emit_error(exc)
         sys.stdout.write(

@@ -112,6 +112,7 @@ CLAIMLESS_KINDS = frozenset(
         "chain_control.cas_conflict",
         "chain_control.tamper_detected",
         "chain_control.hold",
+        "chain_control.hold_reconciled",
         "chain_control.hold_context_attested",
         "chain_control.replay",
         "chain_control.authority_validated",
@@ -142,6 +143,7 @@ ALL_KINDS = (
         "chain_control.external_effect_result",
         "chain_control.reconcile_required",
         "chain_control.hold_released",
+        "chain_control.hold_reconciled",
         "chain_control.hold_context_attested",
     }
 )
@@ -726,6 +728,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.suffix_rebound",
         "chain_control.runtime_rebound",
         "chain_control.hold_released",
+        "chain_control.hold_reconciled",
         "chain_control.hold_context_attested",
         "chain_control.restart_receipt_attested",
     }
@@ -1214,6 +1217,7 @@ class ChainControlJournal:
                         "chain_control.cas_conflict",
                         "chain_control.hold",
                         "chain_control.hold_released",
+                        "chain_control.hold_reconciled",
                         "chain_control.hold_context_attested",
                         "chain_control.restart_receipt_attested",
                         "chain_control.genesis_accepted",
