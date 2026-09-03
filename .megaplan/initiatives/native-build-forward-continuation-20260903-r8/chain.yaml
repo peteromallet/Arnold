@@ -1,6 +1,64 @@
 base_branch: main
 anchors:
   north_star: NORTHSTAR.md
+launch_preconditions:
+- name: continuation chain specification is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/chain.yaml
+- name: continuation North Star is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/NORTHSTAR.md
+- name: continuation cloud configuration is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/cloud.yaml
+- name: native C2 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-c2-completion-evaluation.md
+- name: native S2R brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s2r-durable-primitives.md
+- name: native S3A brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s3a-plan-quality-cutover.md
+- name: native S3B brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s3b-gate-revise-cutover.md
+- name: native S4 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s4-tiebreaker-finalize-reentry.md
+- name: native S5A brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s5a-delivery-shadow.md
+- name: native S5B brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s5b-live-delivery.md
+- name: native S6 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s6-control-plane.md
+- name: native S7 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-s7-conformance.md
+- name: platform S1 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s1-inventory.md
+- name: platform S2A brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s2a-runtime-authority.md
+- name: platform S2B brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s2b-authoring-core.md
+- name: platform S3 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s3-developer-tooling.md
+- name: platform S4 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s4-recomposition.md
+- name: platform S5 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s5-second-consumer.md
+- name: platform S6 brief is committed
+  kind: git_tracked
+  path: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/platform-s6-certification.md
 milestones:
 - label: native-c2-completion-evaluation
   idea: .megaplan/initiatives/native-build-forward-continuation-20260903-r8/briefs/native-c2-completion-evaluation.md
