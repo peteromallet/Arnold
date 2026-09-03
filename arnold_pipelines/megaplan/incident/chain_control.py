@@ -50,6 +50,21 @@ _MIGRATION_OCCUPANCY_KEYS = frozenset(
         "provider_owner",
         "provider_pid",
         "provider_session",
+        "provider_receipt",
+    }
+)
+_MIGRATION_PID_KEYS = frozenset(
+    {
+        "pid",
+        "supervisor_pid",
+        "publisher_pid",
+        "target_pid",
+        "owner_pid",
+        "runner_pid",
+        "worker_pid",
+        "chain_pid",
+        "fixer_pid",
+        "provider_pid",
     }
 )
 
@@ -446,6 +461,98 @@ def _live_occupancy_path(value: Any, prefix: str = "") -> str | None:
             found = _live_occupancy_path(child, f"{prefix}[{index}]")
             if found is not None:
                 return found
+    return None
+
+
+def _migration_pid_alive(value: Any) -> bool:
+    """Return whether a recorded PID is still present in this namespace."""
+    if value in (None, False, "", [], {}, 0, "0"):
+        return False
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    if Path(f"/proc/{pid}").exists():
+        return True
+    # AgentBox is Linux, but local verification also runs on macOS where
+    # /proc is absent.  Signal 0 is the portable existence check.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _migration_liveness_conflict(marker: Mapping[str, Any], marker_path: Path) -> str | None:
+    """Check dynamic liveness authorities, excluding manifest provenance."""
+    occupied = _live_occupancy_path(marker)
+    if occupied is not None:
+        return occupied
+    for key, value in marker.items():
+        if str(key) in _MIGRATION_PID_KEYS and _migration_pid_alive(value):
+            return f"marker.{key}"
+
+    session = marker.get("session")
+    if not isinstance(session, str) or not session:
+        return None
+    from arnold_pipelines.megaplan.cloud.liveness_lease import fence_path, lease_path
+
+    lease = lease_path(session, marker_dir=marker_path.parent)
+    fence = fence_path(session, marker_dir=marker_path.parent)
+    for label, path in (("lease", lease), ("fence", fence)):
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                return f"{label} is not a regular file"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return f"{label} liveness is unavailable"
+        if not isinstance(payload, Mapping) or payload.get("session") != session:
+            return f"{label} liveness identity is unavailable"
+        if label == "lease":
+            if payload.get("status") != "stopped":
+                return "lease.status"
+            expiry = payload.get("expires_at")
+            if not isinstance(expiry, str) or not expiry:
+                return "lease.expires_at"
+            try:
+                parsed = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            except ValueError:
+                return "lease.expires_at"
+            if parsed.tzinfo is None:
+                return "lease.expires_at"
+            if parsed >= datetime.now(timezone.utc):
+                return "lease.expires_at"
+        elif payload.get("owner") not in (None, "", 0, "0") or payload.get("status") not in (
+            None,
+            "stopped",
+            "released",
+            "expired",
+        ):
+            return "fence.owner/status"
+        for key, value in payload.items():
+            if str(key) in _MIGRATION_PID_KEYS and _migration_pid_alive(value):
+                return f"{label}.{key}"
+
+    try:
+        tmux = subprocess.run(
+            ["tmux", "has-session", "-t", session],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "tmux liveness is unavailable"
+    if tmux.returncode == 0:
+        return "tmux session"
+    if tmux.returncode != 1:
+        return "tmux liveness is unavailable"
     return None
 
 
@@ -2076,13 +2183,13 @@ class ChainControlJournal:
             if sha256_hex(old_events) != guarded_hashes["journal"] or sha256_hex(old_sidecar) != guarded_hashes["sidecar"]:
                 raise ChainControlHold("migration_guard_mismatch", "journal or sidecar bytes changed")
             marker = read_json_guard(marker_path, guarded_hashes["marker"], "marker")
-            manifest = read_json_guard(manifest_path, guarded_hashes["manifest"], "manifest")
+            read_json_guard(manifest_path, guarded_hashes["manifest"], "manifest")
             if _path_sha256(spec_path, "spec") != guarded_hashes["spec"]:
                 raise ChainControlHold("migration_guard_mismatch", "spec bytes changed")
             observed_workspace = workspace_snapshot_sha256(workspace_path, excluded=workspace_excluded)
             if observed_workspace != guarded_hashes["workspace"]:
                 raise ChainControlHold("migration_guard_mismatch", "workspace bytes changed")
-            occupied = _live_occupancy_path({"marker": marker, "manifest": manifest})
+            occupied = _migration_liveness_conflict(marker, marker_path)
             if occupied is not None:
                 raise ChainControlHold("migration_live_authority", f"live owner/tmux/provider/fixer evidence at {occupied}")
             launch_outcome = marker.get("launch_outcome")

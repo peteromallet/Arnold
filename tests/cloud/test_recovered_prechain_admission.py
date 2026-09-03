@@ -392,7 +392,7 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
             "target_pid": 999999,
         },
     )
-    fence = marker.parent / f".{session}.liveness-fence.json"
+    fence = marker.parent / f"{session}.liveness-fence.json"
     _write(fence, {"session": session, "status": "stopped"})
     return {
         "manifest": manifest,
@@ -825,6 +825,17 @@ def test_recovered_prechain_marker_is_admitted_read_only(
     assert {path: path.read_bytes() for path in paths} == before
     assert not fixture["state"].exists()
     assert fixture["git_paths"] == [fixture["workspace"], fixture["workspace"]]
+
+
+def test_dotted_fence_decoy_is_not_a_liveness_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _mock_external_authorities(monkeypatch, fixture)
+    decoy = fixture["fence"].parent / f".{fixture['session']}.liveness-fence.json"
+    _write(decoy, {"session": fixture["session"], "owner_pid": 1})
+    _run_admit(fixture)
 
 
 def test_authority_change_during_admission_is_rejected(

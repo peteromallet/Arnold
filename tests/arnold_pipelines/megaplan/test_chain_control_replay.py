@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     u64be,
     write_reservation_locked,
 )
+import arnold_pipelines.megaplan.incident.chain_control as chain_control_module
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 from arnold_pipelines.megaplan.chain.spec import _state_path_for
 
@@ -574,6 +575,84 @@ def test_guarded_trailing_collision_migration_preserves_custody_and_replays(tmp_
     second = journal.quarantine_trailing_sequence_collision(**kwargs)
     assert second["outcome"] == "replay"
     assert second["receipt"]["migration_event_id"] == receipt["migration_event_id"]
+
+
+@pytest.mark.parametrize("owner", ["unknown", "runner-provenance"])
+def test_collision_migration_treats_manifest_owner_as_provenance(
+    tmp_path: Path, owner: str
+) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    manifest = json.loads(fixture["manifest"].read_text(encoding="utf-8"))
+    manifest["owner"] = owner
+    fixture["manifest"].write_bytes(canonical_json(manifest) + b"\n")
+    kwargs = fixture["kwargs"]
+    kwargs["expected_manifest_sha256"] = hashlib.sha256(
+        fixture["manifest"].read_bytes()
+    ).hexdigest()
+    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path,
+        excluded=(fixture["ledger"].ledger_dir, fixture["custody"], fixture["receipt"]),
+    )
+    result = fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+    assert result["outcome"] == "committed"
+
+
+@pytest.mark.parametrize("live_authority", ["pid", "lease", "fence", "tmux"])
+def test_collision_migration_rejects_canonical_live_authorities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    live_authority: str,
+) -> None:
+    fixture = _trailing_collision_fixture(tmp_path)
+    session = "collision-live-session"
+    marker = json.loads(fixture["marker"].read_text(encoding="utf-8"))
+    marker["session"] = session
+    if live_authority == "pid":
+        marker["pid"] = os.getpid()
+    fixture["marker"].write_bytes(canonical_json(marker) + b"\n")
+    lease = tmp_path / f"{session}.liveness-lease.json"
+    fence = tmp_path / f"{session}.liveness-fence.json"
+    lease.write_text(
+        json.dumps(
+            {
+                "session": session,
+                "status": "running" if live_authority == "lease" else "stopped",
+                "expires_at": "2099-01-01T00:00:00Z" if live_authority == "lease" else "2000-01-01T00:00:00Z",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fence.write_text(
+        json.dumps(
+            {
+                "session": session,
+                "status": "running" if live_authority == "fence" else "stopped",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if live_authority == "tmux":
+        monkeypatch.setattr(
+            chain_control_module.subprocess,
+            "run",
+            lambda *args, **kwargs: type("Completed", (), {"returncode": 0})(),
+        )
+    kwargs = fixture["kwargs"]
+    kwargs["expected_marker_sha256"] = hashlib.sha256(
+        fixture["marker"].read_bytes()
+    ).hexdigest()
+    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path,
+        excluded=(fixture["ledger"].ledger_dir, fixture["custody"], fixture["receipt"]),
+    )
+    with pytest.raises(ChainControlHold, match="live owner"):
+        fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+    assert not fixture["receipt"].exists()
+    assert not (fixture["ledger"].ledger_dir / ".active-generation.json").exists()
 
 
 def test_guarded_trailing_collision_replays_after_later_strict_appends(tmp_path: Path) -> None:

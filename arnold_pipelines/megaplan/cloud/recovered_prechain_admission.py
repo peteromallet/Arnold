@@ -26,6 +26,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     ManifestError,
     RuntimeManifest,
 )
+from arnold_pipelines.megaplan.cloud.liveness_lease import fence_path, lease_path
 from arnold_pipelines.megaplan.incident.chain_control import (
     SCHEMA_VERSION,
     canonical_json,
@@ -993,8 +994,8 @@ def _admit(
     # state itself with O_CREAT: absence is part of the admission contract.
     workspace = expected_workspace
     workspace_path = Path(workspace)
-    lease = marker_path.parent / f"{session}.liveness-lease.json"
-    fence = marker_path.parent / f".{session}.liveness-fence.json"
+    lease = lease_path(session, marker_dir=marker_path.parent)
+    fence = fence_path(session, marker_dir=marker_path.parent)
     lease_lock = marker_path.parent / f"{session}.liveness-publisher.lock"
     fence_lock = marker_path.parent / f".{session}.liveness-fence.lock"
     ledger_lock = (
