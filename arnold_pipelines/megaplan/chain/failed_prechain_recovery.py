@@ -530,6 +530,12 @@ def recover_failed_prechain(
     source_path = source_path.expanduser().resolve(strict=False)
     workspace_path = workspace_path.expanduser().resolve(strict=False)
     staged_runtime_path = staged_runtime_path.expanduser().resolve(strict=False)
+    # ``staged_runtime_path`` is the clean chain-workspace candidate.  Keep a
+    # separate immutable engine candidate so the manifest never points at the
+    # mutable chain workspace after recovery.
+    staged_engine_runtime_path = staged_runtime_path.with_name(
+        staged_runtime_path.name + "-engine"
+    )
     custody_dir = custody_dir.expanduser().resolve(strict=False)
     expected_marker_sha256 = _full(expected_marker_sha256, label="marker SHA-256")
     expected_manifest_sha256 = _full(expected_manifest_sha256, label="manifest SHA-256")
@@ -545,7 +551,11 @@ def recover_failed_prechain(
         raise _refuse("chain spec identity does not match")
     if project_root.name != expected_session_id:
         raise _refuse("project root is not the guarded session")
-    for candidate, label in ((custody_dir, "custody"), (staged_runtime_path, "staged runtime")):
+    for candidate, label in (
+        (custody_dir, "custody"),
+        (staged_runtime_path, "staged runtime"),
+        (staged_engine_runtime_path, "staged engine runtime"),
+    ):
         for root, root_label in (
             (source_path, "reviewed source"),
             (workspace_path, "chain workspace"),
@@ -597,7 +607,13 @@ def recover_failed_prechain(
     engine_runtime_path = Path(str(manifest.epic.get("runtime_root") or "")).expanduser().resolve(strict=False)
     if not engine_runtime_path.is_dir():
         raise _refuse("runtime manifest engine root is unavailable")
-    for candidate, label in ((custody_dir, "custody"), (staged_runtime_path, "staged runtime")):
+    three_root_recovery = source_path != workspace_path
+    collapsed_engine_bridge = three_root_recovery and engine_runtime_path == workspace_path
+    for candidate, label in (
+        (custody_dir, "custody"),
+        (staged_runtime_path, "staged runtime"),
+        (staged_engine_runtime_path, "staged engine runtime"),
+    ):
         try:
             candidate.relative_to(engine_runtime_path)
         except ValueError:
@@ -615,9 +631,9 @@ def recover_failed_prechain(
     else:
         if _head(source_path) != old_sha or _status(source_path):
             raise _refuse("reviewed source checkout is not the clean failed revision")
-        if engine_runtime_path in {source_path, workspace_path}:
+        if engine_runtime_path in {source_path, workspace_path} and not collapsed_engine_bridge:
             raise _refuse("three-root recovery requires distinct engine and chain roots")
-        if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
+        if _head(engine_runtime_path) != old_sha or (_status(engine_runtime_path) and not collapsed_engine_bridge):
             raise _refuse("immutable engine runtime is not the clean failed revision")
     from arnold_pipelines.megaplan.incident.chain_control import (
         SCHEMA_VERSION,
@@ -627,6 +643,46 @@ def recover_failed_prechain(
     )
     chain_id = chain_id_for_spec(spec_path)
     journal = journal_for(project_root)
+    if collapsed_engine_bridge:
+        # The compatibility bridge is limited to a collapse demonstrably
+        # produced by the prior committed recovery; arbitrary aliases remain
+        # a hard refusal.
+        prior = marker.get("failed_prechain_recovery")
+        if not isinstance(prior, Mapping) or prior.get("engine_runtime_after") != str(workspace_path):
+            raise _refuse("collapsed engine/workspace has no proven recovery origin")
+        prior_operation = str(prior.get("operation_id") or "")
+        if _SHA256.fullmatch(prior_operation) is None:
+            raise _refuse("collapsed engine/workspace recovery operation is malformed")
+        prior_archive = prior.get("archive_manifest")
+        if not isinstance(prior_archive, Mapping):
+            raise _refuse("collapsed engine/workspace recovery archive is missing")
+        prior_archive_path = Path(str(prior_archive.get("path") or ""))
+        try:
+            prior_archive_payload = json.loads(prior_archive_path.read_text(encoding="utf-8"))
+            _verify_archive(prior_archive_path, prior_archive_payload, prior_operation)
+            prior_receipt_path = prior_archive_path.parent / "recovery-receipt.json"
+            prior_receipt = json.loads(prior_receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, CliError) as exc:
+            raise _refuse("collapsed engine/workspace recovery receipt is unavailable") from exc
+        if (
+            prior_receipt.get("operation_id") != prior_operation
+            or prior_receipt.get("outcome") != "recovered"
+            or (prior_receipt.get("engine_runtime") or {}).get("new_path") != str(workspace_path)
+        ):
+            raise _refuse("collapsed engine/workspace recovery receipt is contradictory")
+        prior_replay = journal.replay_strict()
+        prior_events = [
+            event for event in prior_replay.get("accepted", [])
+            if isinstance(event, Mapping)
+            and event.get("event_kind") == "chain_control.committed"
+            and event.get("operation_id") == prior_operation
+            and event.get("chain_id") == chain_id
+        ]
+        if len(prior_events) != 1:
+            raise _refuse("collapsed engine/workspace recovery journal proof is missing")
+        prior_effect = (prior_events[0].get("payload") or {}).get("effect")
+        if not isinstance(prior_effect, Mapping) or prior_effect.get("staged_runtime") != str(workspace_path):
+            raise _refuse("collapsed engine/workspace journal proof is contradictory")
     retry_after_event_hash: str | None = None
     retry_evidence_path: Path | None = None
     if retry_after is not None:
@@ -982,6 +1038,8 @@ def recover_failed_prechain(
         rollback_state = restore
         try:
             _stage_runtime(source_path, staged_runtime_path, old_sha, new_sha)
+            if three_root_recovery:
+                _stage_runtime(source_path, staged_engine_runtime_path, old_sha, new_sha)
             _copy_journal_state(workspace_path, staged_runtime_path, journal_owned_paths)
             _promote_staged_runtime(
                 workspace_path,
@@ -995,7 +1053,7 @@ def recover_failed_prechain(
                 raise ChainControlHold("engine_cas_conflict", "runtime manifest engine identity changed")
             old_epic = current_manifest.epic
             old_root = engine_runtime_path
-            new_root = workspace_path
+            new_root = staged_engine_runtime_path if three_root_recovery else workspace_path
             def _relocate(value: Any) -> str:
                 raw = str(value or "")
                 if not raw:
@@ -1028,7 +1086,7 @@ def recover_failed_prechain(
                 "reviewed_source": str(source_path),
                 "chain_workspace": str(workspace_path),
                 "engine_runtime_before": str(engine_runtime_path),
-                "engine_runtime_after": str(workspace_path),
+                "engine_runtime_after": str(new_root),
                 "archive_manifest": {"path": str(archive_path), "sha256": _sha(archive_path)},
                 "manifest_generation": promoted.generation,
                 "reason": reason,
@@ -1047,7 +1105,7 @@ def recover_failed_prechain(
                 "staged_runtime": str(workspace_path),
                 "preserved_failed_workspace": str(failed_workspace),
                 "workspace": str(workspace_path),
-                "engine_runtime": {"old_path": str(engine_runtime_path), "new_path": str(workspace_path)},
+                "engine_runtime": {"old_path": str(engine_runtime_path), "new_path": str(new_root)},
                 "archive_manifest": {"path": str(archive_path), "sha256": _sha(archive_path)},
                 "launch_outcome": dict(current_marker.get("launch_outcome") or {}),
                 "outcome": "recovered",
@@ -1104,6 +1162,7 @@ def recover_failed_prechain(
                 custody_dir / "locks" / (hashlib.sha256(str(source_path).encode()).hexdigest() + ".source.lock"),
                 custody_dir / "locks" / (hashlib.sha256(str(workspace_path).encode()).hexdigest() + ".workspace.lock"),
                 custody_dir / "locks" / (hashlib.sha256(str(engine_runtime_path).encode()).hexdigest() + ".engine.lock"),
+                custody_dir / "locks" / (hashlib.sha256(str(staged_engine_runtime_path).encode()).hexdigest() + ".staged-engine.lock"),
                 marker_path,
                 manifest_path,
                 receipt_path,
