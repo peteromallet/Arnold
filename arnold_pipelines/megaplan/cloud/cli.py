@@ -49,6 +49,10 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_SCHEMA_VERSION,
     TOP_LEVEL_REQUIRED,
 )
+from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    CONTINUATION_MUSE_MODEL,
+    CONTINUATION_MUSE_PROFILE,
+)
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
 from arnold_pipelines.megaplan.finite_canary_policy import (
     finite_canary_policy_is_exact,
@@ -101,32 +105,45 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"\bTODO(?:_[A-Z0-9]+)+\b|<box-ip>|TODO_SSH_HOST|TODO_REPO_URL"
 )
 _RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
-_CONTINUATION_MUSE_MODEL = "omp:openrouter/meta/muse-spark-1.3-contributor"
-_CONTINUATION_MUSE_SESSION_PREFIX = "native-build-forward-c2-bb000694-20260903-r4"
-
-
 def _validate_continuation_muse_routes(
-    preflight_summary: Mapping[str, Any], *, session: str
+    preflight_summary: Mapping[str, Any], *, session: str = ""
 ) -> dict[str, Any] | None:
-    """Validate the closed r4 route before any cloud side effect."""
-    if not session.startswith(_CONTINUATION_MUSE_SESSION_PREFIX):
+    """Validate closed fixer routing from the resolved chain profile.
+
+    Session names are not identity: they rotate between continuation
+    generations and can be supplied by an operator.  The resolved profile in
+    the preflight evidence is the authoritative workload declaration.
+    """
+    milestones = [
+        item for item in preflight_summary.get("milestones", [])
+        if isinstance(item, Mapping)
+    ]
+    profiles = {str(item.get("profile") or "").strip() for item in milestones}
+    if CONTINUATION_MUSE_PROFILE not in profiles:
         return None
+    if profiles != {CONTINUATION_MUSE_PROFILE}:
+        raise CliError(
+            "closed_profile_route_mismatch",
+            "closed Muse profile must cover every chain milestone",
+            extra={"profiles": sorted(profiles), "session": session},
+        )
     bad: list[dict[str, Any]] = []
-    for milestone in preflight_summary.get("milestones", []):
+    for milestone in milestones:
         label = milestone.get("label", "")
         phase_chains = milestone.get("resolved_phase_chains", {})
         for phase, chain in phase_chains.items():
-            if chain != [_CONTINUATION_MUSE_MODEL]:
+            if chain != [CONTINUATION_MUSE_MODEL]:
                 bad.append({"label": label, "phase": phase, "resolved": chain})
     if bad:
         raise CliError(
             "closed_profile_route_mismatch",
-            "r4 continuation requires Muse Spark 1.3 Contributor/high with no fallback",
+            "closed Muse profile requires Muse Spark 1.3 Contributor/high with no fallback",
             extra={"route_failures": bad},
         )
     return {
         "status": "ok",
-        "model": _CONTINUATION_MUSE_MODEL,
+        "model": CONTINUATION_MUSE_MODEL,
+        "profile": CONTINUATION_MUSE_PROFILE,
         "thinking": "high",
         "fallback": False,
     }
@@ -3927,12 +3944,21 @@ def _chain_start_command(
     prefix = (
         'PINNED_RUNTIME_MANIFEST="${ARNOLD_RUNTIME_MANIFEST:-}"; '
         'readonly PINNED_RUNTIME_MANIFEST; '
+        'PINNED_BABYSITTER_CHAIN_PROFILE="${ARNOLD_BABYSITTER_CHAIN_PROFILE:-}"; '
+        'readonly PINNED_BABYSITTER_CHAIN_PROFILE; '
+        'PINNED_BABYSITTER_CLOSED_PROFILE="${ARNOLD_BABYSITTER_CLOSED_PROFILE:-}"; '
+        'readonly PINNED_BABYSITTER_CLOSED_PROFILE; '
     )
     prefix += (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
         'if [ -n "$PINNED_RUNTIME_MANIFEST" ]; then '
         'export ARNOLD_RUNTIME_MANIFEST="$PINNED_RUNTIME_MANIFEST"; '
+        'fi; '
+        'unset ARNOLD_BABYSITTER_CHAIN_PROFILE ARNOLD_BABYSITTER_CLOSED_PROFILE; '
+        'if [ -n "$PINNED_BABYSITTER_CHAIN_PROFILE" ]; then '
+        'export ARNOLD_BABYSITTER_CHAIN_PROFILE="$PINNED_BABYSITTER_CHAIN_PROFILE"; '
+        'export ARNOLD_BABYSITTER_CLOSED_PROFILE="$PINNED_BABYSITTER_CLOSED_PROFILE"; '
         'fi; '
     )
     if repair_session:
@@ -4056,8 +4082,7 @@ def _launch_boundary_prefix(*, session: str, engine_var: str = "$ENGINE_DIR") ->
         '. "$ARNOLD_LAUNCH_BOUNDARY"; '
         f'if arnold_materialize_launch_boundary {session_q} {engine_var} {engine_var}; then :; '
         'else _arnold_boundary_rc=$?; exit "$_arnold_boundary_rc"; fi; '
-        'elif [ -d /workspace/.creds ] || '
-        f'[ {session_q} = native-build-forward-c2-bb000694-20260903-r4 ]; then '
+        'elif [ -d /workspace/.creds ]; then '
         'echo "[megaplan-launch] launch_boundary_unavailable"; exit 78; '
         'else export PYTHONPATH=' + engine_var + '; cd ' + engine_var + '; fi; '
     )
@@ -4526,6 +4551,27 @@ def _tmux_chain_launch_command(
         "run_id": str(uuid.uuid4()),
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    # The marker is the durable launch identity, while these exports are the
+    # process-bound projection consumed by watchdog -> babysitter.  Only an
+    # explicit, validated profile is exported; session names never select a
+    # model route.
+    chain_profile = str(marker_payload.get("babysitter_chain_profile") or "").strip()
+    closed_profile = str(marker_payload.get("babysitter_closed_profile") or "").strip()
+    if chain_profile or closed_profile:
+        if chain_profile != CONTINUATION_MUSE_PROFILE or closed_profile != CONTINUATION_MUSE_PROFILE:
+            raise CliError(
+                "closed_profile_route_mismatch",
+                "babysitter closed-route marker identity is invalid",
+                extra={
+                    "babysitter_chain_profile": chain_profile,
+                    "babysitter_closed_profile": closed_profile,
+                },
+            )
+        chain_cmd = (
+            f"export ARNOLD_BABYSITTER_CHAIN_PROFILE={shlex.quote(chain_profile)} "
+            f"ARNOLD_BABYSITTER_CLOSED_PROFILE={shlex.quote(closed_profile)}; "
+            f"{chain_cmd}"
+        )
     from arnold_pipelines.megaplan.notification_safety import (
         notification_context_for_current_execution,
     )
@@ -5422,7 +5468,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         closed_route is not None
         and remote.get("provider_credentials", {}).get("status") != "ok"
     ):
-        errors.append("r4 continuation requires an authenticated OMP OpenRouter Muse route")
+        errors.append("closed Muse profile requires an authenticated OMP OpenRouter Muse route")
     payload = {
         "success": not errors,
         "event": "cloud_preflight",
@@ -5803,7 +5849,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         if provider_credentials.get("status") != "ok":
             raise CliError(
                 "cloud_preflight_failed",
-                "r4 continuation requires an authenticated OMP OpenRouter Muse route",
+                "closed Muse profile requires an authenticated OMP OpenRouter Muse route",
                 extra={
                     "missing_commands": [],
                     "missing_env": [],
@@ -5890,6 +5936,12 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "progress_artifact": launch_ctx.log_path,
         "progress_identity": f"chain:{launch_ctx.identity}",
     }
+    # Carry the authoritative chain profile into the watchdog environment.
+    # The resident fixer consumes this explicit identity; it must never infer
+    # a closed route from a generation-specific session-name prefix.
+    if closed_route is not None:
+        marker_payload["babysitter_chain_profile"] = CONTINUATION_MUSE_PROFILE
+        marker_payload["babysitter_closed_profile"] = CONTINUATION_MUSE_PROFILE
     if bool(getattr(args, "fresh", False)):
         # A fresh launch explicitly supersedes any prior pause for this exact
         # identity. Atomic marker writes merge existing fields, so overwrite

@@ -6,11 +6,25 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud.babysitter import launch
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
+    CHAIN_PROFILE_ENV,
+    CLOSED_PROFILE_ENV,
     CONTINUATION_FIXER_ROLES,
     CONTINUATION_MUSE_MODEL,
+    CONTINUATION_MUSE_PROFILE,
     CONTINUATION_MUSE_THINKING,
     resolve_babysitter_routing,
 )
+
+CONTINUATION_SESSION = "native-build-forward-c2-780129da-20260903-r5"
+
+
+def _closed_env(**extra: str) -> dict[str, str]:
+    values = {
+        CHAIN_PROFILE_ENV: CONTINUATION_MUSE_PROFILE,
+        CLOSED_PROFILE_ENV: CONTINUATION_MUSE_PROFILE,
+    }
+    values.update(extra)
+    return values
 
 
 def test_babysitter_routing_defaults_to_legacy_deepseek() -> None:
@@ -40,8 +54,8 @@ def test_unknown_routing_value_fails_closed() -> None:
 
 
 def test_continuation_route_closes_every_fixer_role_to_muse_high() -> None:
-    session = "native-build-forward-c2-bb000694-20260903-r4"
-    route = resolve_babysitter_routing({}, session=session)
+    session = CONTINUATION_SESSION
+    route = resolve_babysitter_routing(_closed_env(), session=session)
     assert route.closed is True
     assert route.mode == "continuation-muse"
     assert route.controller_model == CONTINUATION_MUSE_MODEL
@@ -52,18 +66,62 @@ def test_continuation_route_closes_every_fixer_role_to_muse_high() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "session",
+    [
+        CONTINUATION_SESSION,
+        "native-build-forward-c2-future-generation-r99",
+    ],
+)
+def test_closed_route_accepts_r5_and_future_sessions_without_prefix_allowlist(
+    session: str,
+) -> None:
+    route = resolve_babysitter_routing(_closed_env(), session=session)
+    assert route.closed
+    assert route.controller_model == CONTINUATION_MUSE_MODEL
+    assert route.thinking == "high"
+
+
+def test_continuation_profile_without_explicit_closed_config_fails_closed() -> None:
+    with pytest.raises(ValueError, match="explicit"):
+        resolve_babysitter_routing(
+            {CHAIN_PROFILE_ENV: CONTINUATION_MUSE_PROFILE},
+            session=CONTINUATION_SESSION,
+        )
+
+
+def test_forged_closed_config_and_profile_mismatch_fails_closed() -> None:
+    with pytest.raises(ValueError, match="contradict"):
+        resolve_babysitter_routing(
+            {
+                CHAIN_PROFILE_ENV: "partnered-5",
+                CLOSED_PROFILE_ENV: CONTINUATION_MUSE_PROFILE,
+            },
+            session="native-build-forward-c2-forged",
+        )
+
+
+def test_unrelated_profile_keeps_ordinary_routing_defaults() -> None:
+    route = resolve_babysitter_routing(
+        {CHAIN_PROFILE_ENV: "partnered-5"},
+        session=CONTINUATION_SESSION,
+    )
+    assert not route.closed
+    assert route.controller_model == "omp:deepseek/deepseek-v4-flash"
+
+
 def test_continuation_route_rejects_ambient_alternate_model() -> None:
-    session = "native-build-forward-c2-bb000694-20260903-r4"
+    session = CONTINUATION_SESSION
     import pytest
 
     with pytest.raises(ValueError, match="closed to Muse"):
         resolve_babysitter_routing(
-            {"ARNOLD_BABYSITTER_MODEL": "omp:deepseek/deepseek-v4-flash"},
+            _closed_env(ARNOLD_BABYSITTER_MODEL="omp:deepseek/deepseek-v4-flash"),
             session=session,
         )
     with pytest.raises(ValueError, match="closed to Muse"):
         resolve_babysitter_routing(
-            {"ARNOLD_BABYSITTER_ROUTING": "codex"}, session=session
+            _closed_env(ARNOLD_BABYSITTER_ROUTING="codex"), session=session
         )
 
 
@@ -72,8 +130,10 @@ def test_continuation_launch_requires_explicit_closed_fixer_registration(
 ) -> None:
     from arnold_pipelines.megaplan.cloud.babysitter import launch as launch_module
 
-    session = "native-build-forward-c2-bb000694-20260903-r4"
+    session = CONTINUATION_SESSION
     monkeypatch.delenv("ARNOLD_BABYSITTER_MODEL", raising=False)
+    monkeypatch.setenv(CHAIN_PROFILE_ENV, CONTINUATION_MUSE_PROFILE)
+    monkeypatch.setenv(CLOSED_PROFILE_ENV, CONTINUATION_MUSE_PROFILE)
     args = launch_module._build_parser().parse_args(["--session", session])
     with pytest.raises(ValueError, match="explicit"):
         launch_module._collect_context(args)
@@ -87,10 +147,10 @@ def test_continuation_launch_requires_explicit_closed_fixer_registration(
 
 
 def test_continuation_route_normalizes_all_thinking_inputs_to_high() -> None:
-    session = "native-build-forward-c2-bb000694-20260903-r4"
+    session = CONTINUATION_SESSION
     for level in ("auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"):
         route = resolve_babysitter_routing(
-            {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:{level}"},
+            _closed_env(ARNOLD_BABYSITTER_MODEL=f"{CONTINUATION_MUSE_MODEL}:{level}"),
             session=session,
         )
         assert route.controller_model == CONTINUATION_MUSE_MODEL
@@ -102,8 +162,8 @@ def test_continuation_managed_spec_pins_nested_omp_dispatch_to_muse_high(
 ) -> None:
     goal = tmp_path / "goal.md"
     goal.write_text("prove movement", encoding="utf-8")
-    session = "native-build-forward-c2-bb000694-20260903-r4"
-    route = resolve_babysitter_routing({}, session=session)
+    session = CONTINUATION_SESSION
+    route = resolve_babysitter_routing(_closed_env(), session=session)
     ctx = {
         "engine_root": Path(__file__).resolve().parents[2],
         "run_root": tmp_path / "run",
@@ -129,9 +189,9 @@ def test_continuation_managed_spec_pins_nested_omp_dispatch_to_muse_high(
 
 
 def test_continuation_fixer_uses_shared_omp_capability_preflight(monkeypatch) -> None:
-    session = "native-build-forward-c2-bb000694-20260903-r4"
+    session = CONTINUATION_SESSION
     route = resolve_babysitter_routing(
-        {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:high"},
+        _closed_env(ARNOLD_BABYSITTER_MODEL=f"{CONTINUATION_MUSE_MODEL}:high"),
         session=session,
     )
     calls = []
@@ -156,9 +216,9 @@ def test_continuation_fixer_uses_shared_omp_capability_preflight(monkeypatch) ->
 
 
 def test_continuation_fixer_capability_auth_failure_fails_closed(monkeypatch) -> None:
-    session = "native-build-forward-c2-bb000694-20260903-r4"
+    session = CONTINUATION_SESSION
     route = resolve_babysitter_routing(
-        {"ARNOLD_BABYSITTER_MODEL": f"{CONTINUATION_MUSE_MODEL}:high"},
+        _closed_env(ARNOLD_BABYSITTER_MODEL=f"{CONTINUATION_MUSE_MODEL}:high"),
         session=session,
     )
     monkeypatch.setattr(

@@ -126,6 +126,8 @@ def render_babysitter_goal(
     planner_repair: dict[str, object] | None = None,
     occurrence_digest: str = "",
     recovery_dir: str = "",
+    chain_profile: str | None = None,
+    closed_profile: str | None = None,
 ) -> str:
     """Render the status-trigger babysitter /goal for *target* (epic/session).
 
@@ -139,7 +141,11 @@ def render_babysitter_goal(
     continues the lineage instead of re-deriving the same diagnosis from
     scratch.
     """
-    routing = resolve_babysitter_routing(session=session or target)
+    routing = resolve_babysitter_routing(
+        session=session or target,
+        chain_profile=chain_profile,
+        closed_profile=closed_profile,
+    )
     encoded_target = json.dumps(target, ensure_ascii=False)
     context_lines = [
         "- target: " + encoded_target,

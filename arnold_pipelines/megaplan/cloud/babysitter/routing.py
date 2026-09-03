@@ -15,12 +15,18 @@ ROUTING_ENV = "ARNOLD_BABYSITTER_ROUTING"
 CODEX_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_MODEL"
 CODEX_INVESTIGATOR_MODEL_ENV = "ARNOLD_BABYSITTER_CODEX_INVESTIGATOR_MODEL"
 OMP_MODEL_ENV = "ARNOLD_BABYSITTER_OMP_MODEL"
+# These two values are written by the manifest-bound chain launcher.  They are
+# deliberately separate: the chain profile is authoritative workload
+# identity, while the closed profile is an explicit opt-in for the resident
+# fixer.  A session name is only a label and must never select a model.
+CHAIN_PROFILE_ENV = "ARNOLD_BABYSITTER_CHAIN_PROFILE"
+CLOSED_PROFILE_ENV = "ARNOLD_BABYSITTER_CLOSED_PROFILE"
 
 OMP_ROUTING = "omp"
 CODEX_ROUTING = "codex"
 OMP_CONTROLLER_MODEL = "omp:deepseek/deepseek-v4-flash"
 CODEX_CONTROLLER_MODEL = "codex:gpt-5.6-luna"
-CONTINUATION_SESSION_PREFIX = "native-build-forward-c2-bb000694-20260903-r4"
+CONTINUATION_MUSE_PROFILE = "all-muse-spark-openrouter"
 CONTINUATION_MUSE_MODEL = "omp:openrouter/meta/muse-spark-1.3-contributor"
 CONTINUATION_MUSE_THINKING = "high"
 _CONTINUATION_MUSE_INPUT_THINKING = frozenset(
@@ -86,22 +92,76 @@ def resolve_babysitter_routing(
     *,
     session: str | None = None,
     require_explicit_model: bool = False,
+    chain_profile: str | None = None,
+    closed_profile: str | None = None,
+    manifest_identity: Mapping[str, object] | None = None,
 ) -> BabysitterRouting:
-    """Resolve the babysitter route from an explicit, fail-closed toggle."""
+    """Resolve routing from authoritative profile identity and closed config.
+
+    ``session`` is intentionally not consulted for model selection.  Session
+    names are operator-facing labels and are forgeable (and generations
+    change them).  A continuation route requires both the chain's authoritative
+    profile and an explicit closed-fixer declaration.  If either declaration
+    is present but inconsistent, fail closed instead of falling through to the
+    resident default.
+    """
 
     values = os.environ if env is None else env
     session_value = str(session or values.get("ARNOLD_BABYSITTER_SESSION", "")).strip()
-    if session_value.startswith(CONTINUATION_SESSION_PREFIX):
+    manifest_profile = ""
+    if manifest_identity is not None:
+        manifest_profile = str(
+            manifest_identity.get("chain_profile")
+            or manifest_identity.get("profile")
+            or ""
+        ).strip()
+    declared_profiles = [
+        item
+        for item in (chain_profile, manifest_profile)
+        if item is not None and str(item).strip()
+    ]
+    if len({str(item).strip() for item in declared_profiles}) > 1:
+        raise ValueError("manifest and chain profile identities disagree")
+    authoritative_profile = str(
+        chain_profile
+        if chain_profile is not None
+        else manifest_profile or values.get(CHAIN_PROFILE_ENV, "")
+    ).strip()
+    requested_closed_profile = str(
+        closed_profile if closed_profile is not None else values.get(CLOSED_PROFILE_ENV, "")
+    ).strip()
+    if requested_closed_profile and requested_closed_profile != CONTINUATION_MUSE_PROFILE:
+        raise ValueError(
+            f"{CLOSED_PROFILE_ENV} must be {CONTINUATION_MUSE_PROFILE!r}; "
+            f"got {requested_closed_profile!r}"
+        )
+    if authoritative_profile and authoritative_profile != CONTINUATION_MUSE_PROFILE:
+        if requested_closed_profile:
+            raise ValueError(
+                f"closed fixer profile {requested_closed_profile!r} contradicts "
+                f"authoritative chain profile {authoritative_profile!r}"
+            )
+    if requested_closed_profile and not authoritative_profile:
+        raise ValueError(
+            f"{CLOSED_PROFILE_ENV} requires authoritative {CHAIN_PROFILE_ENV}"
+        )
+    continuation_route = authoritative_profile == CONTINUATION_MUSE_PROFILE
+    if continuation_route and requested_closed_profile != CONTINUATION_MUSE_PROFILE:
+        raise ValueError(
+            f"{session_value or 'continuation chain'} requires explicit "
+            f"{CLOSED_PROFILE_ENV}={CONTINUATION_MUSE_PROFILE!r}"
+        )
+    if continuation_route:
         requested_closed_model = str(values.get("ARNOLD_BABYSITTER_MODEL", "")).strip()
         if require_explicit_model and not requested_closed_model:
             raise ValueError(
-                f"{session_value} requires explicit {CONTINUATION_MUSE_MODEL}:high "
+                f"{session_value or 'continuation chain'} requires explicit {CONTINUATION_MUSE_MODEL}:high "
                 "for resident fixer registration"
             )
         selected = str(values.get(ROUTING_ENV, "")).strip().lower()
         if selected and selected not in {OMP_ROUTING, "default", "legacy"}:
             raise ValueError(
-                f"{session_value} is closed to Muse routing; {ROUTING_ENV}="
+                f"{session_value or 'continuation chain'} is closed to Muse routing; {ROUTING_ENV}="
                 f"{selected!r} is not permitted"
             )
         for variable in (
@@ -119,7 +179,7 @@ def resolve_babysitter_routing(
                     or suffix not in _CONTINUATION_MUSE_INPUT_THINKING
                 ):
                     raise ValueError(
-                        f"{session_value} is closed to Muse routing; {variable}="
+                        f"{session_value or 'continuation chain'} is closed to Muse routing; {variable}="
                         f"{requested!r} is not permitted"
                     )
         return BabysitterRouting(

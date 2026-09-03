@@ -249,10 +249,12 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
     run_root = Path(run_root_raw) if run_root_raw else _REPO_ROOT / ".babysitter-runs" / run_id
     routing = resolve_babysitter_routing(
         session=session,
-        require_explicit_model=session.startswith(
-            "native-build-forward-c2-bb000694-20260903-r4"
-        ),
     )
+    if routing.closed and not str(os.environ.get("ARNOLD_BABYSITTER_MODEL", "")).strip():
+        raise ValueError(
+            f"{session} requires explicit {routing.controller_model}:high "
+            "for resident fixer registration"
+        )
     return {
         "session": session,
         "workspace": workspace,

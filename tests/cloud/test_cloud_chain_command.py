@@ -320,7 +320,7 @@ def test_chain_start_command_installs_session_scoped_git_boundary() -> None:
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
         project_dir="/workspace/project",
         engine_dir="/workspace/runtime-candidates/demo",
-        repair_session="native-build-forward-c2-bb000694-20260903-r4",
+        repair_session="native-build-forward-c2-780129da-20260903-r5",
     )
     assert "arnold-launch-boundary" in command
     assert "arnold_materialize_launch_boundary" in command
@@ -328,7 +328,7 @@ def test_chain_start_command_installs_session_scoped_git_boundary() -> None:
         "arnold_materialize_launch_boundary"
     )
     assert "on_box_git_auth_unavailable" not in command
-    assert "native-build-forward-c2-bb000694-20260903-r4" in command
+    assert "native-build-forward-c2-780129da-20260903-r5" in command
 
 
 def test_shared_launch_boundary_reasserts_hostile_hot_env() -> None:
@@ -344,7 +344,9 @@ export GIT_CONFIG_GLOBAL=/hostile/config
 export PYTHONPATH=/hostile/python
 export ARNOLD_BABYSITTER_MODEL=omp:deepseek/deepseek-v4-flash
 export ARNOLD_BABYSITTER_ROUTING=codex
-arnold_materialize_launch_boundary native-build-forward-c2-bb000694-20260903-r4 /tmp /tmp
+    export ARNOLD_BABYSITTER_CHAIN_PROFILE=all-muse-spark-openrouter
+    export ARNOLD_BABYSITTER_CLOSED_PROFILE=all-muse-spark-openrouter
+    arnold_materialize_launch_boundary native-build-forward-c2-780129da-20260903-r5 /tmp /tmp
 printf '%s\\n' "$ARNOLD_CHAIN_GIT_HELPER" "$HOME" "$GIT_CONFIG_GLOBAL" "$PYTHONPATH" "$ARNOLD_BABYSITTER_MODEL" "$ARNOLD_BABYSITTER_ROUTING"
 """
     result = subprocess.run(
@@ -368,10 +370,10 @@ def test_all_chain_entrypoints_use_shared_post_hot_env_boundary() -> None:
         "/workspace/project/chain.yaml",
         project_dir="/workspace/project",
         engine_dir="/workspace/runtime-candidates/demo",
-        repair_session="native-build-forward-c2-bb000694-20260903-r4",
+        repair_session="native-build-forward-c2-780129da-20260903-r5",
     )
     drive_command = chain_drive._command(
-        session="native-build-forward-c2-bb000694-20260903-r4",
+        session="native-build-forward-c2-780129da-20260903-r5",
         engine_dir=Path("/workspace/runtime-candidates/demo"),
         interpreter=Path("/workspace/runtime-candidates/demo/.venv/bin/python"),
         spec=Path("/workspace/project/chain.yaml"),
@@ -394,7 +396,9 @@ def test_all_chain_entrypoints_use_shared_post_hot_env_boundary() -> None:
         assert "if arnold_materialize_launch_boundary" in source
 
 
-def test_boundary_failure_preserves_rc_and_never_dispatches(tmp_path: Path) -> None:
+def test_boundary_failure_preserves_rc_and_never_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     boundary = tmp_path / "arnold-launch-boundary"
     boundary.write_text(
         "arnold_materialize_launch_boundary() { return 78; }\n",
@@ -402,8 +406,11 @@ def test_boundary_failure_preserves_rc_and_never_dispatches(tmp_path: Path) -> N
     )
     boundary.chmod(0o755)
 
+    import arnold_pipelines.megaplan.cloud.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_LAUNCH_BOUNDARY_PATH", str(boundary))
     cli_prefix = _launch_boundary_prefix(
-        session="native-build-forward-c2-bb000694-20260903-r4",
+        session="native-build-forward-c2-780129da-20260903-r5",
         engine_var=shlex.quote(str(tmp_path)),
     )
     cli_result = subprocess.run(
@@ -418,7 +425,7 @@ def test_boundary_failure_preserves_rc_and_never_dispatches(tmp_path: Path) -> N
     from arnold_pipelines.megaplan.cloud import chain_drive
 
     drive_command = chain_drive._command(
-        session="native-build-forward-c2-bb000694-20260903-r4",
+        session="native-build-forward-c2-780129da-20260903-r5",
         engine_dir=tmp_path,
         interpreter=Path("/bin/echo"),
         spec=tmp_path / "chain.yaml",
@@ -436,13 +443,14 @@ def test_boundary_failure_preserves_rc_and_never_dispatches(tmp_path: Path) -> N
     assert "arnold_pipelines.megaplan" not in drive_result.stdout
 
 
-def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
+def test_closed_profile_route_uses_authoritative_profile_not_session_generation() -> None:
     from arnold_pipelines.megaplan.cloud.cli import _validate_continuation_muse_routes
 
     good = {
         "milestones": [
             {
                 "label": "c2",
+                "profile": "all-muse-spark-openrouter",
                 "resolved_phase_chains": {
                     "plan": [
                         "omp:openrouter/meta/muse-spark-1.3-contributor"
@@ -452,10 +460,11 @@ def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
         ]
     }
     assert _validate_continuation_muse_routes(
-        good, session="native-build-forward-c2-bb000694-20260903-r4"
+        good, session="native-build-forward-c2-780129da-20260903-r5"
     ) == {
         "status": "ok",
         "model": "omp:openrouter/meta/muse-spark-1.3-contributor",
+        "profile": "all-muse-spark-openrouter",
         "thinking": "high",
         "fallback": False,
     }
@@ -463,6 +472,7 @@ def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
         "milestones": [
             {
                 "label": "c2",
+                "profile": "all-muse-spark-openrouter",
                 "resolved_phase_chains": {
                     "plan": ["omp:deepseek/deepseek-v4-flash", "codex"]
                 },
@@ -471,9 +481,25 @@ def test_r4_closed_route_preflight_rejects_fallback_or_wrong_model() -> None:
     }
     with pytest.raises(CliError) as caught:
         _validate_continuation_muse_routes(
-            bad, session="native-build-forward-c2-bb000694-20260903-r4"
+            bad, session="native-build-forward-c2-future-r99"
         )
     assert caught.value.code == "closed_profile_route_mismatch"
+
+
+def test_tmux_chain_projects_closed_profile_into_watchdog_environment() -> None:
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/chain.yaml",
+        session_name="native-build-forward-c2-future-generation-r99",
+        marker_payload={
+            "session": "native-build-forward-c2-future-generation-r99",
+            "babysitter_chain_profile": "all-muse-spark-openrouter",
+            "babysitter_closed_profile": "all-muse-spark-openrouter",
+        },
+    )
+    assert "ARNOLD_BABYSITTER_CHAIN_PROFILE=all-muse-spark-openrouter" in command
+    assert "ARNOLD_BABYSITTER_CLOSED_PROFILE=all-muse-spark-openrouter" in command
+    assert "bb000694" not in command
 
 
 def test_r4_omp_capability_probe_returns_sanitized_evidence() -> None:
