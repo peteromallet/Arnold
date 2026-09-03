@@ -309,6 +309,62 @@ def test_ensure_reconcile_milestone_respects_opt_out(tmp_path: Path, monkeypatch
     ).exists()
 
 
+def test_run_chain_rejects_implicit_reconcile_for_protected_spec_without_writes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A source-bound legacy spec must not dirty its own tracked precondition."""
+    monkeypatch.delenv("ARNOLD_RUNTIME_MANIFEST", raising=False)
+    monkeypatch.delenv("ARNOLD_RUNTIME_POLICY", raising=False)
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    root = _git_repo(tmp_path / "repo")
+    spec_path = _initiative(root)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["launch_preconditions"] = [
+        {
+            "name": "chain spec is committed",
+            "kind": "git_tracked",
+            "path": ".megaplan/initiatives/demo/chain.yaml",
+        }
+    ]
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(root, "add", ".")
+    _git(
+        root,
+        "-c", "user.name=Test", "-c", "user.email=test@example.com",
+        "commit", "-m", "guarded chain",
+    )
+    before = spec_path.read_bytes()
+    reconcile_brief = spec_path.parent / "briefs" / "reconcile.md"
+
+    with pytest.raises(CliError) as excinfo:
+        chain_module.run_chain(spec_path, root, writer=lambda _msg: None)
+
+    assert excinfo.value.code == "reconcile_requires_committed_spec"
+    assert spec_path.read_bytes() == before
+    assert not reconcile_brief.exists()
+
+
+def test_protected_reconcile_helper_allows_explicit_opt_out_and_precommitted_reconcile(
+    tmp_path: Path,
+) -> None:
+    root = _git_repo(tmp_path / "repo")
+    spec_path = _initiative(root)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["reconciliation"] = {"enabled": False}
+    raw["launch_preconditions"] = [
+        {
+            "name": "chain spec is committed",
+            "kind": "git_tracked",
+            "path": ".megaplan/initiatives/demo/chain.yaml",
+        }
+    ]
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    spec = load_spec(spec_path)
+    assert not chain_module._reconcile_would_mutate_protected_spec(
+        spec, root=root, spec_path=spec_path
+    )
+
+
 def test_ensure_reconcile_milestone_skips_final_conformance_gate_chains(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -1,6 +1,8 @@
 base_branch: main
 anchors:
   north_star: NORTHSTAR.md
+reconciliation:
+  enabled: false
 launch_preconditions:
 - name: continuation chain specification is committed
   kind: git_tracked

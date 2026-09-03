@@ -7562,6 +7562,47 @@ def ensure_reconcile_milestone(
     return chain_spec.load_spec(spec_path)
 
 
+def _reconcile_would_mutate_protected_spec(
+    spec: ChainSpec,
+    *,
+    root: Path,
+    spec_path: Path,
+) -> bool:
+    """Return whether implicit reconciliation would dirty a protected input.
+
+    ``ensure_reconcile_milestone`` is intentionally allowed to materialize the
+    generated milestone for legacy chains. A source-bound launch is a
+    different contract, however: a ``git_tracked`` precondition may protect
+    the chain spec (or its initiative directory) and requires that input to
+    remain byte-identical and clean. Letting the materializer run first would
+    make that precondition fail on the engine's own write. Explicit opt-out
+    and already-materialized reconciliation are handled here, so the caller
+    only rejects the conflicting implicit case.
+    """
+    if not spec.reconciliation.get("enabled", True):
+        return False
+    if any(milestone.kind == "reconcile" for milestone in spec.milestones):
+        return False
+    root = root.expanduser().resolve()
+    spec_path = spec_path.expanduser().resolve()
+    for precondition in spec.launch_preconditions:
+        if precondition.kind != "git_tracked" or precondition.path is None:
+            continue
+        target = Path(precondition.path).expanduser()
+        if not target.is_absolute():
+            target = root / target
+        target = target.resolve(strict=False)
+        if target == spec_path:
+            return True
+        if target.is_dir():
+            try:
+                spec_path.relative_to(target)
+            except ValueError:
+                continue
+            return True
+    return False
+
+
 def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
     """Resolve the cloud-session marker for the chain's session.
 
@@ -7684,6 +7725,17 @@ def run_chain(
     # identity binding. Manifest present+valid passes; a manifestless session
     # passes only with a valid unexpired allow_manifestless permit; else block.
     chain_spec.require_runtime_manifest_permit(spec_path)
+    if _reconcile_would_mutate_protected_spec(
+        spec,
+        root=root,
+        spec_path=spec_path,
+    ):
+        raise CliError(
+            "reconcile_requires_committed_spec",
+            "implicit reconciliation would mutate a chain spec protected by "
+            "a git_tracked launch precondition; commit reconciliation explicitly "
+            "or set reconciliation.enabled: false",
+        )
     # P6: materialize the generated ``kind: reconcile`` terminal milestone for
     # legacy chains BEFORE any state load or execution identity binding, so
     # the loaded state and the bound identity both see the final milestone.
