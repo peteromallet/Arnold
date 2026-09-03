@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -516,6 +517,57 @@ def test_retry_after_requires_terminal_no_effect_predecessor(tmp_path: Path, mon
     )
     with pytest.raises(CliError, match="terminal aborted_no_effect"):
         recovery.recover_failed_prechain(f["spec"], f["project"], **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("disposition", "recovered", "terminal disposition"),
+        ("held_event_hash", "0" * 64, "hold linkage is contradictory"),
+        ("causation_id", "foreign-event", "hold linkage is contradictory"),
+    ],
+)
+def test_retry_after_rejects_contradictory_terminal_or_foreign_hold_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    reconcile_kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="reconcile before contradiction test", actor="operator",
+    )
+    recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **reconcile_kwargs)
+
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlJournal
+    original_replay = ChainControlJournal.replay_strict
+
+    def tampered_replay(self: object) -> dict[str, object]:
+        replay = deepcopy(original_replay(self))
+        terminal = replay["operations"][f["operation_id"]]
+        if field in {"disposition", "held_event_hash"}:
+            terminal["payload"][field] = value
+        else:
+            terminal[field] = value
+        return replay
+
+    monkeypatch.setattr(ChainControlJournal, "replay_strict", tampered_replay)
+    retry_kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], staged_runtime_path=tmp_path / "staged-retry",
+        custody_dir=f["custody"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], reviewed_new_sha=f["new"],
+        retry_after_operation_id=f["operation_id"], reason="reject contradictory predecessor", actor="operator",
+    )
+    with pytest.raises(CliError, match=message):
+        recovery.recover_failed_prechain(f["spec"], f["project"], **retry_kwargs)
 
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "directory"])

@@ -558,10 +558,43 @@ def recover_failed_prechain(
             or predecessor_events[-1].get("event_hash") != predecessor.get("event_hash")
         ):
             raise _refuse("retry predecessor must be a terminal aborted_no_effect hold reconciliation")
+        predecessor_payload = predecessor.get("payload") if isinstance(predecessor.get("payload"), Mapping) else {}
+        if predecessor_payload.get("disposition") != "aborted_no_effect":
+            raise _refuse("retry predecessor terminal disposition is not aborted_no_effect")
+        hold_events = [
+            event for event in predecessor_events
+            if event.get("event_kind") == "chain_control.hold"
+        ]
+        claimed_events = [
+            event for event in predecessor_events
+            if event.get("event_kind") == "chain_control.claimed"
+        ]
+        intent_events = [
+            event for event in predecessor_events
+            if event.get("event_kind") == "chain_control.intent"
+        ]
+        if len(hold_events) != 1 or len(claimed_events) != 1 or len(intent_events) != 1:
+            raise _refuse("retry predecessor hold linkage is missing or ambiguous")
+        hold_event = hold_events[0]
+        claimed_event = claimed_events[0]
+        intent_event = intent_events[0]
+        intent_payload = intent_event.get("payload") if isinstance(intent_event.get("payload"), Mapping) else {}
+        if (
+            predecessor_payload.get("held_operation_id") != retry_after
+            or predecessor_payload.get("held_event_hash") != hold_event.get("event_hash")
+            or predecessor_payload.get("held_event_id") != hold_event.get("event_id")
+            or predecessor.get("causation_id") != hold_event.get("event_id")
+            or predecessor.get("correlation_id") != retry_after
+            or hold_event.get("causation_id") != claimed_event.get("event_id")
+            or hold_event.get("correlation_id") != retry_after
+            or claimed_event.get("correlation_id") != retry_after
+            or intent_event.get("intent") != RECOVERY_INTENT
+            or intent_payload.get("intent_kind") != RECOVERY_INTENT
+        ):
+            raise _refuse("retry predecessor hold linkage is contradictory")
         retry_after_event_hash = str(predecessor.get("event_hash") or "").lower()
         if _SHA256.fullmatch(retry_after_event_hash) is None:
             raise _refuse("retry predecessor terminal event hash is invalid")
-        predecessor_payload = predecessor.get("payload") if isinstance(predecessor.get("payload"), Mapping) else {}
         expected_predecessor = {
             "held_operation_id": retry_after,
             "session": expected_session_id,
