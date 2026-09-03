@@ -83,7 +83,7 @@ class AbortedC2AuthorityGuards:
     expected_runtime_identity: Mapping[str, Any]
     expected_hold: Mapping[str, Any]
     expected_operation_rows: tuple[Mapping[str, Any], ...]
-    expected_historical_spec_sha256: str | None = None
+    expected_historical_spec_sha256: str
     expected_runtime_manifest_sha256: str | None = None
     expected_operation_rows_sha256: str | None = None
 
@@ -211,7 +211,13 @@ def _assert_artifact_hashes(root: Path, prefix: list[dict[str, Any]]) -> None:
                 observed = hashlib.sha256(target.read_bytes()).hexdigest()
             except (OSError, ValueError):
                 _fail("artifact_identity_mismatch", "completed artifact is unavailable", path=path_value)
-            _assert_equal(f"completed artifact {path_value}", observed, digest.lower())
+            if observed != digest.lower():
+                _fail(
+                    "artifact_identity_mismatch",
+                    f"completed artifact {path_value} does not match its guard",
+                    expected=digest.lower(),
+                    observed=observed,
+                )
 
 
 def _guard_marker(marker: Mapping[str, Any], guards: CurrentAttemptGuards, spec_path: Path) -> None:
@@ -692,6 +698,30 @@ def _operation_rows_digest(rows: list[Mapping[str, Any]]) -> str:
     return sha256_hex(b"NBF08-OPERATION-ROWS-V1\x00" + canonical_json([dict(row) for row in rows]))
 
 
+def _reject_designated_operation_rows(rows: list[Mapping[str, Any]]) -> None:
+    """Require the admission snapshot to contain no current operation.
+
+    The aborted-C2 contract admits a paused projection only when its nine-row
+    snapshot has no designated current/active row.  These are existing row
+    fields used by operation projections; unknown metadata is preserved and is
+    not interpreted as a new designation vocabulary.
+    """
+    seen_ids: set[str] = set()
+    for row in rows:
+        row_id = row.get("id")
+        if not isinstance(row_id, str) or not row_id.strip() or row_id in seen_ids:
+            _fail("operation_rows_mismatch", "operation-row snapshot has missing or duplicate row ids")
+        seen_ids.add(row_id)
+        lock_version = row.get("lock_version")
+        if not isinstance(lock_version, int) or isinstance(lock_version, bool) or lock_version < 0:
+            _fail("operation_rows_mismatch", "operation-row snapshot has an invalid lock version", row_id=row_id)
+        if any(row.get(field) is True for field in ("current", "is_current", "designated_current")):
+            _fail("operation_rows_mismatch", "operation-row snapshot designates a current operation", row_id=row_id)
+        designation = row.get("designation")
+        if isinstance(designation, str) and designation.strip().lower() in {"current", "active"}:
+            _fail("operation_rows_mismatch", "operation-row snapshot designates a current operation", row_id=row_id)
+
+
 def _aborted_nonchain_guards(
     *,
     spec_path: Path,
@@ -730,6 +760,7 @@ def _aborted_nonchain_guards(
     expected_rows = [dict(row) for row in guards.expected_operation_rows]
     _assert_equal("operation-row projection", [dict(row) for row in operation_rows], expected_rows)
     _assert_equal("operation-row projection digest", _operation_rows_digest(operation_rows), _operation_rows_digest(expected_rows))
+    _reject_designated_operation_rows(operation_rows)
     if plan.get("name") != guards.expected_plan_name:
         _fail("plan_mismatch", "aborted plan name does not match the guard")
     if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
@@ -753,6 +784,7 @@ def _aborted_nonchain_guards(
 
 def _aborted_chain_guard(
     *,
+    root: Path,
     chain_raw: bytes,
     chain: Mapping[str, Any],
     guards: AbortedC2AuthorityGuards,
@@ -769,14 +801,28 @@ def _aborted_chain_guard(
     if len(expected_prefix) != 6 or not isinstance(prefix, list):
         _fail("prefix_mismatch", "exactly six completed records are required")
     _assert_equal("completed prefix", prefix, expected_prefix)
+    try:
+        canonical_labels = [str(item.label) for item in chain_spec.load_spec(spec_path).milestones[:6]]
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        _fail("prefix_mismatch", "chain spec cannot provide the canonical completed prefix", error=str(exc))
+    observed_labels = [item.get("label") for item in prefix]
+    expected_labels = [item.get("label") for item in expected_prefix]
+    _assert_equal("canonical completed labels", observed_labels, canonical_labels)
+    _assert_equal("guard canonical completed labels", expected_labels, canonical_labels)
+    _assert_artifact_hashes(root, prefix)
     chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    _assert_equal("chain session", chain.get("chain_session"), guards.expected_session_id)
+    _assert_equal("persisted chain id", chain_meta.get("chain_id"), chain_id_for_spec(spec_path))
     _assert_equal("chain pause authority", chain_meta.get("operator_pause"), marker.get("operator_pause"))
     _assert_equal("source binding", chain_meta.get("project_source_binding"), dict(guards.expected_source_binding))
     binding = chain_meta.get("execution_binding") if isinstance(chain_meta.get("execution_binding"), Mapping) else {}
     launched = binding.get("launched_identity") if isinstance(binding.get("launched_identity"), Mapping) else {}
     _assert_equal("runtime identity", launched.get("runtime"), dict(guards.expected_runtime_identity))
-    if guards.expected_historical_spec_sha256 is not None:
-        _assert_equal("historical spec SHA-256", chain_meta.get("chain_spec_sha256"), guards.expected_historical_spec_sha256)
+    _assert_equal(
+        "historical spec SHA-256",
+        chain_meta.get("chain_spec_sha256"),
+        _sha(guards.expected_historical_spec_sha256, "historical spec SHA-256"),
+    )
     return state_digest_for(chain)
 
 
@@ -825,11 +871,17 @@ def reconcile_aborted_c2_authority(
         _fail("invalid_guard", "aborted plan name is required")
     if len(guards.expected_completed_prefix) != 6 or len(guards.expected_operation_rows) != 9:
         _fail("invalid_guard", "exact six-prefix and nine operation rows are required")
+    if expected_operation_rows_path is None:
+        _fail("missing_guard", "a stabilized operation-row snapshot path is required")
     spec_path = spec_path.resolve(strict=False)
     project_dir = project_dir.resolve(strict=False)
     marker_path = marker_path.resolve(strict=False)
     aborted_plan_path = aborted_plan_path.resolve(strict=False)
-    for path in (spec_path, marker_path, aborted_plan_path):
+    expected_operation_rows_path = expected_operation_rows_path.resolve(strict=False) if expected_operation_rows_path is not None else None
+    runtime_manifest_path = runtime_manifest_path.resolve(strict=False) if runtime_manifest_path is not None else None
+    for path in (spec_path, marker_path, aborted_plan_path, expected_operation_rows_path, runtime_manifest_path):
+        if path is None:
+            continue
         try:
             path.relative_to(project_dir)
         except ValueError:
@@ -885,16 +937,45 @@ def reconcile_aborted_c2_authority(
     journal = journal_for(project_dir)
     replay = journal.replay_strict()
     existing = replay["operations"].get(operation_id)
+    same_operation_events = [
+        event for event in replay.get("accepted", [])
+        if event.get("chain_id") == chain_id and event.get("operation_id") == operation_id
+    ]
     if existing is not None and existing.get("event_kind") == ABORTED_ADMISSION_KIND:
         payload = existing.get("payload") if isinstance(existing.get("payload"), Mapping) else {}
         effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+        _assert_equal("committed guard digest", (effect.get("admission") or {}).get("guard_digest"), guard_digest)
+        _assert_equal("committed historical spec SHA-256", effect.get("historical_spec_sha256"), _sha(guards.expected_historical_spec_sha256, "historical spec SHA-256"))
         post_digest = effect.get("post_chain_digest")
         _, current = _read_json(chain_path, "chain state")
         _assert_equal("committed chain state", state_digest_for(current), post_digest)
         _assert_equal("aborted plan bytes", hashlib.sha256(plan_raw).hexdigest(), effect.get("plan_state_sha256"))
         return _replay(journal, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor, state_paths=[chain_path, marker_path, spec_path])
-    incomplete = replay.get("operations", {}).get(operation_id)
-    if incomplete is not None and incomplete.get("event_kind") == "chain_control.intent":
+    admission_meta = (chain.get("metadata") or {}).get("aborted_c2_authority_admission") if isinstance(chain.get("metadata"), Mapping) else None
+    if admission_meta is not None and not same_operation_events:
+        _fail("journal_mismatch", "a different aborted-C2 admission is already recorded for this chain")
+    if not same_operation_events:
+        _aborted_chain_guard(
+            root=project_dir, chain_raw=chain_raw, chain=chain, guards=guards, spec_path=spec_path, marker=marker
+        )
+        if any(event.get("chain_id") == chain_id for event in replay.get("accepted", [])):
+            _fail("journal_mismatch", "aborted-C2 admission requires an unbound chain-control journal projection")
+    incomplete = next(
+        (event for event in reversed(same_operation_events) if event.get("event_kind") == "chain_control.intent"),
+        None,
+    )
+    same_operation_genesis = any(event.get("event_kind") == "chain_control.genesis_accepted" for event in same_operation_events)
+    for event in same_operation_events:
+        if event.get("event_kind") == "chain_control.genesis_accepted":
+            payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+            _assert_equal("genesis operation identity", payload.get("authority_operation_id"), operation_id)
+            _assert_equal("genesis guard digest", payload.get("guard_digest"), guard_digest)
+        elif event.get("event_kind") == "chain_control.intent":
+            payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+            effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+            admission = effect.get("admission") if isinstance(effect.get("admission"), Mapping) else {}
+            _assert_equal("intent guard digest", admission.get("guard_digest"), guard_digest)
+    if incomplete is not None:
         context = incomplete.get("payload") if isinstance(incomplete.get("payload"), Mapping) else {}
         effect = context.get("effect") if isinstance(context.get("effect"), Mapping) else {}
         post_chain = effect.get("post_chain")
@@ -929,9 +1010,15 @@ def reconcile_aborted_c2_authority(
         if existing is not None and existing.get("event_kind") == ABORTED_ADMISSION_KIND:
             payload = existing.get("payload") if isinstance(existing.get("payload"), Mapping) else {}
             effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+            _assert_equal("locked committed guard digest", (effect.get("admission") or {}).get("guard_digest"), guard_digest)
+            _assert_equal("locked committed historical spec SHA-256", effect.get("historical_spec_sha256"), _sha(guards.expected_historical_spec_sha256, "historical spec SHA-256"))
             _assert_equal("locked committed chain", locked_pre_digest, effect.get("post_chain_digest"))
             replay_event = _append_replay_under_lock(journal, txn, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor)
             return {"outcome": "replay", "receipt": dict(existing), "replay_event": replay_event, "external_effect": False}
+        locked_replay = journal.replay_strict()
+        locked_admission_meta = (locked_chain.get("metadata") or {}).get("aborted_c2_authority_admission") if isinstance(locked_chain.get("metadata"), Mapping) else None
+        if locked_admission_meta is not None and not (isinstance(locked_admission_meta, Mapping) and locked_admission_meta.get("operation_id") == operation_id):
+            _fail("journal_mismatch", "a different aborted-C2 admission is already recorded for this chain")
         _aborted_nonchain_guards(
             spec_path=spec_path, marker_path=marker_path, plan_path=aborted_plan_path, guards=guards,
             spec_raw=locked_spec_raw, marker_raw=locked_marker_raw, marker=locked_marker,
@@ -948,8 +1035,10 @@ def reconcile_aborted_c2_authority(
                 raise DurabilityUnknown("chain state diverged during aborted-C2 admission")
         else:
             pre_chain_digest = _aborted_chain_guard(
-                chain_raw=locked_chain_raw, chain=locked_chain, guards=guards, spec_path=spec_path, marker=locked_marker
+                root=project_dir, chain_raw=locked_chain_raw, chain=locked_chain, guards=guards, spec_path=spec_path, marker=locked_marker
             )
+            if not same_operation_genesis and any(event.get("chain_id") == chain_id for event in locked_replay.get("accepted", [])):
+                _fail("journal_mismatch", "aborted-C2 admission requires an unbound chain-control journal projection")
             admission = {
                 "schema": ABORTED_ADMISSION_SCHEMA,
                 "operation_id": operation_id,
@@ -972,20 +1061,22 @@ def reconcile_aborted_c2_authority(
                 "plan_state_sha256": hashlib.sha256(locked_plan_raw).hexdigest(),
                 "marker_sha256": hashlib.sha256(locked_marker_raw).hexdigest(),
                 "spec_sha256": hashlib.sha256(locked_spec_raw).hexdigest(),
+                "historical_spec_sha256": _sha(guards.expected_historical_spec_sha256, "historical spec SHA-256"),
                 "operation_rows_digest": _operation_rows_digest(locked_rows),
                 "post_chain": post_chain,
                 "admission": admission,
             }
-            if not journal.is_bound(chain_id):
-                journal_state = journal.replay_strict()
+            if not same_operation_genesis and not any(event.get("chain_id") == chain_id for event in locked_replay.get("accepted", [])):
                 journal.append_under_lock(
                     txn, event_kind="chain_control.genesis_accepted", chain_id=chain_id,
-                    operation_id="genesis-" + chain_id, causation_id="genesis-" + chain_id,
+                    operation_id=operation_id, causation_id=operation_id,
                     correlation_id=operation_id,
                     payload={
                         "authority_mode": "file", "schema_version": "nbf08-chain-control-v1",
-                        "prefix_tip_seq": journal_state["nbf01_prefix_tip"],
-                        "prefix_digest": journal_state["nbf01_prefix_digest"],
+                        "prefix_tip_seq": locked_replay["nbf01_prefix_tip"],
+                        "prefix_digest": locked_replay["nbf01_prefix_digest"],
+                        "authority_operation_id": operation_id,
+                        "guard_digest": guard_digest,
                     },
                     semantic_effect="no_change", claim_class="required", actor={"id": actor, "class": "operator"},
                     outcome="committed", expected_cursor=6, expected_revision=guards.expected_chain_revision,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from dataclasses import replace
 import pytest
 
 from arnold_pipelines.megaplan.chain import current_attempt
+import arnold_pipelines.megaplan.chain as chain_cli
 def _write_json(path: Path, value: dict[str, object]) -> bytes:
     raw = (json.dumps(value, indent=2) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,6 +29,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[dict[str,
     marker_path = tmp_path / "session-marker.json"
     chain_id = "chain-c2-test"
     session = "session-c2"
+    historical_spec_sha256 = hashlib.sha256(b"historical-spec").hexdigest()
     pause = {"active": True, "reason": "operator-hold", "session": session}
     source = {"branch": "docs/nbf-epic-artifact-update-20260903", "sha": "b0"}
     runtime = {"container": "runtime-c2", "commit": "b0"}
@@ -34,6 +37,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[dict[str,
     chain = {
         "metadata": {
             "chain_id": chain_id,
+            "chain_spec_sha256": historical_spec_sha256,
             "operator_pause": pause,
             "project_source_binding": source,
             "execution_binding": {"launched_identity": {"runtime": runtime}},
@@ -363,7 +367,7 @@ def _aborted_fixture(
         expected_runtime_identity=args["guards"].expected_runtime_identity,
         expected_hold=args["guards"].expected_hold,
         expected_operation_rows=tuple(rows),
-        expected_historical_spec_sha256=None,
+        expected_historical_spec_sha256=hashlib.sha256(b"historical-spec").hexdigest(),
         expected_operation_rows_sha256=hashlib.sha256(rows_raw).hexdigest(),
     )
     args = {
@@ -400,6 +404,11 @@ def test_aborted_authority_admission_preserves_history_and_replays(
     events = current_attempt.journal_for(tmp_path).replay_strict()["accepted"]
     assert [event["event_kind"] for event in events].count(current_attempt.ABORTED_ADMISSION_KIND) == 1
     assert [event["event_kind"] for event in events].count("chain_control.replay") == 1
+    genesis = next(event for event in events if event["event_kind"] == "chain_control.genesis_accepted")
+    terminal = next(event for event in events if event["event_kind"] == current_attempt.ABORTED_ADMISSION_KIND)
+    assert genesis["operation_id"] == terminal["operation_id"]
+    assert genesis["payload"]["guard_digest"] == terminal["payload"]["effect"]["admission"]["guard_digest"]
+    assert terminal["payload"]["effect"]["historical_spec_sha256"] == args["guards"].expected_historical_spec_sha256
 
 
 @pytest.mark.parametrize("crash_stage", ["after_genesis", "after_intent", "after_chain_cas"])
@@ -442,3 +451,179 @@ def test_aborted_authority_admission_two_callers_commit_once(
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _index: current_attempt.reconcile_aborted_c2_authority(**args), range(2)))
     assert sorted(result["outcome"] for result in results) == ["committed", "replay"]
+
+
+def test_aborted_authority_admission_rejects_second_identity_after_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, paths = _aborted_fixture(monkeypatch, tmp_path)
+    current_attempt.reconcile_aborted_c2_authority(**args)
+    chain_raw = paths["chain_path"].read_bytes()
+    rebound = replace(
+        args["guards"],
+        expected_chain_state_sha256=hashlib.sha256(chain_raw).hexdigest(),
+        expected_chain_revision=5,
+    )
+    args["guards"] = rebound
+    events_before = current_attempt.journal_for(tmp_path).ledger.events_path.read_bytes()
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "journal_mismatch"
+    assert current_attempt.journal_for(tmp_path).ledger.events_path.read_bytes() == events_before
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda rows: rows.__setitem__(0, {**rows[0], "id": rows[1]["id"]}),
+        lambda rows: rows[0].__setitem__("current", True),
+        lambda rows: rows[0].__setitem__("lock_version", -1),
+    ],
+)
+def test_aborted_authority_admission_rejects_invalid_operation_projection_without_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutator
+) -> None:
+    args, paths = _aborted_fixture(monkeypatch, tmp_path)
+    rows = json.loads(paths["rows_path"].read_text())["operations"]
+    mutator(rows)
+    rows_raw = _write_json(paths["rows_path"], {"operations": rows})
+    args["guards"] = replace(
+        args["guards"],
+        expected_operation_rows=tuple(rows),
+        expected_operation_rows_sha256=hashlib.sha256(rows_raw).hexdigest(),
+    )
+    events_path = current_attempt.journal_for(tmp_path).ledger.events_path
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "operation_rows_mismatch"
+    assert not events_path.exists()
+
+
+def test_aborted_authority_admission_rejects_prebound_journal_without_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, paths = _aborted_fixture(monkeypatch, tmp_path)
+    journal = current_attempt.journal_for(tmp_path)
+    chain_id = current_attempt.chain_id_for_spec(args["spec_path"])
+    with journal.transaction(chain_ids=[chain_id], operation_id="prior", actor={"id": "test"}) as txn:
+        journal.append_under_lock(
+            txn,
+            event_kind="chain_control.genesis_accepted",
+            chain_id=chain_id,
+            operation_id="prior",
+            causation_id="prior",
+            correlation_id="prior",
+            payload={"authority_mode": "file", "schema_version": "nbf08-chain-control-v1", "prefix_tip_seq": -1, "prefix_digest": "0" * 64},
+            semantic_effect="no_change",
+            claim_class="required",
+            actor={"id": "test", "class": "operator"},
+            outcome="committed",
+            expected_cursor=6,
+            expected_revision=4,
+            source_identity=args["guards"].expected_source_binding,
+            spec_identity=str(args["spec_path"]),
+        )
+    before = journal.ledger.events_path.read_bytes()
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "journal_mismatch"
+    assert journal.ledger.events_path.read_bytes() == before
+
+
+def test_aborted_authority_admission_rejects_predecessor_artifact_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, paths = _aborted_fixture(monkeypatch, tmp_path)
+    artifact = tmp_path / "prefix-s0.receipt"
+    artifact.write_text("original\n", encoding="utf-8")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    chain = json.loads(paths["chain_path"].read_text())
+    chain["completed"][0]["artifacts"] = [{"path": artifact.name, "sha256": digest}]
+    chain_raw = _write_json(paths["chain_path"], chain)
+    args["guards"] = replace(
+        args["guards"],
+        expected_chain_state_sha256=hashlib.sha256(chain_raw).hexdigest(),
+        expected_completed_prefix=tuple(chain["completed"]),
+    )
+    artifact.write_text("changed\n", encoding="utf-8")
+    events_path = current_attempt.journal_for(tmp_path).ledger.events_path
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "artifact_identity_mismatch"
+    assert not events_path.exists()
+
+
+def test_reconcile_aborted_c2_authority_cli_parser_exposes_typed_guard_tuple() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_cli.build_chain_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "chain", "reconcile-aborted-c2-authority", "--spec", "chain.yaml",
+            "--marker", "marker.json", "--aborted-plan", "plan.json",
+            "--session-id", "session", "--plan-name", "C2",
+            "--chain-state-sha256", "a" * 64, "--plan-state-sha256", "b" * 64,
+            "--marker-sha256", "c" * 64, "--spec-sha256", "d" * 64,
+            "--historical-spec-sha256", "e" * 64, "--chain-revision", "4",
+            "--completed-prefix", "prefix.json", "--source-binding", "source.json",
+            "--runtime-identity", "runtime.json", "--hold", "hold.json",
+            "--operation-rows", "rows.json", "--operation-rows-sha256", "f" * 64,
+            "--reason", "admit",
+        ]
+    )
+    assert args.chain_action == "reconcile-aborted-c2-authority"
+    assert args.historical_spec_sha256 == "e" * 64
+    assert args.chain_revision == 4
+
+
+def test_reconcile_aborted_c2_authority_cli_dispatches_complete_tuple(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    chain_cli.build_chain_parser(subparsers)
+    spec = tmp_path / "chain.yaml"
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    marker = tmp_path / "marker.json"
+    plan = tmp_path / "plan.json"
+    prefix = tmp_path / "prefix.json"
+    source = tmp_path / "source.json"
+    runtime = tmp_path / "runtime.json"
+    hold = tmp_path / "hold.json"
+    rows = tmp_path / "rows.json"
+    for path, value in (
+        (marker, {"should_run": False}),
+        (plan, {"name": "C2"}),
+        (prefix, [{"label": f"S{i}"} for i in range(6)]),
+        (source, {"branch": "docs", "sha": "b0"}),
+        (runtime, {"container": "runtime"}),
+        (hold, {"active": True}),
+        (rows, [{"id": f"row-{i}", "lock_version": i} for i in range(9)]),
+    ):
+        path.write_text(json.dumps(value), encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    def fake_reconcile(**kwargs):
+        observed.update(kwargs)
+        return {"outcome": "committed"}
+
+    monkeypatch.setattr(current_attempt, "reconcile_aborted_c2_authority", fake_reconcile)
+    args = parser.parse_args(
+        [
+            "chain", "reconcile-aborted-c2-authority", "--spec", str(spec), "--project-dir", str(tmp_path),
+            "--marker", str(marker), "--aborted-plan", str(plan), "--session-id", "session", "--plan-name", "C2",
+            "--chain-state-sha256", "a" * 64, "--plan-state-sha256", "b" * 64, "--marker-sha256", "c" * 64,
+            "--spec-sha256", "d" * 64, "--historical-spec-sha256", "e" * 64, "--chain-revision", "4",
+            "--completed-prefix", str(prefix), "--source-binding", str(source), "--runtime-identity", str(runtime),
+            "--hold", str(hold), "--operation-rows", str(rows), "--operation-rows-sha256", "f" * 64,
+            "--reason", "admit", "--actor", "tester",
+        ]
+    )
+    assert chain_cli.run_chain_cli(tmp_path, args) == 0
+    assert observed["project_dir"] == tmp_path.resolve()
+    guards = observed["guards"]
+    assert isinstance(guards, current_attempt.AbortedC2AuthorityGuards)
+    assert guards.expected_historical_spec_sha256 == "e" * 64
+    assert len(guards.expected_completed_prefix) == 6
+    assert len(guards.expected_operation_rows) == 9
+    assert capsys.readouterr().out

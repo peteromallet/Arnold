@@ -11205,6 +11205,34 @@ def build_chain_parser(subparsers: Any) -> None:
     reconcile_source_parser.add_argument("--authoritative-source", required=True)
     reconcile_source_parser.add_argument("--reason", required=True)
 
+    reconcile_aborted_parser = chain_sub.add_parser(
+        "reconcile-aborted-c2-authority",
+        help="Admit one exact paused, null-plan aborted C2 authority projection without dispatch",
+    )
+    reconcile_aborted_parser.add_argument("--spec", required=True)
+    reconcile_aborted_parser.add_argument("--project-dir", required=False)
+    reconcile_aborted_parser.add_argument("--marker", required=True)
+    reconcile_aborted_parser.add_argument("--aborted-plan", required=True)
+    reconcile_aborted_parser.add_argument("--session-id", required=True)
+    reconcile_aborted_parser.add_argument("--plan-name", required=True)
+    reconcile_aborted_parser.add_argument("--chain-state-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--plan-state-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--marker-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--spec-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--historical-spec-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--chain-revision", required=True, type=int)
+    reconcile_aborted_parser.add_argument("--completed-prefix", required=True)
+    reconcile_aborted_parser.add_argument("--source-binding", required=True)
+    reconcile_aborted_parser.add_argument("--runtime-identity", required=True)
+    reconcile_aborted_parser.add_argument("--hold", required=True)
+    reconcile_aborted_parser.add_argument("--operation-rows", required=True)
+    reconcile_aborted_parser.add_argument("--operation-rows-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--runtime-manifest")
+    reconcile_aborted_parser.add_argument("--runtime-manifest-sha256")
+    reconcile_aborted_parser.add_argument("--reason", required=True)
+    reconcile_aborted_parser.add_argument("--actor", default="operator")
+    reconcile_aborted_parser.add_argument("--operation-id")
+
     rebind_parser = chain_sub.add_parser(
         "rebind",
         help="Guardedly adopt a content-addressed successor chain without moving its cursor",
@@ -11863,6 +11891,70 @@ def run_chain_cli(
         sys.stderr.write("megaplan chain: --spec is required\n")
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
+
+    def _guard_json(path_arg: str, label: str) -> Any:
+        try:
+            return json.loads(Path(path_arg).expanduser().resolve(strict=True).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CliError("invalid_args", f"{label} JSON is unavailable or malformed: {exc}") from exc
+
+    if action == "reconcile-aborted-c2-authority":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.current_attempt import (
+                AbortedC2AuthorityGuards,
+                reconcile_aborted_c2_authority,
+            )
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+            prefix = _guard_json(args.completed_prefix, "completed-prefix")
+            source = _guard_json(args.source_binding, "source-binding")
+            runtime = _guard_json(args.runtime_identity, "runtime-identity")
+            hold = _guard_json(args.hold, "hold")
+            rows = _guard_json(args.operation_rows, "operation-rows")
+            if not isinstance(prefix, list) or not isinstance(rows, list):
+                raise CliError("invalid_args", "completed-prefix and operation-rows must contain JSON lists")
+            if not all(isinstance(item, Mapping) for item in prefix + rows):
+                raise CliError("invalid_args", "completed-prefix and operation-rows must contain JSON objects")
+            if not isinstance(source, Mapping) or not isinstance(runtime, Mapping) or not isinstance(hold, Mapping):
+                raise CliError("invalid_args", "source-binding, runtime-identity, and hold must contain JSON objects")
+            result = reconcile_aborted_c2_authority(
+                spec_path=spec_path,
+                project_dir=project_root,
+                marker_path=Path(args.marker).expanduser().resolve(),
+                aborted_plan_path=Path(args.aborted_plan).expanduser().resolve(),
+                guards=AbortedC2AuthorityGuards(
+                    expected_session_id=args.session_id,
+                    expected_plan_name=args.plan_name,
+                    expected_chain_state_sha256=args.chain_state_sha256,
+                    expected_plan_state_sha256=args.plan_state_sha256,
+                    expected_marker_sha256=args.marker_sha256,
+                    expected_spec_sha256=args.spec_sha256,
+                    expected_chain_revision=args.chain_revision,
+                    expected_completed_prefix=tuple(dict(item) for item in prefix),
+                    expected_source_binding=dict(source),
+                    expected_runtime_identity=dict(runtime),
+                    expected_hold=dict(hold),
+                    expected_operation_rows=tuple(dict(item) for item in rows),
+                    expected_historical_spec_sha256=args.historical_spec_sha256,
+                    expected_runtime_manifest_sha256=args.runtime_manifest_sha256,
+                    expected_operation_rows_sha256=args.operation_rows_sha256,
+                ),
+                expected_operation_rows_path=Path(args.operation_rows).expanduser().resolve(),
+                runtime_manifest_path=(Path(args.runtime_manifest).expanduser().resolve() if args.runtime_manifest else None),
+                reason=args.reason,
+                actor=args.actor,
+                operation_id=args.operation_id,
+            )
+        except ChainControlHold as exc:
+            return _emit_error(CliError(exc.code, str(exc), extra=exc.details))
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps({"success": True, "spec": str(spec_path), "action": action, **result}, indent=2) + "\n")
+        return 0
 
     if action in {"pause", "resume"}:
         from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
