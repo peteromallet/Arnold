@@ -1894,6 +1894,7 @@ def test_chain_runtime_probe_uses_reviewed_source_wrapper_over_stale_installed_b
     )
     assert 'CREATE_BIN="$CREATE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"' in command
     assert "/usr/local/bin/arnold-runtime-create" not in command
+    assert "command -v python3" not in command
     result = subprocess.run(
         ["bash", "-c", command], capture_output=True, text=True,
         env={
@@ -1908,6 +1909,43 @@ def test_chain_runtime_probe_uses_reviewed_source_wrapper_over_stale_installed_b
     assert source_marker.read_text() == "source-wrapper"
     assert not stale_marker.exists()
     assert json.loads(result.stdout)["epic_id"] == "demo"
+
+
+    def run_probe(python: str | None) -> subprocess.CompletedProcess[str]:
+        probe = _chain_runtime_probe_and_create_command(
+            slug="demo", manifest_path=str(manifest), runtime_src="/tmp/runtime",
+            manifest_dir=str(manifest_dir), base_repo=str(source), base_ref="main",
+            policy_path=None, runtime_python=python,
+        )
+        return subprocess.run(
+            ["bash", "-c", probe], capture_output=True, text=True,
+            env={
+                **os.environ,
+                "PATH": f"{stale_bin}:{os.environ['PATH']}",
+                "SOURCE_MARKER": str(source_marker),
+                "PYTHONPATH": str(tmp_path / "missing-ambient-python"),
+            },
+            check=False,
+        )
+
+    for dirty_path, staged in (
+        (source / "arnold_pipelines" / "dirty.py", False),
+        (source / "arnold_pipelines" / "dirty.py", True),
+        (source / "untracked.txt", False),
+    ):
+        dirty_path.write_text("dirty\n", encoding="utf-8")
+        if staged:
+            subprocess.run(["git", "-C", str(source), "add", str(dirty_path)], check=True)
+        dirty_result = run_probe(sys.executable)
+        assert dirty_result.returncode == 78
+        assert "chain_runtime_source_dirty" in dirty_result.stderr
+        subprocess.run(["git", "-C", str(source), "reset", "--hard", "-q"], check=True)
+        subprocess.run(["git", "-C", str(source), "clean", "-fdq"], check=True)
+
+    for missing_python in (None, str(tmp_path / "missing-python")):
+        interpreter_result = run_probe(missing_python)
+        assert interpreter_result.returncode == 78
+        assert "chain_runtime_wrapper_interpreter_unavailable" in interpreter_result.stderr
 
 
 def test_chain_runtime_probe_pins_canonical_origin_and_partial_recovery_guards() -> None:

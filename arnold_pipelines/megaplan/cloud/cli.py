@@ -4271,17 +4271,20 @@ def _chain_runtime_probe_and_create_command(
     # freshness.  The configured megaplan source checkout is the authority;
     # the remote command verifies its exact ref, wrapper blob, and import root
     # before invoking anything that can create state.
+    # Runtime creation must never discover an interpreter from PATH: an image
+    # can carry a stale Python alongside the reviewed source checkout.  Cloud
+    # config therefore has to provide an absolute executable explicitly.
     python_assignment = (
         f"PYTHON_BIN={shlex.quote(runtime_python)}"
         if runtime_python
-        else 'PYTHON_BIN="$(command -v python3 2>/dev/null || true)"'
+        else 'PYTHON_BIN=""'
     )
     source_guard = "\n".join(
         [
             f'CREATE_SOURCE={shlex.quote(base_repo)}',
             'CREATE_BIN="$CREATE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
             f"{python_assignment}",
-            'if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then echo "chain_runtime_wrapper_interpreter_unavailable: reviewed source interpreter is not executable" >&2; exit 78; fi',
+            'if [ -z "$PYTHON_BIN" ] || [ "' + "${PYTHON_BIN#/}" + '" = "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then echo "chain_runtime_wrapper_interpreter_unavailable: cloud megaplan.runtime_python must be an absolute executable" >&2; exit 78; fi',
             'SOURCE_ROOT="$(git -C "$CREATE_SOURCE" rev-parse --show-toplevel 2>/dev/null || true)"',
             'if [ -z "$SOURCE_ROOT" ] || [ ! -x "$CREATE_BIN" ]; then echo "chain_runtime_wrapper_unavailable: configured source wrapper is missing or unreadable" >&2; exit 78; fi',
             'SOURCE_HEAD="$(git -C "$CREATE_SOURCE" rev-parse --verify "$BASE_REF^{commit}" 2>/dev/null || true)"',
@@ -4291,6 +4294,8 @@ def _chain_runtime_probe_and_create_command(
             'WRAPPER_BLOB="$(git -C "$CREATE_SOURCE" rev-parse --verify "$SOURCE_HEAD:arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create" 2>/dev/null || true)"',
             'WRAPPER_DIGEST="$(git -C "$CREATE_SOURCE" hash-object "$CREATE_BIN" 2>/dev/null || true)"',
             'if [ -z "$SOURCE_TREE" ] || [ -z "$WRAPPER_BLOB" ] || [ "$WRAPPER_BLOB" != "$WRAPPER_DIGEST" ]; then echo "chain_runtime_wrapper_identity_mismatch: configured source wrapper differs from its reviewed commit" >&2; exit 78; fi',
+            'SOURCE_DIRTY="$(git -C "$CREATE_SOURCE" status --porcelain=v1 --untracked-files=all 2>/dev/null || true)"',
+            'if [ -n "$SOURCE_DIRTY" ]; then echo "chain_runtime_source_dirty: configured reviewed source checkout is not clean" >&2; exit 78; fi',
             'export PYTHONSAFEPATH=1 PYTHONPATH="$CREATE_SOURCE" ARNOLD_RUNTIME_PYTHON="$PYTHON_BIN" ARNOLD_REVIEWED_SOURCE_ROOT="$CREATE_SOURCE" ARNOLD_REVIEWED_SOURCE_REVISION="$SOURCE_HEAD" ARNOLD_REVIEWED_SOURCE_TREE="$SOURCE_TREE"',
             'cd "$CREATE_SOURCE"',
             'if ! env -u PYTHONHOME PYTHONSAFEPATH=1 PYTHONPATH="$CREATE_SOURCE" "$PYTHON_BIN" -P -c \'import arnold_pipelines, pathlib, sys; expected=pathlib.Path(sys.argv[1]).resolve(); actual=pathlib.Path(arnold_pipelines.__file__).resolve().parents[1]; raise SystemExit(0 if actual == expected else 78)\' "$CREATE_SOURCE"; then echo "chain_runtime_source_import_mismatch: reviewed source was not imported" >&2; exit 78; fi',
@@ -4397,6 +4402,16 @@ def _ensure_chain_runtime_binding(
     manifest_path = _chain_runtime_manifest_path(slug)
     runtime_src = _chain_runtime_worktree_path(slug)
     manifest_dir = _chain_runtime_manifest_dir()
+    runtime_python = (launch_spec.megaplan.runtime_python or "").strip()
+    if not runtime_python or not PurePosixPath(runtime_python).is_absolute():
+        raise CliError(
+            "chain_runtime_interpreter_required",
+            (
+                "cloud chain per-epic runtime bootstrap requires an explicit "
+                "absolute megaplan.runtime_python"
+            ),
+            extra={"runtime_python": runtime_python},
+        )
     base_repo = (launch_spec.megaplan.src_path or "/workspace/arnold").rstrip("/")
     base_ref = (launch_spec.megaplan.ref or "").strip() or "main"
     policy_path = _chain_runtime_policy_upload(
@@ -4416,7 +4431,7 @@ def _ensure_chain_runtime_binding(
         chain_state_path=launch_ctx.state_path,
         marker_path=launch_ctx.marker_path,
         session_name=launch_ctx.session_name,
-        runtime_python=launch_spec.megaplan.runtime_python,
+        runtime_python=runtime_python,
     )
     result = provider.ssh_exec(command)
     if result.returncode != 0:
