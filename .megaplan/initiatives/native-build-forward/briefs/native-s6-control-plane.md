@@ -8,6 +8,21 @@ Move product control-plane meaning into source/policy and demote every observer 
 
 Expose every override action, recovery route, auto-drive liveness/retry/cap/escalation, and reconfiguration path; prove reachable arbitration; fence retained route-capable carriers; run GO-3.
 
+## Durable autonomy and operator boundary
+
+This existing milestone is the home for the NBF-specific durable-autonomy
+slice: live-authority liveness versus historical markers (R17), supervisor
+ownership, event-driven milestone progress, typed pause/hold/recovery/resume,
+and removal of duplicate readers/writers and manual polling/checkin choreography.
+It consumes the S2R recovery receipts and preserves the one authoritative
+source/policy control plane. It must leave an active supervisor able to advance
+and recover without manual state surgery; a launch receipt alone is insufficient.
+
+Use the [compact root map](../handoff/launch-and-durability-root-map-20260903.md) for the boundary with C2/S2R. Do not create a
+separate bureaucracy milestone, status ledger, review ceremony, or operator
+project; general-purpose simplifications proven here are handed to Platform
+S2A.
+
 ## Locked decisions
 
 - The controlling milestone definition is `docs/arnold/native-megaplan-build-forward-plan-2026-08-24.md` §5, **Native S6 — Override, recovery, auto-drive, and projection adoption**, as qualified by its `Revision 2026-08-24 (post-reconciliation)`.
@@ -32,6 +47,9 @@ Expose every override action, recovery route, auto-drive liveness/retry/cap/esca
 - Evidence is proportional to the milestone's claims, but authority, effect, and publication cuts may not omit readiness, typed transition, independent post-verification, or rollback evidence.
 - The milestone-specific outputs below are content-addressed, named in the proof map, validator-green at merge HEAD, and consumed by the next milestone.
 - Every override fixture, stale/superseded request negatives, projection forgery/rebuild, reachable arbitration index, route-carrier scan, and GO-3 receipt.
+- Durable-running receipt: real owner/provider/fixer dispatch, active supervisor,
+  observed milestone progress, restart/replay/recovery evidence, fresh live
+  authority, and no manual state surgery dependency.
 
 ## Touchpoints
 

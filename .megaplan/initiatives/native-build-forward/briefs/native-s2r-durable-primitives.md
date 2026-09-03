@@ -8,6 +8,15 @@ Enable the sole completion kernel and durable control primitives under the compl
 
 Reconsume GO-FORMAT/C1/C2; implement typed decisions/outcomes, named exits, bounded loops, keyed reducers, frozen fanout, retry/fallback, suspension/reentry, checkpoints, call-site policy, typed errors, and agentic boundaries; run GO-0.
 
+## Durable recovery slice
+
+After C2's Bucket A launch admission, this milestone owns the Bucket B recovery
+and replay hardening in the [launch/durability root map](../handoff/launch-and-durability-root-map-20260903.md): operation-owned journal deltas (R14),
+held-operation/receipt-effect reconciliation (R15), reviewed-source object
+provenance (R16), one allocator and exact N/N+1 migration (R18), and explicit
+A/B/C recovery topology (R19). Keep these as one durable-primitives slice;
+do not add micro-milestones or a second cleanup ledger.
+
 ## Locked decisions
 
 - The controlling milestone definition is `docs/arnold/native-megaplan-build-forward-plan-2026-08-24.md` §5, **Native S2R — Durable primitives, Custody binding, and GO-0**, as qualified by its `Revision 2026-08-24 (post-reconciliation)`.
@@ -32,6 +41,9 @@ Reconsume GO-FORMAT/C1/C2; implement typed decisions/outcomes, named exits, boun
 - Evidence is proportional to the milestone's claims, but authority, effect, and publication cuts may not omit readiness, typed transition, independent post-verification, or rollback evidence.
 - The milestone-specific outputs below are content-addressed, named in the proof map, validator-green at merge HEAD, and consumed by the next milestone.
 - Generic primitive corpus, reducer/identity proofs, stale fence/epoch negatives, checkpoint restore, GO-0 transition/post-verification receipts, and exactly-one-kernel proof.
+- Crash/replay/hold/migration fixtures prove idempotence, exact owned deltas,
+  unchanged loser hashes, and no manual state surgery dependency. These proofs
+  are required before durable-running promotion even if first dispatch succeeds.
 
 ## Touchpoints
 

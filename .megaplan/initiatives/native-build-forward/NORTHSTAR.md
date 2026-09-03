@@ -2,7 +2,7 @@
 
 ## Destination
 
-Deliver the representation report's two snapshots in strict order: **Native Parity, then Platformization**. Native Parity makes Megaplan's one-workflow-per-file `.pype` source the readable, deterministic, statically validated owner of product topology—loops, branches, fanout, named child workflows, suspension/reentry, policy, effects, and terminals—while generated `WorkflowManifest` artifacts own only admitted runtime and replay coordinates. Platformization starts only after Native S7 and turns the proven, qualified mechanics into independently installable, validated, recomposable, evolvable components that survive an unrelated second consumer.
+Deliver the representation report's two snapshots in strict order: **Native Parity, then Platformization**, and leave the system durably running under its own authority. Native Parity makes Megaplan's one-workflow-per-file `.pype` source the readable, deterministic, statically validated owner of product topology—loops, branches, fanout, named child workflows, suspension/reentry, policy, effects, and terminals—while generated `WorkflowManifest` artifacts own only admitted runtime and replay coordinates. Platformization starts only after Native S7 and turns the proven, qualified mechanics into independently installable, validated, recomposable, evolvable components that survive an unrelated second consumer.
 
 ## Substrate is not conformance
 
@@ -29,3 +29,23 @@ C1/C2 remain non-authoritative shadows. S2R is the sole completion-kernel enable
 ## Completion standard
 
 Every milestone closes with a content-addressed proof map and the applicable §6 evidence-pack fields from the build-forward plan. Stable validator issue codes, exact provenance, elapsed budgets, source/carrier mutations, raw traces, install/runtime identity, allowances with expiry, independent review, and zero dangling references are mandatory. Authority, effect, and publication cuts additionally require pre-transition readiness, one typed transition, independent post-transition proof, selected-state canary census, and pointer-only rollback. Historical prose, file existence, green status, or generated projections never satisfy a must.
+
+## Durable-running boundary
+
+The first real owner/provider/fixer dispatch is an intermediate result, not
+completion. Durable-running requires an active supervisor, observed milestone
+progress, restart/replay/recovery evidence, and a path that does not depend on
+manual state surgery. The accepted launch/durability root crosswalk is
+`.megaplan/initiatives/native-build-forward/handoff/launch-and-durability-root-map-20260903.md`.
+Bucket A in that map is consumed by C2 before first dispatch; Bucket B is
+consumed by S2R/S6 and the later Platform milestones before durable promotion
+and final proof.
+
+## Bounded planning and review artifacts
+
+The planning budget is one North Star, one bounded `chain.yaml`, one brief per
+milestone, and generated plan/review/receipt evidence. The forensic package is
+immutable evidence, not a second execution ledger. Reviews follow each
+milestone's configured Megaplan robustness; there are no mandatory Megado
+per-batch Luna reviews, premium/cumulative review packets, duplicate hashes, or
+seals-as-progress.
