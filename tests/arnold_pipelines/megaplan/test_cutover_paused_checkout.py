@@ -228,6 +228,66 @@ def test_target_spec_bytes_on_source_checkout_refuse_before_first_attempt(tmp_pa
     assert {p: p.read_bytes() for p in before} == before
 
 
+def test_changed_target_replay_source_bytes_refuse_without_second_journal_write(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    f["target"] = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].parent.mkdir(parents=True, exist_ok=True)
+    f["spec"].write_bytes(old_spec)
+    _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec)
+    chain = _json(f["state"])
+    chain["metadata"]["chain_spec_sha256"] = old_spec_sha
+    _write(f["state"], chain)
+    events = root / ".megaplan" / "incident-ledger" / "events.jsonl"
+    events_before = events.read_bytes()
+    with pytest.raises(CliError, match="chain spec SHA-256 changed"):
+        _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert _git(root, "branch", "--show-current") == "docs/target"
+    assert events.read_bytes() == events_before
+
+
+def test_changed_target_recovery_source_bytes_refuse_without_second_journal_write(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    f["target"] = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].parent.mkdir(parents=True, exist_ok=True)
+    f["spec"].write_bytes(old_spec)
+
+    def lose_ack(stage: str) -> None:
+        if stage == "after_state_write":
+            raise RuntimeError("changed-target recovery lost acknowledgement")
+
+    with pytest.raises(RuntimeError, match="changed-target recovery"):
+        _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha, failure_injector=lose_ack)
+    f["spec"].write_bytes(old_spec)
+    events = root / ".megaplan" / "incident-ledger" / "events.jsonl"
+    events_before = events.read_bytes()
+    with pytest.raises(CliError, match="chain spec (?:SHA-256 changed|identity diverges)"):
+        _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert _git(root, "branch", "--show-current") == "docs/target"
+    assert events.read_bytes() == events_before
+
+
 def test_cutover_rejects_wrong_target_spec_hash_after_checkout(tmp_path: Path) -> None:
     f = _fixture(tmp_path)
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}

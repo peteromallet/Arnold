@@ -1281,6 +1281,8 @@ def cutover_paused_checkout(
         effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
         if not replay_identity_from_intent and effect.get("guard_digest") != sha256_hex(canonical_json(early_guard_material)):
             refuse("committed cutover guard digest differs")
+        if live_spec_sha256 != target_spec_sha256:
+            refuse("chain spec SHA-256 changed")
         if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
             refuse("committed cutover checkout diverged")
         return {"outcome": "replay", "operation_id": early_operation_id, "receipt": dict(early_existing), "external_effect": False}
@@ -1296,7 +1298,10 @@ def cutover_paused_checkout(
             pending_meta = pending_post_chain.get("metadata") if isinstance(pending_post_chain.get("metadata"), Mapping) else {}
             pending_hold = pending_post_marker.get("operator_resume_hold")
             pending_runtime = marker_runtime_identity(pending_post_marker)
-            if (_current_branch(project_root) == to_branch and _current_head(project_root) == to_head
+            pending_at_target = _current_branch(project_root) == to_branch and _current_head(project_root) == to_head
+            if pending_at_target and live_spec_sha256 != target_spec_sha256:
+                refuse("chain spec SHA-256 changed")
+            if (pending_at_target
                     and state_digest_for(chain) == pending_effect.get("post_chain_digest")
                     and marker == dict(pending_post_marker)
                     and pending_post_chain.get("chain_session") == expected_session_id
