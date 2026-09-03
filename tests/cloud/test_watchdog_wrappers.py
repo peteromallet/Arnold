@@ -672,6 +672,79 @@ def test_watchdog_maps_suppressed_babysitter_to_typed_report_without_schedule(
     assert not list(paths["repair_data_dir"].glob("*scheduled*receipt*"))
 
 
+@pytest.mark.parametrize(
+    ("marker_fields", "expected_rc", "expect_child"),
+    [
+        (
+            {
+                "babysitter_chain_profile": "all-muse-spark-openrouter",
+                "babysitter_closed_profile": "all-muse-spark-openrouter",
+            },
+            0,
+            True,
+        ),
+        ({"babysitter_chain_profile": "all-muse-spark-openrouter"}, 1, False),
+        ({"babysitter_closed_profile": "all-muse-spark-openrouter"}, 1, False),
+        (
+            {
+                "babysitter_chain_profile": "partnered-5",
+                "babysitter_closed_profile": "all-muse-spark-openrouter",
+            },
+            1,
+            False,
+        ),
+    ],
+)
+def test_watchdog_marker_binds_closed_fixer_before_child_spawn(
+    tmp_path: Path,
+    marker_fields: dict[str, str],
+    expected_rc: int,
+    expect_child: bool,
+) -> None:
+    """The scan/restart launch reads the exact marker before spawning."""
+    paths = _prepare_watchdog_superfixer_fixture(tmp_path)
+    marker_path = paths["marker_dir"] / f"{paths['session']}.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker.update(marker_fields)
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    child = tmp_path / "babysitter-stub.sh"
+    record = tmp_path / "child-env.txt"
+    child.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s|%s|%s|%s\\n' "
+        "\"$ARNOLD_BABYSITTER_CHAIN_PROFILE\" "
+        "\"$ARNOLD_BABYSITTER_CLOSED_PROFILE\" "
+        "\"$ARNOLD_BABYSITTER_MODEL\" "
+        "\"$ARNOLD_BABYSITTER_ROUTING\" "
+        f"> {shlex.quote(str(record))}\n",
+        encoding="utf-8",
+    )
+    child.chmod(0o755)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_status_trigger_babysitter"),
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "export CLOUD_WATCHDOG_BABYSITTER_BIN=" + shlex.quote(str(child)),
+            "launch_status_trigger_babysitter "
+            f"{shlex.quote(paths['session'])} {shlex.quote(str(paths['workspace']))} "
+            f"{shlex.quote(str(paths['spec_path']))} plan {shlex.quote(paths['plan_name'])} "
+            f"{shlex.quote(str(tmp_path / 'report.tsv'))} reason digest",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == expected_rc, result.stderr
+    if expect_child:
+        assert record.read_text(encoding="utf-8").strip() == (
+            "all-muse-spark-openrouter|all-muse-spark-openrouter|"
+            "omp:openrouter/meta/muse-spark-1.3-contributor:high|omp"
+        )
+    else:
+        assert not record.exists()
+
+
 def test_run_watchdog_shell_strips_ambient_notification_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

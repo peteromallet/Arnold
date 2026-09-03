@@ -2372,6 +2372,26 @@ def _load_json(path: Path | None) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _closed_fixer_marker_identity() -> tuple[str, str] | None:
+    """Read the exact bound session marker before any babysitter spawn.
+
+    The marker is the durable launch authority.  A partial or contradictory
+    closed-route projection is a typed custody failure, never a reason to
+    fall through to the resident default model.
+    """
+    marker = _load_json(marker_dir / f"{session}.json")
+    chain_profile = str(marker.get("babysitter_chain_profile") or "").strip()
+    closed_profile = str(marker.get("babysitter_closed_profile") or "").strip()
+    if not chain_profile and not closed_profile:
+        return None
+    if str(marker.get("session") or "").strip() != session:
+        raise RuntimeError("closed_profile_marker_identity_mismatch")
+    expected = "all-muse-spark-openrouter"
+    if chain_profile != expected or closed_profile != expected:
+        raise RuntimeError("closed_profile_marker_route_mismatch")
+    return chain_profile, closed_profile
+
+
 plan_name = str(plan_name or "").strip()
 state_path = None
 if plan_name:
@@ -2435,6 +2455,22 @@ meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {
 planner_repair = meta.get("planner_repair")
 
 try:
+    closed_marker_identity = _closed_fixer_marker_identity()
+    if closed_marker_identity is not None:
+        # Make the authoritative marker projection visible to the renderer and
+        # child process.  The launch module independently validates the same
+        # pair, so a later environment mutation still fails closed.
+        os.environ["ARNOLD_BABYSITTER_CHAIN_PROFILE"] = closed_marker_identity[0]
+        os.environ["ARNOLD_BABYSITTER_CLOSED_PROFILE"] = closed_marker_identity[1]
+        os.environ["ARNOLD_BABYSITTER_ROUTING"] = "omp"
+        os.environ["ARNOLD_BABYSITTER_MODEL"] = (
+            "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+        )
+        os.environ["ARNOLD_BABYSITTER_OMP_MODEL"] = (
+            "omp:openrouter/meta/muse-spark-1.3-contributor"
+        )
+        os.environ.pop("ARNOLD_BABYSITTER_CODEX_MODEL", None)
+        os.environ.pop("ARNOLD_BABYSITTER_CODEX_INVESTIGATOR_MODEL", None)
     session_root = _session_engine_root()
     # Goal renderer: supervisor origin first so observer-mode prompt
     # fixes (coordination guard) ship immediately. Child PYTHONPATH
