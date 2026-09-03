@@ -90,6 +90,7 @@ SEMANTIC_KINDS = frozenset(
         "chain_control.suffix_rebound",
         "chain_control.committed",
         "chain_control.reconciled",
+        "chain_control.current_attempt_adopted",
         "chain_control.hold_released",
         "chain_control.source_rebound",
         "chain_control.config_rebound",
@@ -334,6 +335,8 @@ def validate_payload(payload: Any) -> Any:
 
 
 def semantic_effect_for(kind: str, *, pre_digest: Any, post_digest: Any) -> str:
+    if kind == "chain_control.current_attempt_adopted":
+        return "metadata_only" if pre_digest != post_digest else "no_change"
     if kind in SEMANTIC_KINDS:
         if pre_digest != post_digest and pre_digest is not ABSENT and post_digest is not ABSENT:
             return "advance"
@@ -713,6 +716,7 @@ def envelope_replay_tuple(envelope: Mapping[str, Any]) -> tuple[Any, Any, Any, A
 REPLAYABLE_OPERATION_KINDS = frozenset(
     {
         "chain_control.committed",
+        "chain_control.current_attempt_adopted",
         "chain_control.rejected",
         "chain_control.cas_conflict",
         "chain_control.genesis_accepted",
@@ -1207,6 +1211,7 @@ class ChainControlJournal:
                         "chain_control.hold",
                         "chain_control.hold_released",
                         "chain_control.hold_context_attested",
+                        "chain_control.current_attempt_adopted",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",
                     } or op_id not in operations:
