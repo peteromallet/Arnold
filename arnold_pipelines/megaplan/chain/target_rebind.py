@@ -1179,6 +1179,63 @@ def cutover_paused_checkout(
     }
     if foreign_incomplete:
         refuse("a foreign journal operation is incomplete", operations=foreign_incomplete)
+    # Complete local authority closure before any branch/head observation or
+    # remote Git operation.  Replay and recovery below may read Git only after
+    # this same action-off boundary has passed.
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    plan_name = plan.get("name")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        refuse("canonical aborted plan name is required")
+    if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
+        refuse("chain is not paused at cursor 6 with a null current plan")
+    if chain.get("chain_session") != expected_session_id or chain_meta.get("chain_id") != chain_id:
+        refuse("canonical session or chain ID identity diverges")
+    if chain_meta.get("chain_spec_sha256") != expected_spec_sha256:
+        refuse("chain spec identity diverges")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        refuse("aborted C2 plan is not immutable and inactive")
+    canonical_plan_path = find_plan_dir(project_root, plan_name)
+    if canonical_plan_path is None or aborted_plan_path != (canonical_plan_path / "state.json").resolve(strict=False):
+        refuse("aborted plan path is not the canonical plan authority")
+    pause = marker.get("operator_pause")
+    hold = marker.get("operator_resume_hold")
+    if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
+        refuse("marker is not paused, held, and action-off")
+    if chain_meta.get(AUTHORITY_KEY) != dict(pause):
+        refuse("chain and marker pause authorities do not match")
+    if hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or hold.get("workspace") != str(project_root) or not isinstance(hold.get("resume_authority"), Mapping):
+        refuse("canonical active hold identity is required")
+    if dict(hold) != dict(expected_hold):
+        refuse("active hold does not match guard")
+    if marker_runtime_identity(marker) != normalize_runtime_identity(expected_runtime_identity):
+        refuse("marker runtime identity does not match guard")
+    if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
+        refuse("an active owner is present")
+    expected_prefix = [dict(item) for item in expected_completed_prefix]
+    if chain.get("completed") != expected_prefix or any(item.get("status") != "completed" for item in expected_prefix):
+        refuse("completed six-milestone prefix is not canonical")
+    if [item.get("label") for item in expected_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+        refuse("guarded completed prefix is not canonical")
+    if any(set(item) - {"label", "status", "artifacts"} for item in expected_prefix):
+        refuse("completed prefix contains non-canonical caller fields")
+    from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+    _assert_artifact_hashes(project_root, expected_prefix)
+    chain_policy = chain_meta.get("chain_policy") if isinstance(chain_meta.get("chain_policy"), Mapping) else None
+    if not isinstance(chain_policy, Mapping) or chain_policy.get("milestone_base_sha") != from_milestone_base or chain_policy.get("milestone_base_sha") != from_head:
+        refuse("source milestone base is not derived from chain authority")
+    target_milestone = spec.milestones[expected_cursor]
+    if target_milestone.branch not in (None, to_branch):
+        refuse("target milestone branch does not match guarded target branch")
+    for binding_name, binding in (("chain", chain_meta.get("project_source_binding")), ("marker", marker.get("project_source_binding")), ("plan", (plan.get("meta") or {}).get("project_source_binding") if isinstance(plan.get("meta"), Mapping) else None)):
+        if isinstance(binding, Mapping):
+            admission = binding.get("admission") if isinstance(binding.get("admission"), Mapping) else {}
+            committed_replay = binding.get("current") == early_target and admission.get("operation_id") == early_operation_id
+            if ((binding.get("current") != early_source and not committed_replay)
+                    or binding.get("original") not in (None, early_source)
+                    or (binding.get("rebind_events") not in (None, []) and not committed_replay)):
+                refuse(f"existing {binding_name} source binding diverges from guarded source")
+    if sha256_path(spec_path) != target_spec_sha256:
+        refuse("target chain spec SHA-256 does not match its guard")
     early_existing = next(
         (event for event in reversed(early_replay.get("accepted", []))
          if event.get("operation_id") == early_operation_id
@@ -1415,11 +1472,16 @@ def cutover_paused_checkout(
                 refuse("target checkout postcondition diverged")
             if sha256_path(spec_path) != target_spec_sha256:
                 refuse("target chain spec SHA-256 does not match its guard")
+            target_spec = chain_spec.load_spec(spec_path)
+            if target_spec.milestones[expected_cursor].label != expected_current_milestone or target_spec.milestones[expected_cursor].branch not in (None, to_branch):
+                refuse("target spec milestone or branch closure diverged")
             if failure_injector is not None:
                 failure_injector("after_git_switch")
             final_chain_raw, _ = _load_json_bytes(chain_path, label="final chain state")
+            final_plan_raw, _ = _load_json_bytes(aborted_plan_path, label="final aborted C2 plan")
             final_marker_raw, _ = _load_json_bytes(marker_path, label="final marker")
             _assert_hash(final_chain_raw, expected_chain_state_sha256, label="final chain-state SHA-256")
+            _assert_hash(final_plan_raw, expected_plan_state_sha256, label="final plan-state SHA-256")
             _assert_hash(final_marker_raw, expected_marker_sha256, label="final marker SHA-256")
             ChainStateAdapter(txn, chain_path).cas_write(post_chain, expected_revision=expected_chain_revision)
             _atomic_write(marker_path, _json_bytes(post_marker))

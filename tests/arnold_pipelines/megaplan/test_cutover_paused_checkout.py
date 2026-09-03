@@ -69,7 +69,7 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
     plan_path = root / ".megaplan" / "plans" / "c2-aborted" / "state.json"
     _write(plan_path, {"name": "c2-aborted", "current_state": "aborted", "active_step": None, "history": [{"step": "execute", "result": "aborted"}], "meta": {}})
     marker_path = root / ".megaplan" / "marker.json"
-    hold = {"schema_version": RESUME_HOLD_SCHEMA, "active": True, "session": root.name, "spec": str(spec.resolve()), "workspace": str(root.resolve())}
+    hold = {"schema_version": RESUME_HOLD_SCHEMA, "active": True, "session": root.name, "spec": str(spec.resolve()), "workspace": str(root.resolve()), "resume_authority": {"kind": "test", "id": "paused-c2"}}
     _write(marker_path, {"should_run": False, "operator_pause": pause, "operator_resume_hold": hold, "runtime_binding": {"current_identity": runtime}, "editable_install_sync": {"source": str(root)}})
     return {"root": root, "spec": spec, "state": state_path, "plan": plan_path, "marker": marker_path, "old": old, "target": target, "prefix": completed, "pause": pause, "hold": hold, "runtime": runtime}
 
@@ -110,7 +110,7 @@ def test_cutover_paused_checkout_commits_binding_and_preserves_aborted_plan(tmp_
 def test_cutover_paused_checkout_rejects_wrong_source_without_mutation(tmp_path: Path) -> None:
     f = _fixture(tmp_path)
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
-    with pytest.raises(CliError, match="current checkout branch/HEAD"):
+    with pytest.raises(CliError, match="source milestone base"):
         _call(f, from_head="0" * 40)
     assert _git(f["root"], "branch", "--show-current") == "legacy"
     assert {p: p.read_bytes() for p in before} == before
@@ -204,6 +204,47 @@ def test_cutover_rejects_foreign_pending_journal_before_remote(tmp_path: Path) -
     _git(f["root"], "switch", "legacy")
     with pytest.raises(CliError, match="foreign journal operation"):
         _call(f, to_branch="docs/target-2", to_head=target_2, to_ref="refs/heads/docs/target-2")
+
+
+def test_cutover_rejects_incomplete_hold_authority(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    marker = _json(f["marker"])
+    marker["operator_resume_hold"].pop("resume_authority")
+    _write(f["marker"], marker)
+    with pytest.raises(CliError, match="replay authority hold"):
+        _call(f)
+
+
+def test_cutover_rejects_forged_prefix_fields(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    forged = [{**row, "completion_receipt": "forged"} for row in f["prefix"]]
+    chain = _json(f["state"])
+    chain["completed"] = forged
+    _write(f["state"], chain)
+    with pytest.raises(CliError, match="non-canonical caller fields"):
+        _call(f, expected_completed_prefix=forged)
+
+
+def test_cutover_rejects_source_base_not_tied_to_head(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    chain = _json(f["state"])
+    chain["metadata"]["chain_policy"]["milestone_base_sha"] = f["target"]
+    _write(f["state"], chain)
+    with pytest.raises(CliError, match="source milestone base"):
+        _call(f, from_milestone_base=f["target"])
+
+
+def test_cutover_rechecks_plan_after_checkout(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+
+    def mutate_plan(stage: str) -> None:
+        if stage == "after_git_switch":
+            plan = _json(f["plan"])
+            plan["history"].append({"unexpected": True})
+            _write(f["plan"], plan)
+
+    with pytest.raises(CliError, match="final plan-state SHA-256"):
+        _call(f, failure_injector=mutate_plan)
 
 
 def test_parser_exposes_cutover_paused_checkout() -> None:

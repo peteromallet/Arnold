@@ -354,6 +354,17 @@ def _write_chain_policy_into_plan_meta(
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
+    # A paused-checkout source cutover records the canonical binding on the
+    # chain/marker while the historical aborted plan remains byte-preserved.
+    # Carry that binding into the next materialized plan so the existing
+    # chain/plan binding assertion has one authoritative projection.
+    try:
+        chain_state = chain_spec.load_chain_state(spec_path)
+        source_binding = chain_state.metadata.get("project_source_binding")
+        if isinstance(source_binding, Mapping):
+            chain_policy["project_source_binding"] = dict(source_binding)
+    except (CliError, OSError, ValueError, TypeError):
+        pass
     try:
         chain_policy["milestone_base_sha"] = _current_head_sha(root)
     except CliError:
@@ -364,6 +375,8 @@ def _write_chain_policy_into_plan_meta(
         if not isinstance(meta, dict):
             current["meta"] = meta = {}
         meta["chain_policy"] = chain_policy
+        if isinstance(chain_policy.get("project_source_binding"), Mapping):
+            meta["project_source_binding"] = dict(chain_policy["project_source_binding"])
         return True
 
     write_plan_state(
