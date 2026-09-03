@@ -136,6 +136,36 @@ def test_cutover_rejects_empty_predecessor_artifacts_before_mutation(tmp_path: P
     assert {p: p.read_bytes() for p in before} == before
 
 
+def test_cutover_accepts_changed_target_chain_spec_after_checkout(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    target_head = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].parent.mkdir(parents=True, exist_ok=True)
+    f["spec"].write_bytes(old_spec)
+    f["target"] = target_head
+    result = _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert result["outcome"] == "committed"
+    assert sha256_path(f["spec"]) == target_spec_sha
+
+
+def test_cutover_rejects_wrong_target_spec_hash_after_checkout(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    with pytest.raises(CliError, match="target chain spec SHA-256"):
+        _call(f, expected_target_spec_sha256="a" * 64)
+    assert _git(f["root"], "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
 def test_cutover_rejects_forged_session_before_mutation(tmp_path: Path) -> None:
     f = _fixture(tmp_path)
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}

@@ -1263,8 +1263,6 @@ def cutover_paused_checkout(
                     or binding.get("original") not in (None, early_source)
                     or (binding.get("rebind_events") not in (None, []) and not committed_replay)):
                 refuse(f"existing {binding_name} source binding diverges from guarded source")
-    if sha256_path(spec_path) != target_spec_sha256:
-        refuse("target chain spec SHA-256 does not match its guard")
     early_existing = next(
         (event for event in reversed(early_replay.get("accepted", []))
          if event.get("operation_id") == early_operation_id
@@ -1410,8 +1408,6 @@ def cutover_paused_checkout(
         refuse("guarded completed prefix is not canonical")
     if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
         refuse("an active owner is present")
-    if sha256_path(spec_path) != target_spec_sha256:
-        refuse("target chain spec SHA-256 does not match its guard")
     _assert_clean_worktree(project_root)
     if _remote_advertised_sha(project_root, from_ref) != from_head:
         refuse("advertised source does not match guarded source HEAD")
