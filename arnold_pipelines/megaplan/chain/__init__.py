@@ -11453,6 +11453,30 @@ def build_chain_parser(subparsers: Any) -> None:
         ),
     )
 
+    failed_prechain_parser = chain_sub.add_parser(
+        "failed-prechain-recover",
+        help=(
+            "Recover one failed, non-advanced cloud bootstrap in the same "
+            "session without creating chain authority"
+        ),
+    )
+    failed_prechain_parser.add_argument("--spec", required=True)
+    failed_prechain_parser.add_argument("--project-dir", required=True)
+    failed_prechain_parser.add_argument("--marker", required=True)
+    failed_prechain_parser.add_argument("--manifest", required=True)
+    failed_prechain_parser.add_argument("--source", required=True)
+    failed_prechain_parser.add_argument("--workspace", required=True)
+    failed_prechain_parser.add_argument("--staged-runtime", required=True)
+    failed_prechain_parser.add_argument("--custody-dir", required=True)
+    failed_prechain_parser.add_argument("--expected-session-id", required=True)
+    failed_prechain_parser.add_argument("--expected-marker-sha256", required=True)
+    failed_prechain_parser.add_argument("--expected-manifest-sha256", required=True)
+    failed_prechain_parser.add_argument("--expected-spec-sha256", required=True)
+    failed_prechain_parser.add_argument("--expected-old-sha", required=True)
+    failed_prechain_parser.add_argument("--reviewed-new-sha", required=True)
+    failed_prechain_parser.add_argument("--reason", required=True)
+    failed_prechain_parser.add_argument("--actor", default="operator")
+
     execution_binding_migrate_parser = chain_sub.add_parser(
         "execution-binding-migrate",
         help=(
@@ -12435,6 +12459,46 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "failed-prechain-recover":
+        try:
+            from arnold_pipelines.megaplan.chain.failed_prechain_recovery import (
+                recover_failed_prechain,
+            )
+
+            result = recover_failed_prechain(
+                spec_path,
+                Path(args.project_dir).expanduser().resolve(),
+                marker_path=Path(args.marker).expanduser().resolve(),
+                manifest_path=Path(args.manifest).expanduser().resolve(),
+                source_path=Path(args.source).expanduser().resolve(),
+                workspace_path=Path(args.workspace).expanduser().resolve(),
+                staged_runtime_path=Path(args.staged_runtime).expanduser().resolve(),
+                custody_dir=Path(args.custody_dir).expanduser().resolve(),
+                expected_session_id=args.expected_session_id,
+                expected_marker_sha256=args.expected_marker_sha256,
+                expected_manifest_sha256=args.expected_manifest_sha256,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_old_sha=args.expected_old_sha,
+                reviewed_new_sha=args.reviewed_new_sha,
+                reason=args.reason,
+                actor=args.actor,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "failed-prechain-recover",
                     **result,
                 },
                 indent=2,
