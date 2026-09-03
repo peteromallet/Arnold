@@ -656,6 +656,15 @@ def recover_failed_prechain(
         prior_operation = str(prior.get("operation_id") or "")
         if _SHA256.fullmatch(prior_operation) is None:
             raise _refuse("collapsed engine/workspace recovery operation is malformed")
+        prior_old_sha = str(prior.get("old_sha") or "").lower()
+        prior_new_sha = str(prior.get("new_sha") or "").lower()
+        if _SHA40.fullmatch(prior_old_sha) is None or _SHA40.fullmatch(prior_new_sha) is None:
+            raise _refuse("collapsed engine/workspace predecessor SHAs are malformed")
+        # The live collapsed state is the predecessor's poststate.  The
+        # current recovery is a separate B->C transition and must never be
+        # composed as though the predecessor were A->C.
+        if prior_new_sha != old_sha or new_sha == old_sha:
+            raise _refuse("collapsed engine/workspace transition does not compose with predecessor")
         try:
             validate_committed_recovery_evidence(
                 marker_path=marker_path,
@@ -664,8 +673,8 @@ def recover_failed_prechain(
                 spec_path=spec_path,
                 operation_id=prior_operation,
                 expected_session=expected_session_id,
-                expected_old_sha=old_sha,
-                expected_new_sha=str(prior.get("new_sha") or ""),
+                expected_old_sha=prior_old_sha,
+                expected_new_sha=prior_new_sha,
                 expected_marker_sha=expected_marker_sha256,
                 expected_manifest_sha=expected_manifest_sha256,
                 expected_engine_after=str(workspace_path),
