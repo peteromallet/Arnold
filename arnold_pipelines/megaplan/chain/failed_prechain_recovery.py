@@ -644,45 +644,37 @@ def recover_failed_prechain(
     chain_id = chain_id_for_spec(spec_path)
     journal = journal_for(project_root)
     if collapsed_engine_bridge:
-        # The compatibility bridge is limited to a collapse demonstrably
-        # produced by the prior committed recovery; arbitrary aliases remain
-        # a hard refusal.
+        # Reuse the canonical immutable evidence validator used by cloud
+        # admission. The bridge adds only the current collapsed-root fact;
+        # it must not maintain a weaker parallel receipt parser.
+        from arnold_pipelines.megaplan.cloud.recovered_prechain_admission import (
+            validate_committed_recovery_evidence,
+        )
         prior = marker.get("failed_prechain_recovery")
         if not isinstance(prior, Mapping) or prior.get("engine_runtime_after") != str(workspace_path):
             raise _refuse("collapsed engine/workspace has no proven recovery origin")
         prior_operation = str(prior.get("operation_id") or "")
         if _SHA256.fullmatch(prior_operation) is None:
             raise _refuse("collapsed engine/workspace recovery operation is malformed")
-        prior_archive = prior.get("archive_manifest")
-        if not isinstance(prior_archive, Mapping):
-            raise _refuse("collapsed engine/workspace recovery archive is missing")
-        prior_archive_path = Path(str(prior_archive.get("path") or ""))
         try:
-            prior_archive_payload = json.loads(prior_archive_path.read_text(encoding="utf-8"))
-            _verify_archive(prior_archive_path, prior_archive_payload, prior_operation)
-            prior_receipt_path = prior_archive_path.parent / "recovery-receipt.json"
-            prior_receipt = json.loads(prior_receipt_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, CliError) as exc:
-            raise _refuse("collapsed engine/workspace recovery receipt is unavailable") from exc
-        if (
-            prior_receipt.get("operation_id") != prior_operation
-            or prior_receipt.get("outcome") != "recovered"
-            or (prior_receipt.get("engine_runtime") or {}).get("new_path") != str(workspace_path)
-        ):
-            raise _refuse("collapsed engine/workspace recovery receipt is contradictory")
-        prior_replay = journal.replay_strict()
-        prior_events = [
-            event for event in prior_replay.get("accepted", [])
-            if isinstance(event, Mapping)
-            and event.get("event_kind") == "chain_control.committed"
-            and event.get("operation_id") == prior_operation
-            and event.get("chain_id") == chain_id
-        ]
-        if len(prior_events) != 1:
-            raise _refuse("collapsed engine/workspace recovery journal proof is missing")
-        prior_effect = (prior_events[0].get("payload") or {}).get("effect")
-        if not isinstance(prior_effect, Mapping) or prior_effect.get("staged_runtime") != str(workspace_path):
-            raise _refuse("collapsed engine/workspace journal proof is contradictory")
+            validate_committed_recovery_evidence(
+                marker_path=marker_path,
+                manifest_path=manifest_path,
+                workspace_path=workspace_path,
+                spec_path=spec_path,
+                operation_id=prior_operation,
+                expected_session=expected_session_id,
+                expected_old_sha=old_sha,
+                expected_new_sha=str(prior.get("new_sha") or ""),
+                expected_marker_sha=expected_marker_sha256,
+                expected_manifest_sha=expected_manifest_sha256,
+                expected_engine_after=str(workspace_path),
+                expected_generation=int(prior.get("manifest_generation")),
+                expected_engine_before=str(prior.get("engine_runtime_before") or ""),
+                expected_spec_sha=expected_spec_sha256,
+            )
+        except (CliError, SystemExit, ValueError, TypeError) as exc:
+            raise _refuse("collapsed engine/workspace recovery evidence is invalid") from exc
     retry_after_event_hash: str | None = None
     retry_evidence_path: Path | None = None
     if retry_after is not None:

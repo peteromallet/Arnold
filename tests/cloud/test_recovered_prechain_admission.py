@@ -500,6 +500,62 @@ def _changed(value: Any) -> Any:
     raise AssertionError(f"unsupported fixture value {value!r}")
 
 
+def _run_committed_evidence_validator(
+    fixture: dict[str, Any], monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, Any]:
+    """Exercise the shared recovery validator with the live-shaped fixture."""
+    _mock_external_authorities(monkeypatch, fixture)
+    monkeypatch.setattr(
+        admission.subprocess,
+        "run",
+        lambda command, *args, **kwargs: subprocess.CompletedProcess(
+            command, 0, "", ""
+        ),
+    )
+    marker_raw = fixture["marker"].read_bytes()
+    manifest_raw = fixture["manifest"].read_bytes()
+    return dict(admission.validate_committed_recovery_evidence(
+        marker_path=fixture["marker"], manifest_path=fixture["manifest"],
+        workspace_path=fixture["workspace"], spec_path=Path(fixture["spec"]),
+        operation_id=fixture["operation"], expected_session=fixture["session"],
+        expected_old_sha=fixture["old_sha"], expected_new_sha=fixture["new_sha"],
+        expected_marker_sha=hashlib.sha256(marker_raw).hexdigest(),
+        expected_manifest_sha=hashlib.sha256(manifest_raw).hexdigest(),
+        expected_engine_after=str(fixture["workspace"]),
+        expected_engine_before=str(fixture["runtime"]), expected_generation=2,
+    ))
+
+
+def test_shared_committed_evidence_validator_binds_collapse_lineage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    result = _run_committed_evidence_validator(fixture, monkeypatch)
+    assert result["event"]["operation_id"] == fixture["operation"]
+
+
+@pytest.mark.parametrize(
+    "section,key",
+    [
+        ("marker", "failed_prechain_recovery"),
+        ("receipt", "engine_runtime"),
+    ],
+)
+def test_shared_committed_evidence_validator_rejects_root_provenance_tamper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str, key: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    path = fixture["marker"] if section == "marker" else fixture["receipt"]
+    value = _load(path)
+    if section == "marker":
+        value[key]["engine_runtime_before"] = str(tmp_path / "forged-engine")
+    else:
+        value[key]["old_path"] = str(tmp_path / "forged-engine")
+    _write(path, value)
+    with pytest.raises(SystemExit):
+        _run_committed_evidence_validator(fixture, monkeypatch)
+
+
 MARKER_AUTHORITY = (
     ("session",),
     ("workspace",),

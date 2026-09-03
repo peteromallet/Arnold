@@ -784,6 +784,163 @@ def _git_identity(
     return head, tree, origin, branch
 
 
+def validate_committed_recovery_evidence(*, marker_path: Path,
+        manifest_path: Path, workspace_path: Path, spec_path: Path,
+        operation_id: str, expected_session: str, expected_old_sha: str,
+        expected_new_sha: str, expected_marker_sha: str,
+        expected_manifest_sha: str, expected_engine_after: str,
+        expected_generation: int,
+        expected_engine_before: str | None = None,
+        expected_spec_sha: str | None = None) -> Mapping[str, Any]:
+    """Validate one committed recovery without admitting a runtime.
+
+    This shared evidence validator is used by the collapsed-root bridge. It
+    owns the immutable operation/receipt/journal/custody joins; callers own
+    current liveness and Git-cleanliness checks.
+    """
+    marker_raw, marker = _json(marker_path, "session marker")
+    manifest_raw, manifest = _json(manifest_path, "runtime manifest")
+    operation_id = _full_sha(operation_id, "recovery operation", 64)
+    expected_old_sha = _full_sha(expected_old_sha, "recovery old head", 40)
+    expected_new_sha = _full_sha(expected_new_sha, "recovery reviewed head", 40)
+    marker_sha = _full_sha(expected_marker_sha, "marker digest", 64)
+    manifest_sha = _full_sha(expected_manifest_sha, "manifest digest", 64)
+    if expected_spec_sha is not None:
+        spec_sha = _full_sha(expected_spec_sha, "spec digest", 64)
+        spec_raw = _read_regular(spec_path, "chain spec")
+        if _sha(spec_raw) != spec_sha:
+            _fail("recovery evidence chain spec digest mismatch")
+    if _sha(marker_raw) != marker_sha or _sha(manifest_raw) != manifest_sha:
+        _fail("recovery evidence current marker/manifest digest mismatch")
+    recovery = marker.get("failed_prechain_recovery")
+    if not isinstance(recovery, Mapping) or recovery.get("schema") not in (None, _RECOVERY_SCHEMA):
+        _fail("recovery evidence record is missing or schema-invalid")
+    if (marker.get("session") != expected_session
+            or marker.get("workspace") != str(workspace_path)
+            or marker.get("remote_spec") != str(spec_path)
+            or marker.get("should_run") is not True):
+        _fail("recovery evidence session/workspace identity mismatch")
+    if recovery.get("operation_id") != operation_id:
+        _fail("recovery evidence operation identity mismatch")
+    engine_before = str(expected_engine_before or recovery.get("engine_runtime_before") or "")
+    if not engine_before or engine_before == expected_engine_after:
+        _fail("recovery evidence does not prove a distinct pre-collapse engine root")
+    if not Path(engine_before).is_absolute() or not Path(expected_engine_after).is_absolute():
+        _fail("recovery evidence engine roots are not absolute")
+    if (recovery.get("old_sha") != expected_old_sha
+            or recovery.get("new_sha") != expected_new_sha
+            or recovery.get("chain_workspace") != str(workspace_path)
+            or recovery.get("engine_runtime_before") != engine_before
+            or recovery.get("engine_runtime_after") != expected_engine_after):
+        _fail("recovery evidence source/root identity mismatch")
+    if recovery.get("manifest_generation") != expected_generation:
+        _fail("recovery evidence generation mismatch")
+    archive_binding = recovery.get("archive_manifest")
+    if not isinstance(archive_binding, Mapping):
+        _fail("recovery evidence custody binding is missing")
+    archive_path = Path(str(archive_binding.get("path") or ""))
+    if (not archive_path.is_absolute() or archive_path.name != "manifest.json"
+            or archive_path.parent.name != operation_id):
+        _fail("recovery evidence custody path is not operation-scoped")
+    archive_raw = _read_regular(archive_path, "recovery archive manifest")
+    archive_sha = _full_sha(archive_binding.get("sha256"), "archive manifest digest", 64)
+    if _sha(archive_raw) != archive_sha:
+        _fail("recovery archive digest mismatch")
+    try:
+        archive = json.loads(archive_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _fail(f"recovery custody archive is invalid: {type(exc).__name__}")
+    if not isinstance(archive, Mapping):
+        _fail("recovery custody archive is not an object")
+    _archive_identity(archive_path, archive, operation=operation_id, old_sha=expected_old_sha)
+    receipt_path = archive_path.parent / "recovery-receipt.json"
+    receipt_raw, receipt = _json(receipt_path, "recovery receipt")
+    receipt_marker = receipt.get("marker")
+    receipt_manifest = receipt.get("manifest")
+    receipt_source = receipt.get("source")
+    receipt_engine = receipt.get("engine_runtime")
+    if (receipt.get("schema") != _RECOVERY_SCHEMA
+            or receipt.get("operation_id") != operation_id
+            or receipt.get("session") != expected_session
+            or receipt.get("chain_id") != chain_id_for_spec(spec_path)
+            or receipt.get("outcome") != "recovered"
+            or not all(isinstance(value, Mapping) for value in
+                       (receipt_marker, receipt_manifest, receipt_source, receipt_engine))):
+        _fail("recovery receipt identity joins are incomplete")
+    launch_outcome = marker.get("launch_outcome")
+    if not isinstance(launch_outcome, Mapping) or receipt.get("launch_outcome") != launch_outcome:
+        _fail("recovery receipt launch outcome is not joined to the marker")
+    receipt_marker_before = _full_sha(receipt_marker.get("before_sha256"), "recovery marker before digest", 64)
+    receipt_manifest_before = _full_sha(receipt_manifest.get("before_sha256"), "recovery manifest before digest", 64)
+    if receipt_marker_before == marker_sha or receipt_manifest_before == manifest_sha:
+        _fail("recovery receipt before/after identities did not change")
+    if (receipt_marker.get("path") != str(marker_path)
+            or receipt_marker.get("after_sha256") != marker_sha
+            or receipt_manifest.get("path") != str(manifest_path)
+            or receipt_manifest.get("before_sha256") != receipt_manifest_before
+            or receipt_manifest.get("after_sha256") != manifest_sha
+            or receipt_manifest.get("generation") != expected_generation
+            or receipt_source.get("path") != recovery.get("reviewed_source")
+            or receipt_source.get("old_sha") != expected_old_sha
+            or receipt_source.get("new_sha") != expected_new_sha
+            or receipt_engine.get("old_path") != engine_before
+            or receipt_engine.get("new_path") != expected_engine_after
+            or receipt.get("staged_runtime") != str(workspace_path)
+            or receipt.get("workspace") != str(workspace_path)):
+        _fail("recovery receipt identity joins are contradictory")
+    preserved = Path(str(receipt.get("preserved_failed_workspace") or ""))
+    if not preserved.is_dir() or preserved.is_symlink():
+        _fail("recovery receipt failed-workspace custody is unavailable")
+    receipt_archive = receipt.get("archive_manifest")
+    if not isinstance(receipt_archive, Mapping) or (
+            receipt_archive.get("path") != str(archive_path)
+            or receipt_archive.get("sha256") != archive_sha):
+        _fail("recovery receipt custody binding is contradictory")
+    source_path = Path(str(receipt_source.get("path") or ""))
+    if not source_path.is_absolute() or not source_path.is_dir() or source_path.is_symlink():
+        _fail("recovery receipt source provenance is unavailable")
+    try:
+        source_check = subprocess.run(
+            ["git", "-C", str(source_path), "cat-file", "-e", f"{expected_new_sha}^{{commit}}"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        _fail("recovery source provenance Git is unavailable")
+    if source_check.returncode != 0:
+        _fail("recovery source provenance does not contain reviewed head")
+    events = workspace_path / ".megaplan" / "incident-ledger" / "events.jsonl"
+    _read_regular(events, "chain-control journal")
+    _manifest_identity(
+        manifest,
+        slug=_required_text(manifest, "epic_id", "runtime manifest epic identity"),
+        recovered_runtime=str(workspace_path),
+        new_sha=expected_new_sha,
+        old_sha=expected_old_sha,
+        generation=expected_generation,
+        engine_runtime=engine_before,
+        reason=_required_text(recovery, "reason", "recovery reason"),
+        canonical_origin=_required_text(
+            _required_mapping(manifest, "base", "runtime manifest base"),
+            "origin_url", "runtime manifest base origin",
+        ),
+    )
+    event = _strict_recovery_event(
+        events, operation=operation_id, expected_spec=str(spec_path),
+        session=expected_session, old_sha=expected_old_sha,
+        new_sha=expected_new_sha,
+        reviewed_source=str(receipt_source.get("path")),
+        engine_runtime=engine_before, generation=expected_generation,
+        marker_sha=marker_sha, manifest_sha=manifest_sha,
+        manifest_before_sha=receipt_manifest_before,
+        archive_sha=archive_sha, archive_path=archive_path,
+        receipt_path=receipt_path, expected_workspace=str(workspace_path),
+        recovered_runtime=str(workspace_path),
+        actor=_required_text(recovery, "actor", "recovery actor"),
+    )
+    return {"marker": marker, "manifest": manifest, "receipt": receipt,
+            "archive": archive, "event": event, "receipt_raw": receipt_raw}
+
+
 def _admit(
     *,
     manifest_path: Path,
