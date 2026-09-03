@@ -229,6 +229,61 @@ def test_on_box_manifest_probe_preserves_json_stdout_without_git_classification(
     }
 
 
+def test_on_box_compound_wrapper_inherits_path_only_git_helper_and_json_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Internal Git in a wrapper receives auth without hiding wrapper JSON."""
+
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+    credential_file = tmp_path / "git-credentials"
+    secret = "ghp_internal_wrapper_secret_never_logged"
+    credential_file.write_text(
+        f"https://x-access-token:{secret}@github.com\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(credential_file))
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        return subprocess.CompletedProcess(
+            argv, 0, '{"internal_push": "authorized", "ok": true}\n', ""
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", fake_run
+    )
+    provider = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh"))
+    command = "printf '%s\\n' '{\"internal_push\":\"authorized\",\"ok\":true}'"
+    assert not OnBoxProvider._is_git_auth_operation(command)
+
+    result = provider.ssh_exec(command)
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {"internal_push": "authorized", "ok": True}
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    assert secret not in repr(argv)
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert env["GIT_CONFIG_VALUE_0"] == f"store --file={credential_file}"
+    assert secret not in repr(env)
+    journal = (
+        process_adapter_wbc_dir(
+            provider._process_adapter_evidence_root(),
+            producer_family="cloud_provider_adapter",
+            adapter_name="OnBoxProvider",
+        )
+        / "events.ndjson"
+    ).read_text(encoding="utf-8")
+    assert secret not in journal
+
+
 def test_on_box_checkout_clones_after_external_wbc_evidence(
     tmp_path: Path,
     monkeypatch,

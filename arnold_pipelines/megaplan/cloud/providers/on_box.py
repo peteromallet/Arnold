@@ -65,26 +65,34 @@ class OnBoxProvider(Provider):
 
     @staticmethod
     def _is_git_auth_operation(command: str) -> bool:
-        return _GIT_AUTH_COMMAND_RE.search(command) is not None
-
-    def _git_environment(self, command: str) -> dict[str, str] | None:
-        if not self._is_git_auth_operation(command):
-            return None
-        # Local/file clones do not need the box credential and are useful for
-        # deterministic local smoke tests.  Fetch/push/pull use the helper
-        # unconditionally because their configured remote is not in argv.
+        if _GIT_AUTH_COMMAND_RE.search(command) is None:
+            return False
+        # Local/file clones do not need the box credential and retain their
+        # normal stdout/stderr behavior for deterministic bootstrap tests.
         is_clone = re.search(
             r"(?:^|[;&|]\s*|\s)git(?:\s+(?:-[^\s;&|]+|-[Cc]\s+[^\s;&|]+))*\s+clone\b",
             command,
         ) is not None
-        if is_clone and "github.com" not in command.lower():
-            return None
-        return on_box_git_credential_env()
+        return not (is_clone and "github.com" not in command.lower())
+
+    def _command_environment(self, command: str) -> dict[str, str]:
+        """Build the environment inherited by every on-box command.
+
+        A shell command is not a reliable boundary for Git capability: the
+        runtime-create and chain wrappers can invoke Git from Python without
+        spelling ``git`` in the command received here. Always inject the
+        path-only helper configuration when it is available. Direct Git auth
+        operations still fail closed when the helper is missing; non-Git
+        commands retain normal local execution semantics.
+        """
+        return on_box_git_credential_env(
+            required=self._is_git_auth_operation(command)
+        )
 
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
         safe_command = self._safe_command(command)
         try:
-            run_env = self._git_environment(command)
+            run_env = self._command_environment(command)
         except CliError as exc:
             attempt = self._begin_process_adapter_attempt(
                 surface="ssh_exec",
@@ -105,8 +113,7 @@ class OnBoxProvider(Provider):
             "text": True,
             "check": False,
         }
-        if run_env is not None:
-            kwargs["env"] = run_env
+        kwargs["env"] = run_env
         is_git_operation = self._is_git_auth_operation(command)
         result = subprocess.run(["bash", "-lc", command], **kwargs)
         if result.returncode != 0:
