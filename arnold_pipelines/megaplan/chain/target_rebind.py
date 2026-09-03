@@ -1137,6 +1137,30 @@ def cutover_paused_checkout(
     spec = chain_spec.load_spec(spec_path)
     if expected_cursor >= len(spec.milestones) or spec.milestones[expected_cursor].label != expected_current_milestone:
         refuse("current milestone does not match the guarded C2 successor")
+    persisted_prefix = chain.get("completed")
+    if not isinstance(persisted_prefix, list) or len(persisted_prefix) != 6 or not all(isinstance(item, Mapping) for item in persisted_prefix):
+        refuse("persisted completed prefix is not the exact six-milestone authority")
+    canonical_prefix = [dict(item) for item in persisted_prefix]
+    if canonical_prefix != [dict(item) for item in expected_completed_prefix]:
+        refuse("guarded completed prefix does not match persisted authority")
+    if any(item.get("status") != "completed" for item in canonical_prefix):
+        refuse("persisted completed prefix records must carry completed status")
+    if [item.get("label") for item in canonical_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+        refuse("persisted completed prefix is not canonical")
+    if any(set(item) - {"label", "status", "artifacts"} for item in canonical_prefix):
+        refuse("persisted completed prefix contains non-canonical fields")
+    for item in canonical_prefix:
+        artifacts = item.get("artifacts")
+        if isinstance(artifacts, Mapping):
+            has_artifacts = bool(artifacts)
+        elif isinstance(artifacts, list):
+            has_artifacts = bool(artifacts) and all(isinstance(entry, Mapping) for entry in artifacts)
+        else:
+            has_artifacts = False
+        if not has_artifacts:
+            refuse("completed prefix predecessor artifacts are required")
+    from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+    _assert_artifact_hashes(project_root, canonical_prefix)
     # Derive the id before inspecting the live checkout so a retry with the
     # original pre-state guards can replay after the checkout has moved.
     early_source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
@@ -1145,7 +1169,7 @@ def cutover_paused_checkout(
     early_target_advertised = to_head
     early_target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": early_target_advertised}
     chain_id = chain_id_for_spec(spec_path)
-    early_guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": expected_completed_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": early_source, "target": early_target}
+    early_guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": canonical_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": early_source, "target": early_target}
     early_operation_id = "c2-checkout-cutover-" + sha256_hex(canonical_json(early_guard_material))
     journal = journal_for(project_root)
     early_replay = journal.replay_strict()
@@ -1214,7 +1238,7 @@ def cutover_paused_checkout(
         refuse("marker runtime identity does not match guard")
     if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
         refuse("an active owner is present")
-    expected_prefix = [dict(item) for item in expected_completed_prefix]
+    expected_prefix = canonical_prefix
     if chain.get("completed") != expected_prefix or any(item.get("status") != "completed" for item in expected_prefix):
         refuse("completed six-milestone prefix is not canonical")
     if [item.get("label") for item in expected_prefix] != [str(item.label) for item in spec.milestones[:6]]:
@@ -1270,7 +1294,7 @@ def cutover_paused_checkout(
                     and marker == dict(pending_post_marker)
                     and pending_post_chain.get("chain_session") == expected_session_id
                     and pending_meta.get("chain_id") == chain_id
-                    and pending_post_chain.get("completed") == [dict(item) for item in expected_completed_prefix]
+                    and pending_post_chain.get("completed") == canonical_prefix
                     and pending_hold == dict(expected_hold)
                     and pending_runtime == normalize_runtime_identity(expected_runtime_identity)):
                 with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, marker_path, spec_path, aborted_plan_path], operation_id=early_operation_id, actor={"id": actor, "class": "operator"}) as txn:
@@ -1339,11 +1363,11 @@ def cutover_paused_checkout(
     canonical_plan_path = find_plan_dir(project_root, plan_name) / "state.json"
     if aborted_plan_path != canonical_plan_path.resolve(strict=False):
         refuse("aborted plan path is not the canonical plan authority")
-    if any(item.get("status") != "completed" for item in expected_completed_prefix):
+    if any(item.get("status") != "completed" for item in canonical_prefix):
         refuse("completed prefix records must carry completed status")
     try:
         from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
-        _assert_artifact_hashes(project_root, [dict(item) for item in expected_completed_prefix])
+        _assert_artifact_hashes(project_root, canonical_prefix)
     except CliError:
         raise
     if chain_meta.get("chain_policy", {}).get("milestone_base_sha") not in (None, from_milestone_base):
@@ -1372,9 +1396,9 @@ def cutover_paused_checkout(
         observed = marker.get(field)
         if observed not in (None, "") and str(observed) != expected:
             refuse(f"marker {field} does not match guarded source")
-    if chain.get("completed") != [dict(item) for item in expected_completed_prefix]:
+    if chain.get("completed") != canonical_prefix:
         refuse("completed six-milestone prefix does not match guard")
-    if [item.get("label") for item in expected_completed_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+    if [item.get("label") for item in canonical_prefix] != [str(item.label) for item in spec.milestones[:6]]:
         refuse("guarded completed prefix is not canonical")
     if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
         refuse("an active owner is present")
@@ -1407,7 +1431,7 @@ def cutover_paused_checkout(
     source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
     target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": target_advertised}
     chain_id = chain_id_for_spec(spec_path)
-    guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": expected_completed_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": source, "target": target}
+    guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": canonical_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": source, "target": target}
     guard_digest = sha256_hex(canonical_json(guard_material))
     derived_operation_id = "c2-checkout-cutover-" + guard_digest
     if operation_id is not None and operation_id != derived_operation_id:

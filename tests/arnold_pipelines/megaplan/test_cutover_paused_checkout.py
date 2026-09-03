@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -64,7 +65,12 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
     state_path = chain_spec._state_path_for(spec)
     pause = {"schema_version": "arnold.megaplan.operator-pause.v1", "active": True, "plan": "c2-aborted", "paused_at": "2026-09-03T00:00:00Z"}
     runtime = normalize_runtime_identity({"import_root": str(root), "source_revision": old, "editable_root": str(root), "editable_revision": old, "direct_url": {}, "pth": [], "imports": {}})
-    completed = [{"label": label, "status": "completed"} for label in labels[:6]]
+    completed = []
+    for label in labels[:6]:
+        artifact = root / ".megaplan" / "predecessors" / f"{label}.receipt"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(f"receipt:{label}\n", encoding="utf-8")
+        completed.append({"label": label, "status": "completed", "artifacts": [{"path": str(artifact.relative_to(root)), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}]})
     chain = {"schema_version": 1, "current_milestone_index": 6, "current_plan_name": None, "last_state": "paused", "completed": completed, "chain_session": root.name, "metadata": {"_nbf08_revision": 0, "chain_id": chain_id_for_spec(spec), "operator_pause": pause, "chain_policy": {"milestone_base_sha": old}, "execution_binding": {"launched_identity": {"runtime": runtime}}, "chain_spec_sha256": sha256_path(spec)}}
     _write(state_path, chain)
     plan_path = root / ".megaplan" / "plans" / "c2-aborted" / "state.json"
@@ -113,6 +119,19 @@ def test_cutover_paused_checkout_rejects_wrong_source_without_mutation(tmp_path:
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
     with pytest.raises(CliError, match="source milestone base"):
         _call(f, from_head="0" * 40)
+    assert _git(f["root"], "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_cutover_rejects_empty_predecessor_artifacts_before_mutation(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    chain = _json(f["state"])
+    chain["completed"][0]["artifacts"] = []
+    _write(f["state"], chain)
+    expected = [dict(item) for item in chain["completed"]]
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    with pytest.raises(CliError, match="predecessor artifacts are required"):
+        _call(f, expected_completed_prefix=expected)
     assert _git(f["root"], "branch", "--show-current") == "legacy"
     assert {p: p.read_bytes() for p in before} == before
 
@@ -245,7 +264,7 @@ def test_cutover_rejects_forged_prefix_fields(tmp_path: Path) -> None:
     chain = _json(f["state"])
     chain["completed"] = forged
     _write(f["state"], chain)
-    with pytest.raises(CliError, match="non-canonical caller fields"):
+    with pytest.raises(CliError, match="persisted completed prefix contains non-canonical fields"):
         _call(f, expected_completed_prefix=forged)
 
 
