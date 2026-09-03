@@ -8,10 +8,13 @@ from typing import Any
 import pytest
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.incident.chain_control import chain_id_for_spec
+from arnold_pipelines.megaplan.cloud.operator_control import RESUME_HOLD_SCHEMA
 from arnold_pipelines.megaplan.chain.target_rebind import (
     cutover_paused_checkout,
     sha256_path,
 )
+import arnold_pipelines.megaplan.chain.target_rebind as target_rebind
 from arnold_pipelines.megaplan.cloud.runtime_cutover import normalize_runtime_identity
 from arnold_pipelines.megaplan.types import CliError
 
@@ -61,12 +64,12 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
     pause = {"schema_version": "arnold.megaplan.operator-pause.v1", "active": True, "plan": "c2-aborted", "paused_at": "2026-09-03T00:00:00Z"}
     runtime = normalize_runtime_identity({"import_root": str(root), "source_revision": old, "editable_root": str(root), "editable_revision": old, "direct_url": {}, "pth": [], "imports": {}})
     completed = [{"label": label, "status": "completed"} for label in labels[:6]]
-    chain = {"schema_version": 1, "current_milestone_index": 6, "current_plan_name": None, "last_state": "paused", "completed": completed, "chain_session": None, "metadata": {"_nbf08_revision": 0, "operator_pause": pause, "execution_binding": {"launched_identity": {"runtime": runtime}}, "chain_spec_sha256": sha256_path(spec)}}
+    chain = {"schema_version": 1, "current_milestone_index": 6, "current_plan_name": None, "last_state": "paused", "completed": completed, "chain_session": root.name, "metadata": {"_nbf08_revision": 0, "chain_id": chain_id_for_spec(spec), "operator_pause": pause, "chain_policy": {"milestone_base_sha": old}, "execution_binding": {"launched_identity": {"runtime": runtime}}, "chain_spec_sha256": sha256_path(spec)}}
     _write(state_path, chain)
     plan_path = root / ".megaplan" / "plans" / "c2-aborted" / "state.json"
     _write(plan_path, {"name": "c2-aborted", "current_state": "aborted", "active_step": None, "history": [{"step": "execute", "result": "aborted"}], "meta": {}})
     marker_path = root / ".megaplan" / "marker.json"
-    hold = {"active": True, "session": root.name, "spec": str(spec.resolve())}
+    hold = {"schema_version": RESUME_HOLD_SCHEMA, "active": True, "session": root.name, "spec": str(spec.resolve()), "workspace": str(root.resolve())}
     _write(marker_path, {"should_run": False, "operator_pause": pause, "operator_resume_hold": hold, "runtime_binding": {"current_identity": runtime}, "editable_install_sync": {"source": str(root)}})
     return {"root": root, "spec": spec, "state": state_path, "plan": plan_path, "marker": marker_path, "old": old, "target": target, "prefix": completed, "pause": pause, "hold": hold, "runtime": runtime}
 
@@ -135,6 +138,72 @@ def test_cutover_paused_checkout_recovers_after_checkout_lost_ack(tmp_path: Path
     second = _call(f)
     assert second["outcome"] == "committed"
     assert _git(f["root"], "rev-parse", "HEAD") == f["target"]
+
+
+def test_cutover_paused_checkout_recovers_after_projection_lost_ack(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+
+    def lose_ack(stage: str) -> None:
+        if stage == "after_state_write":
+            raise RuntimeError("simulated post-state lost acknowledgement")
+
+    with pytest.raises(RuntimeError, match="post-state lost acknowledgement"):
+        _call(f, failure_injector=lose_ack)
+    assert _git(f["root"], "rev-parse", "HEAD") == f["target"]
+    second = _call(f)
+    assert second["outcome"] == "recovered"
+
+
+def test_cutover_checks_action_off_before_remote_observation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    f = _fixture(tmp_path)
+    marker = _json(f["marker"])
+    marker["should_run"] = True
+    _write(f["marker"], marker)
+
+    def remote_must_not_run(*args: Any, **kwargs: Any) -> str:
+        raise AssertionError("remote observation occurred before action-off guard")
+
+    monkeypatch.setattr(target_rebind, "_remote_advertised_sha", remote_must_not_run)
+    with pytest.raises(CliError, match="replay authority hold or action-off"):
+        _call(f)
+
+
+def test_cutover_requires_canonical_session_and_chain_id(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    chain = _json(f["state"])
+    chain["chain_session"] = None
+    _write(f["state"], chain)
+    with pytest.raises(CliError, match="replay authority session or chain ID"):
+        _call(f)
+
+
+def test_cutover_rejects_divergent_plan_binding_without_mutation(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    plan = _json(f["plan"])
+    plan["meta"]["project_source_binding"] = {"current": {"branch": "other"}}
+    _write(f["plan"], plan)
+    with pytest.raises(CliError, match="plan source binding diverges"):
+        _call(f)
+
+
+def test_cutover_rejects_foreign_pending_journal_before_remote(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+
+    def lose_ack(stage: str) -> None:
+        if stage == "after_git_switch":
+            raise RuntimeError("leave foreign intent")
+
+    with pytest.raises(RuntimeError, match="leave foreign intent"):
+        _call(f, failure_injector=lose_ack)
+    _git(f["root"], "switch", "-c", "docs/target-2")
+    (f["root"] / "source.txt").write_text("newer\n", encoding="utf-8")
+    _git(f["root"], "add", "source.txt")
+    _git(f["root"], "commit", "-m", "target 2")
+    target_2 = _git(f["root"], "rev-parse", "HEAD")
+    _git(f["root"], "push", "-u", "origin", "docs/target-2")
+    _git(f["root"], "switch", "legacy")
+    with pytest.raises(CliError, match="foreign journal operation"):
+        _call(f, to_branch="docs/target-2", to_head=target_2, to_ref="refs/heads/docs/target-2")
 
 
 def test_parser_exposes_cutover_paused_checkout() -> None:

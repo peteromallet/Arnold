@@ -727,6 +727,7 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.runtime_rebound",
         "chain_control.hold_released",
         "chain_control.hold_context_attested",
+        "chain_control.source_checkout_cutover",
     }
 )
 
@@ -1216,6 +1217,7 @@ class ChainControlJournal:
                         "chain_control.hold_context_attested",
                         "chain_control.current_attempt_adopted",
                         "chain_control.aborted_c2_authority_admitted",
+                        "chain_control.source_checkout_cutover",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",
                     } or op_id not in operations:

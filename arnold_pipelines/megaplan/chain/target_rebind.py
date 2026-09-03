@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.chain.operator_pause import (
     AUTHORITY_KEY,
     AUTHORITY_SCHEMA,
 )
+from arnold_pipelines.megaplan.cloud.operator_control import RESUME_HOLD_SCHEMA
 from arnold_pipelines.megaplan.types import CliError
 
 PROJECT_SOURCE_BINDING_SCHEMA = "arnold.megaplan.project_source_binding.v1"
@@ -1078,6 +1079,7 @@ def cutover_paused_checkout(
         ChainStateAdapter,
         canonical_json,
         chain_id_for_spec,
+        _incomplete_operation_statuses,
         journal_for,
         physical_digest_after,
         read_physical_lines,
@@ -1099,7 +1101,7 @@ def cutover_paused_checkout(
     marker_path = marker_path.resolve(strict=False)
     aborted_plan_path = aborted_plan_path.resolve(strict=False)
     chain_path = chain_spec._state_path_for(spec_path)
-    for path in (spec_path, chain_path, aborted_plan_path):
+    for path in (spec_path, chain_path, marker_path, aborted_plan_path):
         try:
             path.relative_to(project_root)
         except ValueError as exc:
@@ -1127,9 +1129,7 @@ def cutover_paused_checkout(
     chain_raw, chain = _load_json_bytes(chain_path, label="chain state")
     plan_raw, plan = _load_json_bytes(aborted_plan_path, label="aborted C2 plan")
     marker_raw, marker = _load_json_bytes(marker_path, label="session marker")
-    _assert_hash(chain_raw, expected_chain_state_sha256, label="chain-state SHA-256")
     _assert_hash(plan_raw, expected_plan_state_sha256, label="plan-state SHA-256")
-    _assert_hash(marker_raw, expected_marker_sha256, label="marker SHA-256")
     if sha256_path(spec_path) != expected_spec_sha256:
         refuse("chain spec SHA-256 changed")
     spec = chain_spec.load_spec(spec_path)
@@ -1138,21 +1138,47 @@ def cutover_paused_checkout(
     # Derive the id before inspecting the live checkout so a retry with the
     # original pre-state guards can replay after the checkout has moved.
     early_source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
-    early_target_advertised = _remote_advertised_sha(project_root, to_ref)
-    if early_target_advertised != to_head:
-        refuse("advertised target does not match guarded target HEAD")
+    # The target SHA is an input identity; remote observation is deliberately
+    # deferred until every local action-off/authority guard has passed.
+    early_target_advertised = to_head
     early_target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": early_target_advertised}
     chain_id = chain_id_for_spec(spec_path)
     early_guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": expected_completed_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": early_source, "target": early_target}
     early_operation_id = "c2-checkout-cutover-" + sha256_hex(canonical_json(early_guard_material))
     journal = journal_for(project_root)
     early_replay = journal.replay_strict()
+    # Replay/refusal still requires the stable authority identities; mutable
+    # pre-state hashes may legitimately differ after a committed cutover.
+    replay_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    replay_hold = marker.get("operator_resume_hold")
+    if chain.get("chain_session") != expected_session_id or replay_meta.get("chain_id") != chain_id:
+        refuse("replay authority session or chain ID diverges")
+    if marker.get("should_run") is not False or not isinstance(replay_hold, Mapping) or replay_hold != dict(expected_hold):
+        refuse("replay authority hold or action-off state diverges")
+    if marker_runtime_identity(marker) != normalize_runtime_identity(expected_runtime_identity):
+        refuse("replay runtime identity diverges")
     pending_intent = next(
         (event for event in reversed(early_replay.get("accepted", []))
-         if event.get("operation_id") == early_operation_id
-         and event.get("event_kind") == "chain_control.intent"),
+         if event.get("event_kind") == "chain_control.intent"
+         and isinstance(event.get("payload"), Mapping)
+         and isinstance(event["payload"].get("effect"), Mapping)
+         and event["payload"]["effect"].get("source") == early_source
+         and event["payload"]["effect"].get("target") == early_target),
         None,
     )
+    # Replays may carry refreshed observational hashes; retain the original
+    # operation identity from its durable intent when source/target identities
+    # are unchanged.
+    if pending_intent is not None and isinstance(pending_intent.get("operation_id"), str):
+        early_operation_id = str(pending_intent["operation_id"])
+    replay_identity_from_intent = pending_intent is not None
+    foreign_incomplete = {
+        operation: kind
+        for operation, kind in _incomplete_operation_statuses(early_replay, chain_id).items()
+        if operation != early_operation_id
+    }
+    if foreign_incomplete:
+        refuse("a foreign journal operation is incomplete", operations=foreign_incomplete)
     early_existing = next(
         (event for event in reversed(early_replay.get("accepted", []))
          if event.get("operation_id") == early_operation_id
@@ -1162,11 +1188,50 @@ def cutover_paused_checkout(
     if early_existing is not None and early_existing.get("event_kind") == "chain_control.source_checkout_cutover":
         payload = early_existing.get("payload") if isinstance(early_existing.get("payload"), Mapping) else {}
         effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
-        if effect.get("guard_digest") != sha256_hex(canonical_json(early_guard_material)):
+        if not replay_identity_from_intent and effect.get("guard_digest") != sha256_hex(canonical_json(early_guard_material)):
             refuse("committed cutover guard digest differs")
         if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
             refuse("committed cutover checkout diverged")
         return {"outcome": "replay", "operation_id": early_operation_id, "receipt": dict(early_existing), "external_effect": False}
+    # A process may disappear after both projections were written but before
+    # the terminal event was acknowledged.  Complete that exact intent before
+    # applying any pre-state hash or Git-side effect.
+    if pending_intent is not None:
+        pending_payload = pending_intent.get("payload") if isinstance(pending_intent.get("payload"), Mapping) else {}
+        pending_effect = pending_payload.get("effect") if isinstance(pending_payload.get("effect"), Mapping) else {}
+        pending_post_chain = pending_effect.get("post_chain")
+        pending_post_marker = pending_effect.get("post_marker")
+        if isinstance(pending_post_chain, Mapping) and isinstance(pending_post_marker, Mapping):
+            pending_meta = pending_post_chain.get("metadata") if isinstance(pending_post_chain.get("metadata"), Mapping) else {}
+            pending_hold = pending_post_marker.get("operator_resume_hold")
+            pending_runtime = marker_runtime_identity(pending_post_marker)
+            if (_current_branch(project_root) == to_branch and _current_head(project_root) == to_head
+                    and state_digest_for(chain) == pending_effect.get("post_chain_digest")
+                    and marker == dict(pending_post_marker)
+                    and pending_post_chain.get("chain_session") == expected_session_id
+                    and pending_meta.get("chain_id") == chain_id
+                    and pending_post_chain.get("completed") == [dict(item) for item in expected_completed_prefix]
+                    and pending_hold == dict(expected_hold)
+                    and pending_runtime == normalize_runtime_identity(expected_runtime_identity)):
+                with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, marker_path, spec_path, aborted_plan_path], operation_id=early_operation_id, actor={"id": actor, "class": "operator"}) as txn:
+                    terminal = journal.operation_result(early_operation_id)
+                    if terminal is not None and terminal.get("event_kind") == "chain_control.source_checkout_cutover":
+                        return {"outcome": "replay", "operation_id": early_operation_id, "receipt": dict(terminal), "external_effect": False}
+                    committed = journal.append_under_lock(
+                        txn, event_kind="chain_control.source_checkout_cutover", chain_id=chain_id,
+                        operation_id=early_operation_id, causation_id=str(pending_intent.get("event_id") or early_operation_id),
+                        correlation_id=early_operation_id, payload={"schema": pending_effect.get("schema"), "effect": dict(pending_effect)},
+                        semantic_effect="metadata_only", claim_class="required", actor={"id": actor, "class": "operator"},
+                        outcome="committed", intent="cutover-paused-checkout", expected_cursor=expected_cursor,
+                        expected_revision=expected_chain_revision, actual_cursor=expected_cursor,
+                        actual_revision=pending_post_chain.get("metadata", {}).get("_nbf08_revision"),
+                        pre_state_digest=pending_effect.get("pre_chain_digest"), post_state_digest=pending_effect.get("post_chain_digest"),
+                        source_identity=pending_effect.get("source"), spec_identity=str(spec_path),
+                        linked_receipts=[str(pending_intent.get("event_id") or early_operation_id)],
+                    )
+                    return {"outcome": "recovered", "operation_id": early_operation_id, "receipt": committed, "external_effect": False}
+    _assert_hash(chain_raw, expected_chain_state_sha256, label="chain-state SHA-256")
+    _assert_hash(marker_raw, expected_marker_sha256, label="marker SHA-256")
     # A caller may repeat with refreshed observational file hashes after the
     # first commit.  The committed source/target tuple remains the stronger
     # idempotency identity than those mutable observations.
@@ -1185,27 +1250,13 @@ def cutover_paused_checkout(
         pending_intent is not None and current_branch == to_branch and current_head == to_head
     ):
         refuse("current checkout branch/HEAD does not match guarded source")
-    _assert_clean_worktree(project_root)
-    if _remote_advertised_sha(project_root, from_ref) != from_head:
-        refuse("advertised source does not match guarded source HEAD")
-    target_advertised = _remote_advertised_sha(project_root, to_ref)
-    if target_advertised != to_head:
-        refuse("advertised target does not match guarded target HEAD")
-    _fetch_advertised_ref(project_root, to_ref, to_head)
-    if not _is_ancestor(project_root, from_head, to_head) or from_head == to_head:
-        refuse("target checkout must be a strict fast-forward of guarded source")
-    if not _is_ancestor(project_root, to_milestone_base, to_head):
-        refuse("target milestone base is not an ancestor of target HEAD")
-
+    # All authority/action-off checks must precede ls-remote, fetch, ancestry,
+    # and checkout effects.  The path is part of the same authority closure.
     chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
     if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
         refuse("chain is not paused at cursor 6 with a null current plan")
     if chain_meta.get("_nbf08_revision") != expected_chain_revision:
         refuse("chain revision does not match guard")
-    if chain.get("chain_session") not in (None, expected_session_id):
-        refuse("chain session identity does not match guard")
-    if chain_meta.get("chain_id") not in (None, chain_id):
-        refuse("chain ID does not match the guarded spec")
     if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
         refuse("aborted C2 plan is not immutable and inactive")
     plan_name = str(plan.get("name") or aborted_plan_path.parent.name)
@@ -1213,8 +1264,39 @@ def cutover_paused_checkout(
     hold = marker.get("operator_resume_hold")
     if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
         refuse("marker is not paused, held, and action-off")
-    if chain_meta.get(AUTHORITY_KEY) != dict(pause):
+    if chain.get("chain_session") != expected_session_id:
+        refuse("chain session identity is required and does not match guard")
+    if chain_meta := (chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}):
+        if chain_meta.get("chain_id") != chain_id:
+            refuse("chain ID identity is required and does not match the guarded spec")
+    else:
+        refuse("chain metadata authority is unavailable")
+    if chain_meta.get("operator_pause") != marker.get("operator_pause"):
         refuse("chain and marker pause authorities do not match")
+    if not isinstance(hold, Mapping) or hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path):
+        refuse("canonical active hold identity is required")
+    canonical_plan_path = find_plan_dir(project_root, plan_name) / "state.json"
+    if aborted_plan_path != canonical_plan_path.resolve(strict=False):
+        refuse("aborted plan path is not the canonical plan authority")
+    if any(item.get("status") != "completed" for item in expected_completed_prefix):
+        refuse("completed prefix records must carry completed status")
+    try:
+        from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+        _assert_artifact_hashes(project_root, [dict(item) for item in expected_completed_prefix])
+    except CliError:
+        raise
+    if chain_meta.get("chain_policy", {}).get("milestone_base_sha") not in (None, from_milestone_base):
+        refuse("source milestone base does not match chain policy")
+    existing_binding = chain_meta.get("project_source_binding")
+    if isinstance(existing_binding, Mapping) and existing_binding.get("current") not in (None, early_source):
+        refuse("existing chain source binding diverges from guarded source")
+    marker_binding = marker.get("project_source_binding")
+    if isinstance(marker_binding, Mapping) and marker_binding.get("current") not in (None, early_source):
+        refuse("existing marker source binding diverges from guarded source")
+    plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
+    plan_binding = plan_meta.get("project_source_binding")
+    if isinstance(plan_binding, Mapping) and plan_binding.get("current") not in (None, early_source):
+        refuse("existing plan source binding diverges from guarded source")
     if dict(hold) != dict(expected_hold) or hold.get("session") != expected_session_id:
         refuse("active hold does not match guard")
     observed_runtime = marker_runtime_identity(marker)
@@ -1235,7 +1317,32 @@ def cutover_paused_checkout(
         refuse("guarded completed prefix is not canonical")
     if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
         refuse("an active owner is present")
+    if sha256_path(spec_path) != target_spec_sha256:
+        refuse("target chain spec SHA-256 does not match its guard")
+    _assert_clean_worktree(project_root)
+    if _remote_advertised_sha(project_root, from_ref) != from_head:
+        refuse("advertised source does not match guarded source HEAD")
+    target_advertised = _remote_advertised_sha(project_root, to_ref)
+    if target_advertised != to_head:
+        refuse("advertised target does not match guarded target HEAD")
+    _fetch_advertised_ref(project_root, to_ref, to_head)
+    if not _is_ancestor(project_root, from_head, to_head) or from_head == to_head:
+        refuse("target checkout must be a strict fast-forward of guarded source")
+    if not _is_ancestor(project_root, to_milestone_base, to_head):
+        refuse("target milestone base is not an ancestor of target HEAD")
 
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
+        refuse("chain is not paused at cursor 6 with a null current plan")
+    if chain_meta.get("_nbf08_revision") != expected_chain_revision:
+        refuse("chain revision does not match guard")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        refuse("aborted C2 plan is not immutable and inactive")
+    plan_name = str(plan.get("name") or aborted_plan_path.parent.name)
+    pause = marker.get("operator_pause")
+    hold = marker.get("operator_resume_hold")
+    if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
+        refuse("marker is not paused, held, and action-off")
     source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
     target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": target_advertised}
     chain_id = chain_id_for_spec(spec_path)
@@ -1323,13 +1430,24 @@ def cutover_paused_checkout(
     except ChainControlHold:
         raise
     except Exception:
-        # Keep the journal intent as the recovery authority; rollback both the
-        # checkout and local projections when the transaction did not commit.
+        # Keep the journal intent as the recovery authority.  If both
+        # projections and the checkout already equal the recorded post-state,
+        # preserve them so a later invocation can append the terminal receipt;
+        # otherwise roll back the incomplete external effect.
         try:
-            if _current_branch(project_root) != prior_branch or _current_head(project_root) != prior_head:
-                _restore_git(project_root, branch=prior_branch, head=prior_head, created_branch=created_branch)
-            _atomic_write(chain_path, chain_raw)
-            _atomic_write(marker_path, marker_raw)
+            post_chain_raw, post_chain_now = _load_json_bytes(chain_path, label="post chain state")
+            post_marker_raw, post_marker_now = _load_json_bytes(marker_path, label="post marker")
+            post_state_present = (
+                _current_branch(project_root) == to_branch
+                and _current_head(project_root) == to_head
+                and state_digest_for(post_chain_now) == effect["post_chain_digest"]
+                and post_marker_now == effect["post_marker"]
+            )
+            if not post_state_present:
+                if _current_branch(project_root) != prior_branch or _current_head(project_root) != prior_head:
+                    _restore_git(project_root, branch=prior_branch, head=prior_head, created_branch=created_branch)
+                _atomic_write(chain_path, chain_raw)
+                _atomic_write(marker_path, marker_raw)
         except Exception:
             pass
         raise
