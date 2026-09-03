@@ -4374,6 +4374,7 @@ def _chain_runtime_probe_and_create_command(
             f"BASE_REF={shlex.quote(base_ref)}",
             f"EXPECTED_SPEC={shlex.quote(spec_path or '')}",
             f"EXPECTED_WORKSPACE={shlex.quote(workspace_path or '')}",
+            f"CANONICAL_ORIGIN={shlex.quote(canonical_origin_url or '')}",
             source_guard,
             *create_env,
             'if [ -f "$MANIFEST" ]; then',
@@ -4386,7 +4387,7 @@ def _chain_runtime_probe_and_create_command(
             # returns 77 for an ordinary marker so the generic refusal below
             # remains the compatibility path.
             '  RECOVERED_PRECHAIN=0',
-            '  if [ -n "${CHAIN_MARKER:-}" ] && "$PYTHON_BIN" -m arnold_pipelines.megaplan.cloud.recovered_prechain_admission "$MANIFEST" "$CHAIN_MARKER" "${CHAIN_STATE:-}" "$RUNTIME_SRC" "${CHAIN_SESSION:-}" "$SLUG" "$EXPECTED_SPEC" "$EXPECTED_WORKSPACE"; then RECOVERED_PRECHAIN=1; else admission_rc=$?; if [ "$admission_rc" -ne 77 ]; then exit "$admission_rc"; fi; fi',
+            '  if [ -n "${CHAIN_MARKER:-}" ] && "$PYTHON_BIN" -m arnold_pipelines.megaplan.cloud.recovered_prechain_admission "$MANIFEST" "$CHAIN_MARKER" "${CHAIN_STATE:-}" "$RUNTIME_SRC" "${CHAIN_SESSION:-}" "$SLUG" "$EXPECTED_SPEC" "$EXPECTED_WORKSPACE" "$CANONICAL_ORIGIN"; then RECOVERED_PRECHAIN=1; else admission_rc=$?; if [ "$admission_rc" -ne 77 ]; then exit "$admission_rc"; fi; fi',
             '  if [ "$RECOVERED_PRECHAIN" -ne 1 ]; then',
             '    for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-fence.json}"; do',
             '    if [ -n "$authority" ] && [ -e "$authority" ]; then echo "chain runtime recovery refused: existing chain authority $authority" >&2; exit 1; fi',

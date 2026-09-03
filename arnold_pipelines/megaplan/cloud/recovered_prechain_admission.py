@@ -18,9 +18,12 @@ import os
 import stat
 import subprocess
 import sys
+import urllib.parse
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Mapping
+
+from arnold_pipelines.megaplan.incident.chain_control import journal_for
 
 
 _OCCUPANCY_KEYS = (
@@ -109,54 +112,113 @@ def _parse_expiry(value: Any) -> _dt.datetime:
     return parsed.astimezone(_dt.timezone.utc)
 
 
-def _event_has_recovery(events_path: Path, *, operation: str, new_sha: str,
-                        generation: int, marker_sha: str, manifest_sha: str) -> bool:
-    raw = _read_regular(events_path, "chain-control journal")
-    found = False
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            _fail("chain-control journal contains invalid JSON")
+def _strict_recovery_event(events_path: Path, *, operation: str,
+                           expected_spec: str, new_sha: str, generation: int,
+                           marker_sha: str, manifest_sha: str,
+                           archive_path: Path, expected_workspace: str,
+                           runtime_src: str) -> dict[str, Any]:
+    """Replay the real chain-control journal and return one exact recovery."""
+    if not expected_spec:
+        _fail("recovery admission requires an exact chain spec")
+    try:
+        replay = journal_for(events_path.parent.parent.parent).replay_strict()
+    except Exception as exc:  # noqa: BLE001 - the probe must fail closed
+        _fail(f"chain-control journal replay failed: {type(exc).__name__}")
+    expected_chain = "chain-" + hashlib.sha256(
+        str(Path(expected_spec).resolve(strict=False)).encode("utf-8")
+    ).hexdigest()[:16]
+    matches = []
+    for event in replay.get("accepted", []):
         if not isinstance(event, Mapping):
-            _fail("chain-control journal contains a non-object event")
-        payload = event.get("payload")
-        if not isinstance(payload, Mapping):
             continue
-        if event.get("operation_id") != operation:
-            continue
-        if event.get("event_kind") not in {"chain_control.committed", "committed"}:
-            continue
-        if payload.get("outcome") not in {"committed", "recovered"} and event.get("outcome") not in {"committed", "recovered"}:
-            continue
-        effect = payload.get("effect")
-        if not isinstance(effect, Mapping):
-            effect = event.get("effect")
-        if not isinstance(effect, Mapping):
-            continue
-        # Recovery versions have used both explicit source_new_sha and a
-        # nested source object.  Accept only exact values, never assertions.
-        source = effect.get("source")
-        observed_new = effect.get("source_new_sha")
-        if isinstance(source, Mapping):
-            observed_new = source.get("new_sha", observed_new)
-        if observed_new != new_sha:
-            continue
-        if effect.get("manifest_generation") != generation:
-            continue
-        if effect.get("manifest_sha256") != manifest_sha:
-            continue
-        if effect.get("marker_sha256") not in {marker_sha, None}:
-            continue
-        found = True
-    return found
+        if (event.get("event_kind") == "chain_control.committed"
+                and event.get("operation_id") == operation
+                and event.get("chain_id") == expected_chain):
+            matches.append(event)
+    if len(matches) != 1:
+        _fail("strict journal has no unique committed recovery operation")
+    event = matches[0]
+    if event.get("spec_identity") not in (None, expected_spec):
+        _fail("committed recovery spec identity mismatch")
+    if event.get("outcome") != "committed":
+        _fail("recovery journal operation is not committed")
+    linked = event.get("linked_receipts")
+    if not isinstance(linked, list) or str(archive_path) not in linked:
+        _fail("committed recovery archive link is missing")
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        _fail("committed recovery effect is missing")
+    if payload.get("intent_kind") != "failed_prechain_recovery":
+        _fail("committed recovery intent identity mismatch")
+    effect = payload.get("effect")
+    if not isinstance(effect, Mapping):
+        _fail("committed recovery effect is missing")
+    source = effect.get("source")
+    observed_new = effect.get("source_new_sha")
+    if isinstance(source, Mapping):
+        observed_new = source.get("new_sha", observed_new)
+    if observed_new != new_sha or effect.get("manifest_generation") != generation:
+        _fail("committed recovery source/generation binding mismatch")
+    if effect.get("manifest_sha256") != manifest_sha:
+        _fail("committed recovery manifest digest mismatch")
+    if effect.get("marker_sha256") != marker_sha:
+        _fail("committed recovery marker digest mismatch")
+    if effect.get("staged_runtime") != runtime_src:
+        _fail("committed recovery runtime identity mismatch")
+    source_identity = event.get("source_identity")
+    if not isinstance(source_identity, Mapping):
+        _fail("committed recovery source identity is missing")
+    if (source_identity.get("new_sha") != new_sha
+            or source_identity.get("chain_workspace") != expected_workspace
+            or not isinstance(source_identity.get("engine_runtime"), str)
+            or not source_identity.get("engine_runtime")):
+        _fail("committed recovery source identity mismatch")
+    return dict(event)
+
+
+def _git_identity(runtime: Path, *, expected_head: str, expected_branch: str,
+                  canonical_origin: str | None) -> tuple[str, ...]:
+    def git(*args: str) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(runtime), *args], capture_output=True,
+                text=True, check=False,
+            )
+        except OSError:
+            _fail("recovered runtime Git command is unavailable")
+        if result.returncode != 0:
+            _fail("recovered runtime is not a usable Git checkout")
+        return result.stdout.strip()
+
+    if not (runtime / ".git").exists():
+        _fail("recovered runtime is not a Git checkout")
+    head = git("rev-parse", "--verify", "HEAD")
+    tree = git("rev-parse", "--verify", "HEAD^{tree}")
+    if head != expected_head or len(tree) != 40:
+        _fail("recovered runtime HEAD/tree does not match manifest")
+    if git("status", "--porcelain=v1", "--untracked-files=all"):
+        _fail("recovered runtime checkout is dirty")
+    branch = expected_branch.strip()
+    if branch:
+        refs = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+        if branch not in refs.splitlines():
+            _fail("recovered runtime declared branch is absent")
+    origin = git("remote", "get-url", "origin")
+    if canonical_origin:
+        def canonical(value: str) -> tuple[str, str]:
+            parsed = urllib.parse.urlparse(value)
+            host = (parsed.hostname or "").lower()
+            path = parsed.path.rstrip("/").removesuffix(".git").lower()
+            return host, path
+        if canonical(origin) != canonical(canonical_origin):
+            _fail("recovered runtime origin does not match canonical origin")
+    return head, tree, origin, branch
 
 
 def _admit(*, manifest_path: Path, marker_path: Path, state_path: Path,
            runtime_src: str, session: str, slug: str,
-           expected_spec: str | None, expected_workspace: str | None) -> None:
+           expected_spec: str | None, expected_workspace: str | None,
+           canonical_origin: str | None = None) -> None:
     # First distinguish an ordinary existing runtime (exit 77 means the shell
     # caller should retain the historical generic authority refusal).
     if not marker_path.exists():
@@ -265,8 +327,10 @@ def _admit(*, manifest_path: Path, marker_path: Path, state_path: Path,
             _fail("recovery archive belongs to another operation")
 
         receipt_path = archive_path.parent / "recovery-receipt.json"
-        _, receipt = _json(receipt_path, "recovery receipt")
-        if receipt.get("operation_id") != operation or receipt.get("outcome") != "recovered":
+        receipt_raw, receipt = _json(receipt_path, "recovery receipt")
+        if (receipt.get("operation_id") != operation
+                or receipt.get("session") not in (None, session)
+                or receipt.get("outcome") != "recovered"):
             _fail("recovery receipt identity/outcome mismatch")
         receipt_manifest = receipt.get("manifest")
         receipt_marker = receipt.get("marker")
@@ -284,10 +348,24 @@ def _admit(*, manifest_path: Path, marker_path: Path, state_path: Path,
             _fail("recovery receipt runtime binding mismatch")
 
         events = workspace_path / ".megaplan" / "incident-ledger" / "events.jsonl"
-        if not _event_has_recovery(events, operation=operation, new_sha=new_sha,
-                                   generation=generation, marker_sha=recovered_marker_sha,
-                                   manifest_sha=_sha(manifest_raw)):
-            _fail("committed recovery journal evidence is missing or contradictory")
+        events_raw = _read_regular(events, "chain-control journal")
+        event = _strict_recovery_event(
+            events, operation=operation, expected_spec=expected_spec or "",
+            new_sha=new_sha, generation=generation,
+            marker_sha=recovered_marker_sha, manifest_sha=_sha(manifest_raw),
+            archive_path=archive_path, expected_workspace=workspace,
+            runtime_src=runtime_src,
+        )
+        # The current marker must still be exactly the marker committed by
+        # recovery.  A later launch attempt cannot be silently adopted.
+        if recovered_marker_sha != _sha(marker_raw):
+            _fail("recovery receipt marker digest does not match current marker")
+
+        expected_branch = str(epic.get("branch") or "")
+        runtime_identity = _git_identity(
+            Path(runtime_src), expected_head=new_sha,
+            expected_branch=expected_branch, canonical_origin=canonical_origin,
+        )
 
         lease_raw, lease_payload = _json(lease, "liveness lease")
         if lease_payload.get("session") != session or lease_payload.get("status") != "stopped":
@@ -327,6 +405,23 @@ def _admit(*, manifest_path: Path, marker_path: Path, state_path: Path,
             _fail("liveness lease changed during admission")
         if _read_regular(fence, "liveness fence") != fence_raw:
             _fail("liveness fence changed during admission")
+        if _read_regular(manifest_path, "runtime manifest") != manifest_raw:
+            _fail("runtime manifest changed during admission")
+        if _read_regular(receipt_path, "recovery receipt") != receipt_raw:
+            _fail("recovery receipt changed during admission")
+        if _read_regular(archive_path, "recovery archive manifest") != archive_raw:
+            _fail("recovery archive changed during admission")
+        if _read_regular(events, "chain-control journal") != events_raw:
+            _fail("chain-control journal changed during admission")
+        if _git_identity(
+            Path(runtime_src), expected_head=new_sha,
+            expected_branch=expected_branch, canonical_origin=canonical_origin,
+        ) != runtime_identity:
+            _fail("recovered runtime Git authority changed during admission")
+        # Keep the computed values live so this code remains an explicit
+        # authority attestation rather than a discarded probe.
+        if not runtime_identity or not event:
+            _fail("recovered runtime authority attestation is incomplete")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,12 +434,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("slug")
     parser.add_argument("spec", nargs="?", default="")
     parser.add_argument("workspace", nargs="?", default="")
+    parser.add_argument("canonical_origin", nargs="?", default="")
     args = parser.parse_args(argv)
     _admit(
         manifest_path=Path(args.manifest), marker_path=Path(args.marker),
         state_path=Path(args.state), runtime_src=args.runtime_src,
         session=args.session, slug=args.slug,
         expected_spec=args.spec or None, expected_workspace=args.workspace or None,
+        canonical_origin=args.canonical_origin or None,
     )
     return 0
 

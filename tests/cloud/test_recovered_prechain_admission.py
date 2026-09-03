@@ -93,9 +93,35 @@ def _run_admit(fixture: dict[str, object]) -> None:
     )
 
 
+def _mock_authorities(monkeypatch: pytest.MonkeyPatch, fixture: dict[str, object]) -> None:
+    operation = "b" * 64
+    manifest = Path(fixture["manifest"])
+    marker = Path(fixture["marker"])
+    archive = manifest.parent.parent / "custody" / operation / "manifest.json"
+    event = {
+        "event_kind": "chain_control.committed", "operation_id": operation,
+        "chain_id": "chain-" + hashlib.sha256(str(Path(fixture["spec"]).resolve()).encode()).hexdigest()[:16],
+        "spec_identity": str(fixture["spec"]), "outcome": "committed",
+        "source_identity": {"new_sha": fixture["new_sha"], "chain_workspace": str(fixture["workspace"]), "engine_runtime": str(fixture["runtime"])},
+        "linked_receipts": [str(archive)],
+        "payload": {
+            "intent_kind": "failed_prechain_recovery",
+            "effect": {
+                "source_new_sha": fixture["new_sha"], "manifest_generation": 2,
+                "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                "marker_sha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+                "staged_runtime": str(fixture["runtime"]),
+            },
+        },
+    }
+    monkeypatch.setattr(admission, "journal_for", lambda _root: type("J", (), {"replay_strict": lambda self: {"accepted": [event]}})())
+    monkeypatch.setattr(admission, "_git_identity", lambda *a, **k: (fixture["new_sha"], "d" * 40, "https://github.com/example/Arnold.git", ""))
+
+
 def test_recovered_prechain_marker_is_admitted_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = _fixture(tmp_path)
     monkeypatch.setattr(admission.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 1, "", ""))
+    _mock_authorities(monkeypatch, fixture)
     before = {p: p.read_bytes() for p in (fixture["marker"], fixture["lease"])}
     _run_admit(fixture)
     assert {p: p.read_bytes() for p in before} == before
@@ -111,10 +137,35 @@ def test_ordinary_existing_marker_is_not_admitted(tmp_path: Path, monkeypatch: p
     assert exc.value.code == 77
 
 
+def test_strict_replay_and_receipt_marker_binding_are_required(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = _fixture(tmp_path)
+    monkeypatch.setattr(admission, "journal_for", lambda _root: type("J", (), {"replay_strict": lambda self: {"accepted": [{}]}})())
+    with pytest.raises(SystemExit) as exc:
+        _run_admit(fixture)
+    assert exc.value.code == 78
+
+    fixture = _fixture(tmp_path / "tampered")
+    _mock_authorities(monkeypatch, fixture)
+    receipt = next(Path(tmp_path / "tampered").glob("custody/*/recovery-receipt.json"))
+    value = json.loads(receipt.read_text())
+    value["marker"]["after_sha256"] = "0" * 64
+    receipt.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _run_admit(fixture)
+    assert exc.value.code == 78
+
+
+def test_non_git_runtime_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exc:
+        admission._git_identity(tmp_path / "missing-runtime", expected_head="a" * 40, expected_branch="", canonical_origin=None)
+    assert exc.value.code == 78
+
+
 @pytest.mark.parametrize("change", ["pid", "lease", "fence", "state", "receipt"])
 def test_recovered_prechain_rejects_live_or_mismatched_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str) -> None:
     fixture = _fixture(tmp_path)
     monkeypatch.setattr(admission.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 1, "", ""))
+    _mock_authorities(monkeypatch, fixture)
     if change == "pid":
         marker = json.loads(fixture["marker"].read_text())
         marker["pid"] = 1
