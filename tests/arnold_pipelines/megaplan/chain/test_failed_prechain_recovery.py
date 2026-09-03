@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -421,4 +422,49 @@ def test_reconcile_rejects_wrong_identity_and_existing_effect_without_mutation(
     kwargs["expected_session_id"] = f["project"].name
     kwargs["expected_marker_sha256"] = hashlib.sha256(f["marker"].read_bytes()).hexdigest()
     with pytest.raises(CliError, match="effect is already present"):
+        recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+
+
+def test_reconcile_accepts_only_an_empty_regular_receipt_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    receipt = f["evidence"].parent / "recovery-receipt.json"
+    receipt.write_bytes(b"")
+    kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="accept preserved empty stub", actor="operator",
+    )
+    result = recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)
+    assert result["outcome"] == "committed"
+    assert receipt.read_bytes() == b""
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "directory"])
+def test_reconcile_rejects_nonregular_receipt_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    f = _held_recovery_fixture(tmp_path, monkeypatch)
+    receipt = f["evidence"].parent / "recovery-receipt.json"
+    if kind == "symlink":
+        target = receipt.parent / "empty-target"
+        target.write_bytes(b"")
+        receipt.symlink_to(target)
+    elif kind == "fifo":
+        os.mkfifo(receipt)
+    else:
+        receipt.mkdir()
+    kwargs = dict(
+        marker_path=f["marker"], manifest_path=f["manifest"], source_path=f["source"],
+        workspace_path=f["workspace"], custody_dir=f["custody"], held_operation_id=f["operation_id"],
+        expected_hold_event_hash=f["hold_hash"], expected_session_id=f["project"].name,
+        expected_marker_sha256=f["marker_sha"], expected_manifest_sha256=f["manifest_sha"],
+        expected_spec_sha256=f["spec_sha"], expected_old_sha=f["old"], held_reviewed_new_sha=f["new"],
+        recovery_evidence=f["evidence"], reason="reject nonregular stub", actor="operator",
+    )
+    with pytest.raises(CliError, match="regular file"):
         recovery.reconcile_failed_prechain_hold(f["spec"], f["project"], **kwargs)

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -862,6 +863,36 @@ def reconcile_failed_prechain_hold(
         "chain_workspace": str(workspace_path),
         "engine_runtime": str(engine_runtime_path),
     }
+    receipt_path = recovery_evidence.parent / "recovery-receipt.json"
+
+    def _receipt_stub_identity() -> dict[str, Any] | None:
+        """Return the exact preserved empty regular-file stub identity."""
+        try:
+            info = receipt_path.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise _refuse("held recovery receipt stub is unreadable") from exc
+        if not stat.S_ISREG(info.st_mode):
+            raise _refuse("held recovery receipt stub must be a regular file")
+        if info.st_size != 0:
+            raise _refuse("recovery receipt already exists for held operation")
+        try:
+            digest = _sha(receipt_path)
+        except OSError as exc:
+            raise _refuse("held recovery receipt stub is unreadable") from exc
+        if digest != hashlib.sha256(b"").hexdigest():
+            raise _refuse("held recovery receipt stub content is not the empty digest")
+        return {
+            "path": str(receipt_path),
+            "device": info.st_dev,
+            "inode": info.st_ino,
+            "mode": stat.S_IMODE(info.st_mode),
+            "size": info.st_size,
+            "sha256": digest,
+        }
+
+    receipt_before = _receipt_stub_identity()
 
     def _live_identity() -> dict[str, Any]:
         """Re-read every authoritative identity under the final lock."""
@@ -891,9 +922,9 @@ def reconcile_failed_prechain_hold(
             raise ChainControlHold("workspace_effect_present", "chain workspace HEAD changed")
         if _head(engine_runtime_path) != old_sha or _status(engine_runtime_path):
             raise ChainControlHold("engine_effect_present", "engine runtime is not the unchanged clean held revision")
-        receipt_path = recovery_evidence.parent / "recovery-receipt.json"
-        if receipt_path.exists() and receipt_path.stat().st_size:
-            raise ChainControlHold("receipt_effect_present", "recovery receipt already exists for held operation")
+        receipt_now = _receipt_stub_identity()
+        if receipt_now != receipt_before:
+            raise ChainControlHold("receipt_cas_conflict", "preserved recovery receipt stub changed")
         return {
             "marker_sha256": hashlib.sha256(current_marker_raw).hexdigest(),
             "manifest_sha256": hashlib.sha256(current_manifest_raw).hexdigest(),
@@ -901,7 +932,8 @@ def reconcile_failed_prechain_hold(
             "workspace_head": _head(workspace_path),
             "engine_runtime": str(current_engine),
             "engine_head": _head(current_engine),
-            "receipt_state": "empty_stub" if receipt_path.exists() else "absent",
+            "receipt_state": "empty_stub" if receipt_now is not None else "absent",
+            "receipt_identity": receipt_now,
         }
 
     replay = journal.replay_strict()
