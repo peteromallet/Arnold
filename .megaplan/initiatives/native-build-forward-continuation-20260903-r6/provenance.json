@@ -3,12 +3,12 @@
   "initiative": "native-build-forward-continuation-20260903-r6",
   "source": {
     "ref": "main",
-    "head": "4635fc27a05ee02e5f5b9607009f9f02c0b46b91",
+    "head": "ec8d04fefa72b7d5950f935f6a2d1aa047e1f201",
     "branch": "fixer/native-build-forward-c2-4635fc27-20260903-r6"
   },
   "artifacts": {
-    "chain.yaml": "0a62619081bb2ae4cfd23395f6e8850adf0f15c52fb1bf1772061fe2be4046cf",
-    "HANDOFF.md": "7cc039b40c438440ea84b016cdd4016dbdaf7e134a4a3188d35f3b83ca2a8366",
+    "chain.yaml": "57ff3f921ec2852e502b01add259051a66cc1e257fc1c14f46513ef1b63f17d2",
+    "HANDOFF.md": "3018f6fad3ed48300f9707e156009fc4ef1ece577a774c23e325fbc9b26c2078",
     "NORTHSTAR.md": "5edf0673142580ea922849c27538cb0c18e20983c5af4c26d9b9d5efd791699d",
     "cloud.yaml": "ddefada13290f6fb3559c177c40c03bc1fc01792fad7a52b90754d26b8830430",
     "arnold_pipelines/megaplan/profiles/all-muse-spark-openrouter.toml": "99f6f336ac561cb58b389252ebab1e3652b8f1da8b0eb835eae05c45c0158b1a"
