@@ -2273,8 +2273,52 @@ class ChainControlJournal:
             if sidecar_kind != "reservation" or not isinstance(sidecar, dict):
                 raise ChainControlHold("migration_shape_mismatch", "collision migration requires the exact structured stale reservation")
             validate_reservation_integrity(sidecar, ledger_id=self.ledger_id)
-            if sidecar.get("status") != "reserved" or sidecar.get("physical_sequence") != expected_prefix_sequence:
-                raise ChainControlHold("migration_shape_mismatch", "stale reservation does not name the collided sequence")
+            # A split allocator can finish the append and persist a committed
+            # reservation before the outer record is durably published.  In
+            # that shape the sidecar deliberately still names N (the valid
+            # outer prefix tip), while its intended record is the colliding
+            # envelope at N+1.  Treat this as migration evidence only after
+            # binding every cross-allocator identity to the exact trailing
+            # record.  It must never be accepted as a generic stale sidecar.
+            if sidecar.get("status") not in {"reserved", "committed"}:
+                raise ChainControlHold("migration_shape_mismatch", "stale reservation has an invalid status")
+            if sidecar.get("physical_sequence") != expected_prefix_sequence:
+                raise ChainControlHold("migration_shape_mismatch", "stale reservation does not name the prefix sequence")
+            if (
+                sidecar.get("intended_record_sha256") != guarded_hashes["offending_line"]
+                or sidecar.get("operation_id") != expected_operation_id
+                or sidecar.get("event_id") != expected_event_id
+                or sidecar.get("event_kind") != envelope.get("event_kind")
+                or sidecar.get("chain_id") != chain_id
+            ):
+                raise ChainControlHold(
+                    "migration_shape_mismatch",
+                    "stale reservation does not bind the exact collided record",
+                )
+            # The reservation's predecessor may be older than the valid tip
+            # when allocation and publication were split.  It still has to
+            # resolve to a digest produced by an actual strict prefix point;
+            # arbitrary or fabricated predecessor state is not migration
+            # evidence.
+            prefix_digests = {ZERO_DIGEST}
+            predecessor = ZERO_DIGEST
+            for item in prefix:
+                sequence = item.record.get("seq")
+                if not isinstance(sequence, int) or isinstance(sequence, bool):
+                    raise ChainControlHold("migration_shape_mismatch", "prefix contains an invalid sequence")
+                predecessor = physical_record_digest(
+                    ledger_id=self.ledger_id,
+                    physical_sequence=sequence,
+                    record_type=record_type_for(str(item.record.get("kind") or "")),
+                    stored_record_bytes=item.raw,
+                    previous_physical_digest=predecessor,
+                )
+                prefix_digests.add(predecessor)
+            if sidecar.get("previous_physical_digest") not in prefix_digests:
+                raise ChainControlHold(
+                    "migration_shape_mismatch",
+                    "stale reservation predecessor is not a valid prefix point",
+                )
 
             chain_lock = self.scope_lock_path(chain_id)
             chain_lock.parent.mkdir(parents=True, exist_ok=True)

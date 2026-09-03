@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     frame_utf8,
     observed_repo_base_sha256,
     parse_sidecar_bytes,
+    physical_digest_after,
     physical_record_digest,
     read_physical_lines,
     reservation_digest_for,
@@ -503,9 +504,25 @@ def _trailing_collision_fixture(tmp_path: Path) -> dict[str, object]:
     ledger.events_path.write_bytes(ledger.events_path.read_bytes() + offending_line + b"\n")
     sidecar_path = ledger.ledger_dir / ".events.seq"
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    sidecar["status"] = "reserved"
+    # Production split-allocator shape: the completed reservation still names
+    # the valid outer prefix N, but its intended record is the trailing
+    # envelope that independently names N+1.
+    sidecar["status"] = "committed"
     sidecar["physical_sequence"] = prefix_sequence
-    sidecar["previous_physical_digest"] = "0" * 64
+    sidecar["previous_physical_digest"] = physical_digest_after(
+        journal.ledger_id, prefix_physical, upto_seq=prefix_sequence - 1
+    )
+    sidecar.update(
+        {
+            "chain_id": "chain-demo",
+            "event_id": envelope["event_id"],
+            "event_kind": envelope["event_kind"],
+            "operation_id": operation_id,
+            "causation_id": envelope["causation_id"],
+            "correlation_id": envelope["correlation_id"],
+            "intended_record_sha256": hashlib.sha256(offending_line).hexdigest(),
+        }
+    )
     sidecar["reservation_digest"] = reservation_digest_for(sidecar)
     sidecar_path.write_bytes(canonical_json(sidecar))
     marker = tmp_path / "marker.json"
@@ -788,6 +805,97 @@ def test_guarded_trailing_collision_wrong_multiple_and_effectful_inputs_reject(t
     )
     with pytest.raises(ChainControlHold, match="chain state"):
         stateful["journal"].quarantine_trailing_sequence_collision(**state_kwargs)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "sidecar_sequence",
+        "envelope_sequence",
+        "sidecar_record_hash",
+        "sidecar_operation",
+        "sidecar_event",
+        "sidecar_predecessor",
+    ],
+)
+def test_split_allocator_collision_cross_bindings_are_all_required(
+    tmp_path: Path, tamper: str
+) -> None:
+    """The live split-allocator shape is accepted only as one exact join.
+
+    In particular, the stale reservation names the outer prefix N (not N+1),
+    while its intended-record hash and operation/event identities bind the
+    independently numbered envelope at N+1.
+    """
+    fixture = _trailing_collision_fixture(tmp_path / tamper)
+    kwargs = fixture["kwargs"]
+    assert isinstance(kwargs, dict)
+    sidecar_path = fixture["sidecar"]
+    assert isinstance(sidecar_path, Path)
+    if tamper == "envelope_sequence":
+        events_path = fixture["ledger"].events_path
+        records = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        envelope = records[-1]["payload"]
+        envelope["physical_sequence"] = kwargs["expected_prefix_sequence"]
+        envelope["event_hash"] = compute_event_hash(
+            authority_mode=str(envelope["authority_mode"]),
+            ledger_id=str(envelope["ledger_id"]),
+            chain_id=str(envelope["chain_id"] or "chainless"),
+            physical_sequence=int(envelope["physical_sequence"]),
+            evidence_sequence=int(envelope["evidence_sequence"]),
+            semantic_sequence=int(envelope["semantic_sequence"]),
+            event_id=str(envelope["event_id"]),
+            event_kind=str(envelope["event_kind"]),
+            operation_id=str(envelope["operation_id"] or "none"),
+            causation_id=str(envelope["causation_id"] or "none"),
+            correlation_id=str(envelope["correlation_id"] or "none"),
+            recovery_id=str(envelope["recovery_id"] or "none"),
+            previous_physical_digest=str(envelope["previous_physical_digest"]),
+            previous_evidence_digest=str(envelope["previous_evidence_digest"]),
+            payload=envelope["payload"],
+        )
+        offending_line = canonical_json(records[-1])
+        events_path.write_bytes(
+            b"\n".join(canonical_json(record) for record in records[:-1])
+            + b"\n"
+            + offending_line
+            + b"\n"
+        )
+        kwargs["expected_offending_line_sha256"] = hashlib.sha256(offending_line).hexdigest()
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["intended_record_sha256"] = hashlib.sha256(offending_line).hexdigest()
+        sidecar["reservation_digest"] = reservation_digest_for(sidecar)
+        sidecar_path.write_bytes(canonical_json(sidecar))
+    else:
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        if tamper == "sidecar_sequence":
+            sidecar["physical_sequence"] += 1
+        elif tamper == "sidecar_record_hash":
+            sidecar["intended_record_sha256"] = "f" * 64
+        elif tamper == "sidecar_operation":
+            sidecar["operation_id"] = "foreign-operation"
+        elif tamper == "sidecar_event":
+            sidecar["event_id"] = "foreign-event"
+        elif tamper == "sidecar_predecessor":
+            sidecar["previous_physical_digest"] = "f" * 64
+        sidecar["reservation_digest"] = reservation_digest_for(sidecar)
+        sidecar_path.write_bytes(canonical_json(sidecar))
+    kwargs["expected_journal_sha256"] = hashlib.sha256(
+        fixture["ledger"].events_path.read_bytes()
+    ).hexdigest()
+    kwargs["expected_sidecar_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+    kwargs["expected_workspace_sha256"] = workspace_snapshot_sha256(
+        tmp_path / tamper,
+        excluded=(fixture["ledger"].ledger_dir, fixture["custody"], fixture["receipt"]),
+    )
+    before_events = fixture["ledger"].events_path.read_bytes()
+    before_sidecar = sidecar_path.read_bytes()
+    with pytest.raises(ChainControlHold, match="stale reservation|trailing record"):
+        fixture["journal"].quarantine_trailing_sequence_collision(**kwargs)
+    assert fixture["ledger"].events_path.read_bytes() == before_events
+    assert sidecar_path.read_bytes() == before_sidecar
+    assert not fixture["receipt"].exists()
+    assert not (fixture["ledger"].ledger_dir / ".active-generation.json").exists()
 
 
 @pytest.mark.parametrize("fault_point", ["after_stage", "after_custody_ready", "after_generation_ready", "after_events_switch", "after_sidecar_switch", "after_receipt"])
