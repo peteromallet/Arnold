@@ -4298,6 +4298,8 @@ def _chain_runtime_probe_and_create_command(
     marker_path: str | None = None,
     session_name: str | None = None,
     runtime_python: str | None = None,
+    spec_path: str | None = None,
+    workspace_path: str | None = None,
 ) -> str:
     """Box-side probe for the per-epic runtime manifest; creates the runtime
     when absent and verifies/resumes an exact pre-chain partial runtime.
@@ -4367,8 +4369,11 @@ def _chain_runtime_probe_and_create_command(
             "set -euo pipefail",
             f"SLUG={shlex.quote(slug)}",
             f"MANIFEST={shlex.quote(manifest_path)}",
+            f"RUNTIME_SRC={shlex.quote(runtime_src)}",
             f"BASE_REPO={shlex.quote(base_repo)}",
             f"BASE_REF={shlex.quote(base_ref)}",
+            f"EXPECTED_SPEC={shlex.quote(spec_path or '')}",
+            f"EXPECTED_WORKSPACE={shlex.quote(workspace_path or '')}",
             source_guard,
             *create_env,
             'if [ -f "$MANIFEST" ]; then',
@@ -4376,9 +4381,17 @@ def _chain_runtime_probe_and_create_command(
             # exists.  This prevents a second launch from adopting an active
             # chain's runtime while preserving the exact partial pre-chain
             # state created by a failed bootstrap.
-            '  for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-fence.json}"; do',
+            # A recovered failed-prechain marker is the only existing marker
+            # admitted here.  The verifier is source-bound and read-only; it
+            # returns 77 for an ordinary marker so the generic refusal below
+            # remains the compatibility path.
+            '  RECOVERED_PRECHAIN=0',
+            '  if [ -n "${CHAIN_MARKER:-}" ] && "$PYTHON_BIN" -m arnold_pipelines.megaplan.cloud.recovered_prechain_admission "$MANIFEST" "$CHAIN_MARKER" "${CHAIN_STATE:-}" "$RUNTIME_SRC" "${CHAIN_SESSION:-}" "$SLUG" "$EXPECTED_SPEC" "$EXPECTED_WORKSPACE"; then RECOVERED_PRECHAIN=1; else admission_rc=$?; if [ "$admission_rc" -ne 77 ]; then exit "$admission_rc"; fi; fi',
+            '  if [ "$RECOVERED_PRECHAIN" -ne 1 ]; then',
+            '    for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-fence.json}"; do',
             '    if [ -n "$authority" ] && [ -e "$authority" ]; then echo "chain runtime recovery refused: existing chain authority $authority" >&2; exit 1; fi',
-            '  done',
+            '    done',
+            '  fi',
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             "else",
             # The source-bound wrapper owns base-ref resolution and its Git
@@ -4496,6 +4509,8 @@ def _ensure_chain_runtime_binding(
         marker_path=launch_ctx.marker_path,
         session_name=launch_ctx.session_name,
         runtime_python=runtime_python,
+        spec_path=launch_ctx.remote_spec_path,
+        workspace_path=launch_ctx.workspace,
     )
     result = provider.ssh_exec(command)
     if result.returncode != 0:
