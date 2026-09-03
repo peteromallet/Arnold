@@ -67,6 +67,29 @@ class CurrentAttemptGuards:
     expected_hold: Mapping[str, Any] | None = None
 
 
+def _require_complete_guards(guards: CurrentAttemptGuards) -> None:
+    """Reject an incomplete authority tuple before any journal access/write."""
+    missing = [
+        name
+        for name, value in (
+            ("expected_chain_revision", guards.expected_chain_revision),
+            ("expected_plan_revision", guards.expected_plan_revision),
+            ("expected_source_binding", guards.expected_source_binding),
+            ("expected_runtime_identity", guards.expected_runtime_identity),
+            ("expected_hold", guards.expected_hold),
+        )
+        if value is None
+    ]
+    if missing:
+        _fail("missing_guard", "complete authority guards are required", missing=missing)
+    if not isinstance(guards.expected_source_binding, Mapping):
+        _fail("invalid_guard", "expected_source_binding must be a mapping")
+    if not isinstance(guards.expected_runtime_identity, Mapping):
+        _fail("invalid_guard", "expected_runtime_identity must be a mapping")
+    if not isinstance(guards.expected_hold, Mapping):
+        _fail("invalid_guard", "expected_hold must be a mapping")
+
+
 def _fail(code: str, message: str, **details: Any) -> NoReturn:
     raise CurrentAttemptAdoptionError(code, message, details=details)
 
@@ -216,9 +239,23 @@ def _guard_state(
     _assert_equal("chain active plan", chain.get("current_plan_name"), guards.expected_current_plan)
     _assert_equal("chain lifecycle", chain.get("last_state"), "paused")
     prefix = chain.get("completed")
-    if not isinstance(prefix, list) or len(prefix) != len(guards.expected_completed_prefix):
+    expected_prefix = [dict(item) for item in guards.expected_completed_prefix]
+    if not isinstance(prefix, list) or len(prefix) != len(expected_prefix):
         _fail("prefix_mismatch", "completed prefix length does not match the guard")
-    _assert_equal("completed prefix", prefix, [dict(item) for item in guards.expected_completed_prefix])
+    if len(expected_prefix) != 6:
+        _fail("prefix_mismatch", "exactly six completed records are required")
+    try:
+        milestones = chain_spec.load_spec(spec_path).milestones
+        canonical_labels = [str(item.label) for item in milestones[:6]]
+    except (AttributeError, TypeError, ValueError):
+        _fail("prefix_mismatch", "chain spec does not expose six canonical milestones")
+    observed_labels = [item.get("label") if isinstance(item, Mapping) else None for item in prefix]
+    expected_labels = [item.get("label") for item in expected_prefix]
+    if observed_labels != canonical_labels:
+        _fail("prefix_mismatch", "completed labels do not match the canonical chain prefix", expected=canonical_labels, observed=observed_labels)
+    if expected_labels != canonical_labels:
+        _fail("prefix_mismatch", "prefix guard labels do not match the canonical chain prefix", expected=canonical_labels, observed=expected_labels)
+    _assert_equal("completed prefix", prefix, expected_prefix)
     _assert_artifact_hashes(root, prefix)
     observed_attempt = _attempt_identity(plan)
     expected_attempt = guards.expected_attempt_identity
@@ -232,8 +269,10 @@ def _guard_state(
     chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
     plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
     _assert_equal("chain pause authority", chain_meta.get("operator_pause"), marker.get("operator_pause"))
-    if not isinstance(plan_meta.get("operator_pause"), Mapping):
+    plan_pause = plan_meta.get("operator_pause")
+    if not isinstance(plan_pause, Mapping):
         _fail("pause_mismatch", "plan-side operator pause authority is missing")
+    _assert_equal("plan pause authority", dict(plan_pause), dict(chain_meta.get("operator_pause") or {}))
     if guards.expected_source_binding is not None:
         _assert_equal("source binding", chain_meta.get("project_source_binding"), dict(guards.expected_source_binding))
         _assert_equal("plan source binding", plan_meta.get("project_source_binding"), dict(guards.expected_source_binding))
@@ -317,23 +356,35 @@ def _replay(
     state_paths: list[Path],
 ) -> dict[str, Any]:
     with journal.transaction(chain_ids=[chain_id], state_paths=state_paths, operation_id=operation_id, actor={"id": actor, "class": "operator"}) as txn:
-        event = journal.append_under_lock(
-            txn,
-            event_kind="chain_control.replay",
-            chain_id=chain_id,
-            operation_id=operation_id,
-            causation_id=str(existing.get("event_id") or operation_id),
-            correlation_id=operation_id,
-            payload={"schema": SCHEMA, "original_event_id": existing.get("event_id"), "original_outcome": existing.get("outcome"), "intent_kind": INTENT_KIND},
-            semantic_effect="no_change",
-            claim_class="evidence-only",
-            actor={"id": actor, "class": "operator"},
-            outcome="replay",
-            intent=INTENT_KIND,
-            expected_cursor=existing.get("expected_cursor"),
-            expected_revision=existing.get("expected_revision"),
-        )
+        event = _append_replay_under_lock(journal, txn, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor)
     return {"outcome": "replay", "receipt": dict(existing), "replay_event": event, "external_effect": False}
+
+
+def _append_replay_under_lock(
+    journal: ChainControlJournal,
+    txn: Any,
+    *,
+    chain_id: str,
+    operation_id: str,
+    existing: Mapping[str, Any],
+    actor: str,
+) -> dict[str, Any]:
+    return journal.append_under_lock(
+        txn,
+        event_kind="chain_control.replay",
+        chain_id=chain_id,
+        operation_id=operation_id,
+        causation_id=str(existing.get("event_id") or operation_id),
+        correlation_id=operation_id,
+        payload={"schema": SCHEMA, "original_event_id": existing.get("event_id"), "original_outcome": existing.get("outcome"), "intent_kind": INTENT_KIND},
+        semantic_effect="no_change",
+        claim_class="evidence-only",
+        actor={"id": actor, "class": "operator"},
+        outcome="replay",
+        intent=INTENT_KIND,
+        expected_cursor=existing.get("expected_cursor"),
+        expected_revision=existing.get("expected_revision"),
+    )
 
 
 def restart_current_attempt(
@@ -350,6 +401,9 @@ def restart_current_attempt(
     """Retire a paused progressed-C2 plan and commit one continuation identity."""
     if not reason.strip() or not actor.strip():
         _fail("invalid_guard", "reason and actor are required")
+    # This check deliberately precedes journal construction/genesis so a
+    # malformed authority tuple has no observable journal side effect.
+    _require_complete_guards(guards)
     spec_path = spec_path.resolve(strict=False)
     project_dir = project_dir.resolve(strict=False)
     marker_path = marker_path.resolve(strict=False)
@@ -392,7 +446,6 @@ def restart_current_attempt(
         _fail("operation_identity_mismatch", "operation identity does not match guarded inputs")
     operation_id = derived_operation_id
     journal = journal_for(project_dir)
-    journal.ensure_genesis(chain_id=chain_id, actor={"id": actor, "class": "operator"}, spec_identity=str(spec_path))
     existing = journal.operation_result(operation_id)
     if existing is not None and existing.get("event_kind") == COMMITTED_EVENT_KIND:
         effect = existing.get("payload", {}).get("effect") if isinstance(existing.get("payload"), Mapping) else None
@@ -453,6 +506,15 @@ def restart_current_attempt(
         marker_raw=marker_raw,
         marker=marker,
     )
+    # Only a fully validated pre-state may create the genesis record.  This
+    # keeps all refusal paths (including malformed/ambiguous fixtures) truly
+    # zero-write while retaining the existing journal authority model.
+    journal.ensure_genesis(
+        chain_id=chain_id,
+        actor={"id": actor, "class": "operator"},
+        spec_identity=str(spec_path),
+        source_identity=guards.expected_source_binding,
+    )
     # Re-read all guarded inputs after acquiring the ordered locks.  The
     # initial validation above is only an early refusal; this is the commit
     # precondition and prevents a stale plan/spec/marker from being adopted.
@@ -467,6 +529,30 @@ def restart_current_attempt(
         locked_marker_raw, locked_marker = _read_json(marker_path, "session marker")
         locked_chain_raw, locked_chain = _read_json(chain_path, "chain state")
         locked_plan_raw, locked_plan = _read_json(plan_path, "plan state")
+        # A concurrent adopter may have committed while this caller was
+        # validating its pre-state.  Once the ordered locks are held, replay
+        # the already-committed operation under this transaction rather than
+        # treating its legitimate post-state as a stale-writer failure.
+        locked_existing = journal.operation_result(operation_id)
+        if locked_existing is not None and locked_existing.get("event_kind") == COMMITTED_EVENT_KIND:
+            locked_payload = locked_existing.get("payload")
+            locked_effect = locked_payload.get("effect") if isinstance(locked_payload, Mapping) else None
+            if not isinstance(locked_effect, Mapping):
+                _fail("recovery_divergence", "committed adoption receipt has no effect")
+            _assert_equal("locked spec SHA-256", locked_spec_sha, expected_identity_material["spec_sha256"])
+            _assert_equal("locked marker SHA-256", hashlib.sha256(locked_marker_raw).hexdigest(), expected_identity_material["marker_sha256"])
+            _assert_equal("locked chain post-state", state_digest_for(locked_chain), locked_effect.get("post_chain_digest"))
+            _assert_equal("locked plan post-state", hashlib.sha256(locked_plan_raw).hexdigest(), locked_effect.get("post_plan_sha256"))
+            _guard_marker(locked_marker, guards, spec_path)
+            replay_event = _append_replay_under_lock(
+                journal,
+                txn,
+                chain_id=chain_id,
+                operation_id=operation_id,
+                existing=locked_existing,
+                actor=actor,
+            )
+            return {"outcome": "replay", "receipt": dict(locked_existing), "replay_event": replay_event, "external_effect": False}
         locked = _guard_state(
             root=project_dir,
             spec_path=spec_path,

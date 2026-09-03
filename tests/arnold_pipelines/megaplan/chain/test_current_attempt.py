@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import replace
@@ -100,6 +101,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[dict[str,
         expected_plan_revision=2,
         expected_source_binding=source,
         expected_runtime_identity=runtime,
+        expected_hold=marker["operator_resume_hold"],
     )
     args = {
         "spec_path": spec_path,
@@ -156,6 +158,75 @@ def test_ambiguous_attempt_refuses_before_journal_mutation(monkeypatch: pytest.M
         current_attempt.restart_current_attempt(**args)
     assert exc.value.code == "identity_mismatch"
     assert json.loads(paths["chain_path"].read_text())["current_plan_name"] == "C2"
+
+
+@pytest.mark.parametrize(
+    "missing_guard",
+    ["expected_plan_revision", "expected_source_binding", "expected_runtime_identity", "expected_hold"],
+)
+def test_missing_authority_guard_refuses_without_creating_journal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing_guard: str
+) -> None:
+    args, _paths = _fixture(monkeypatch, tmp_path)
+    args["guards"] = replace(args["guards"], **{missing_guard: None})
+    journal = current_attempt.journal_for(tmp_path)
+    events_path = journal.ledger.events_path
+    before = events_path.read_bytes() if events_path.exists() else None
+
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError, match="complete authority guards") as exc:
+        current_attempt.restart_current_attempt(**args)
+
+    assert exc.value.code == "missing_guard"
+    after = events_path.read_bytes() if events_path.exists() else None
+    assert after == before
+
+
+def test_wrong_canonical_prefix_refuses_before_journal_mutation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+    chain = json.loads(paths["chain_path"].read_text())
+    chain["completed"][2]["label"] = "spoofed-prefix"
+    chain_raw = _write_json(paths["chain_path"], chain)
+    args["guards"] = replace(args["guards"], expected_chain_state_sha256=hashlib.sha256(chain_raw).hexdigest())
+    journal = current_attempt.journal_for(tmp_path)
+    events_path = journal.ledger.events_path
+
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**args)
+
+    assert exc.value.code == "prefix_mismatch"
+    assert not events_path.exists()
+
+
+def test_plan_pause_authority_mismatch_refuses_without_journal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+    plan = json.loads(paths["plan_path"].read_text())
+    plan["meta"]["operator_pause"]["session"] = "different-session"
+    plan_raw = _write_json(paths["plan_path"], plan)
+    args["guards"] = replace(args["guards"], expected_plan_state_sha256=hashlib.sha256(plan_raw).hexdigest())
+    journal = current_attempt.journal_for(tmp_path)
+
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**args)
+
+    assert exc.value.code == "identity_mismatch"
+    assert not journal.ledger.events_path.exists()
+
+
+def test_two_concurrent_adopters_commit_once_and_mocked_handoff_dispatches_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, _paths = _fixture(monkeypatch, tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _index: current_attempt.restart_current_attempt(**args), range(2)))
+
+    assert sorted(result["outcome"] for result in results) == ["committed", "replay"]
+    dispatches = []
+    for result in results:
+        if result["outcome"] == "committed":
+            dispatches.append(result["continuation"]["continuation_id"])
+    assert len(dispatches) == 1
+    events = current_attempt.journal_for(tmp_path).replay_strict()["accepted"]
+    assert [event["event_kind"] for event in events].count("chain_control.current_attempt_adopted") == 1
 
 
 def test_stale_revision_and_wrong_runtime_are_fail_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
