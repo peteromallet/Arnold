@@ -35,6 +35,10 @@ RECOVERY_SCHEMA = "arnold.megaplan.failed-prechain-recovery.v1"
 RECOVERY_INTENT = "failed_prechain_recovery"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_SECRET_TEXT = re.compile(
+    r"(?:api[_-]?key|access[_-]?token|bearer\s+|password|secret|gh[pousr]_|sk-[A-Za-z0-9])",
+    re.IGNORECASE,
+)
 _OCCUPANCY_KEYS = (
     "owner", "runner", "tmux_session", "chain_pid", "worker_pid",
     "fixer_owner", "fixer_pid",
@@ -53,6 +57,15 @@ def _full(value: Any, *, label: str) -> str:
     result = str(value or "").strip().lower()
     if _SHA256.fullmatch(result) is None:
         raise _refuse(f"{label} must be a full SHA-256")
+    return result
+
+
+def _safe_text(value: Any, *, label: str) -> str:
+    result = str(value or "").strip()
+    if not result:
+        raise _refuse(f"{label} is required")
+    if _SECRET_TEXT.search(result):
+        raise _refuse(f"{label} contains credential-like material")
     return result
 
 
@@ -94,6 +107,30 @@ def _untracked(source: Path) -> list[Path]:
     return [source / item for item in result.stdout.split("\0") if item]
 
 
+def _dirty_fingerprint(source: Path) -> list[dict[str, Any]]:
+    """Content-address every dirty path, including symlink identity."""
+    rows: list[dict[str, Any]] = []
+    for status in _status(source):
+        if len(status) < 4:
+            raise _refuse("source status contains a malformed path")
+        code, relative = status[:2], status[3:]
+        path = source / relative
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise _refuse("source dirty path disappeared while fingerprinting") from exc
+        if path.is_symlink():
+            target = os.readlink(path)
+            rows.append({"path": relative, "status": code, "kind": "symlink", "target": target})
+        elif path.is_file():
+            rows.append({"path": relative, "status": code, "kind": "file", "sha256": _sha(path), "size": info.st_size})
+        elif path.is_dir():
+            rows.append({"path": relative, "status": code, "kind": "directory"})
+        else:
+            rows.append({"path": relative, "status": code, "kind": "other", "mode": info.st_mode})
+    return sorted(rows, key=lambda row: (str(row.get("path")), str(row.get("status"))))
+
+
 def _archive_dirty_state(source: Path, custody_dir: Path, operation_id: str) -> tuple[Path, dict[str, Any]]:
     """Archive tracked diff and untracked bytes once, content-addressed."""
     root = custody_dir.expanduser().resolve(strict=False) / operation_id
@@ -118,18 +155,23 @@ def _archive_dirty_state(source: Path, custody_dir: Path, operation_id: str) -> 
         "path": "tracked.diff", "sha256": hashlib.sha256(diff).hexdigest(), "size": len(diff)
     }]
     for path in _untracked(source):
-        if not path.is_file():
-            raise _refuse(f"untracked recovery path is not a regular file: {path}")
+        if not path.is_file() and not path.is_symlink():
+            raise _refuse(f"untracked recovery path is not a file or symlink: {path}")
         relative = path.relative_to(source).as_posix()
         target = root / "untracked" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
-        entries.append({"path": f"untracked/{relative}", "sha256": _sha(target), "size": target.stat().st_size})
+        if path.is_symlink():
+            target.symlink_to(os.readlink(path))
+            entries.append({"path": f"untracked/{relative}", "kind": "symlink", "target": os.readlink(path)})
+        else:
+            shutil.copyfile(path, target)
+            entries.append({"path": f"untracked/{relative}", "kind": "file", "sha256": _sha(target), "size": target.stat().st_size})
     payload = {
         "schema": RECOVERY_SCHEMA,
         "operation_id": operation_id,
         "source_head": _head(source),
         "status": status,
+        "worktree_fingerprint": _dirty_fingerprint(source),
         "entries": entries,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -148,11 +190,17 @@ def _verify_archive(manifest_path: Path, payload: Mapping[str, Any], operation_i
         if not isinstance(row, Mapping) or not isinstance(row.get("path"), str):
             raise _refuse("recovery archive entry is malformed")
         path = root / row["path"]
-        if not path.is_file() or _sha(path) != str(row.get("sha256") or "") or path.stat().st_size != row.get("size"):
+        if row.get("kind") == "symlink":
+            if not path.is_symlink() or os.readlink(path) != row.get("target"):
+                raise _refuse("recovery archive symlink entry is missing or changed")
+        elif not path.is_file() or _sha(path) != str(row.get("sha256") or "") or path.stat().st_size != row.get("size"):
             raise _refuse("recovery archive entry is missing or changed")
 
 
 def _assert_source_archive_fingerprint(source: Path, archive_path: Path, payload: Mapping[str, Any]) -> None:
+    expected_tree = payload.get("worktree_fingerprint")
+    if not isinstance(expected_tree, list) or _dirty_fingerprint(source) != expected_tree:
+        raise _refuse("source tracked, untracked, or symlink set differs from the archive")
     entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
     tracked = next((row for row in entries if isinstance(row, Mapping) and row.get("path") == "tracked.diff"), None)
     if not isinstance(tracked, Mapping):
@@ -165,7 +213,11 @@ def _assert_source_archive_fingerprint(source: Path, archive_path: Path, payload
             continue
         relative = str(row["path"])[len("untracked/"):]
         candidate = source / relative
-        if not candidate.is_file() or _sha(candidate) != str(row.get("sha256") or ""):
+        if row.get("kind") == "symlink":
+            valid = candidate.is_symlink() and os.readlink(candidate) == row.get("target")
+        else:
+            valid = candidate.is_file() and _sha(candidate) == str(row.get("sha256") or "")
+        if not valid:
             raise _refuse("untracked source changes differ from the archived failed launch")
 
 
@@ -176,6 +228,23 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    except BaseException:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(name, path)
@@ -283,6 +352,7 @@ def recover_failed_prechain(
     source_path = source_path.expanduser().resolve(strict=False)
     workspace_path = workspace_path.expanduser().resolve(strict=False)
     staged_runtime_path = staged_runtime_path.expanduser().resolve(strict=False)
+    custody_dir = custody_dir.expanduser().resolve(strict=False)
     expected_marker_sha256 = _full(expected_marker_sha256, label="marker SHA-256")
     expected_manifest_sha256 = _full(expected_manifest_sha256, label="manifest SHA-256")
     expected_spec_sha256 = _full(expected_spec_sha256, label="spec SHA-256")
@@ -290,12 +360,19 @@ def recover_failed_prechain(
     new_sha = str(reviewed_new_sha or "").strip().lower()
     if _SHA40.fullmatch(old_sha) is None or _SHA40.fullmatch(new_sha) is None:
         raise _refuse("old and reviewed source revisions must be full Git SHAs")
-    if not expected_session_id.strip() or not reason.strip() or not actor.strip():
-        raise _refuse("session, reason, and actor are required")
+    expected_session_id = _safe_text(expected_session_id, label="session")
+    reason = _safe_text(reason, label="reason")
+    actor = _safe_text(actor, label="actor")
     if not spec_path.is_file() or _sha(spec_path) != expected_spec_sha256:
         raise _refuse("chain spec identity does not match")
     if project_root.name != expected_session_id:
         raise _refuse("project root is not the guarded session")
+    for candidate, label in ((custody_dir, "custody"), (staged_runtime_path, "staged runtime")):
+        try:
+            candidate.relative_to(source_path)
+        except ValueError:
+            continue
+        raise _refuse(f"{label} path must not be inside the dirty source checkout")
     operation_id = hashlib.sha256(
         f"{RECOVERY_INTENT}\0{expected_session_id}\0{expected_manifest_sha256}\0{old_sha}\0{new_sha}".encode()
     ).hexdigest()
@@ -354,6 +431,10 @@ def recover_failed_prechain(
         current_manifest_raw = manifest_path.read_bytes()
         current_marker = json.loads(current_marker_raw)
         current_manifest = load_manifest(manifest_path)
+        if _sha(spec_path) != expected_spec_sha256:
+            raise ChainControlHold("spec_cas_conflict", "chain spec changed under recovery lock")
+        if state_path.exists():
+            raise ChainControlHold("chain_state_present", "chain state appeared under recovery lock")
         if hashlib.sha256(current_marker_raw).hexdigest() != expected_marker_sha256:
             raise ChainControlHold("marker_cas_conflict", "session marker changed under recovery lock")
         if hashlib.sha256(current_manifest_raw).hexdigest() != expected_manifest_sha256:
@@ -365,10 +446,13 @@ def recover_failed_prechain(
             _assert_source_archive_fingerprint(source_path, archive_path, archive)
         except CliError as exc:
             raise ChainControlHold("source_cas_conflict", str(exc)) from exc
-        _stage_runtime(source_path, staged_runtime_path, old_sha, new_sha)
         failed_workspace = archive_path.parent / "failed-workspace"
-        _promote_staged_runtime(source_path, staged_runtime_path, failed_workspace, new_sha=new_sha)
+        receipt_before = receipt_path.read_bytes() if receipt_path.exists() and receipt_path.stat().st_size else None
+        promoted_workspace = False
         try:
+            _stage_runtime(source_path, staged_runtime_path, old_sha, new_sha)
+            _promote_staged_runtime(source_path, staged_runtime_path, failed_workspace, new_sha=new_sha)
+            promoted_workspace = True
             if Path(str(current_manifest.epic.get("runtime_root") or "")).expanduser().resolve(strict=False) != workspace_path:
                 raise ChainControlHold("workspace_cas_conflict", "runtime manifest workspace changed")
             old_epic = current_manifest.epic
@@ -427,8 +511,30 @@ def recover_failed_prechain(
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             _atomic_json(receipt_path, receipt)
-        except ManifestError as exc:
-            raise ChainControlHold("runtime_generation_refused", str(exc)) from exc
+        except BaseException as exc:
+            # The source swap, manifest, marker, and receipt are one logical
+            # boundary.  On any injected or real failure restore the exact
+            # pre-effect bytes and leave the clean staged checkout as evidence.
+            rollback_error: BaseException | None = None
+            try:
+                if promoted_workspace and failed_workspace.exists() and source_path.exists():
+                    if not staged_runtime_path.exists():
+                        os.replace(source_path, staged_runtime_path)
+                    os.replace(failed_workspace, source_path)
+                _atomic_bytes(manifest_path, current_manifest_raw)
+                _atomic_bytes(marker_path, current_marker_raw)
+                if receipt_before is None:
+                    if receipt_path.exists():
+                        receipt_path.unlink()
+                else:
+                    _atomic_bytes(receipt_path, receipt_before)
+            except BaseException as restore_exc:
+                rollback_error = restore_exc
+            if rollback_error is not None:
+                raise ChainControlHold("recovery_rollback_failed", str(rollback_error)) from rollback_error
+            if isinstance(exc, ChainControlHold):
+                raise
+            raise ChainControlHold("recovery_rolled_back", str(exc)) from exc
         return {
             "source_old_sha": old_sha,
             "source_new_sha": new_sha,
@@ -448,7 +554,10 @@ def recover_failed_prechain(
             operation_id=operation_id,
             intent_kind=RECOVERY_INTENT,
             actor={"id": actor, "class": "operator"},
-            state_paths=[marker_path, manifest_path, receipt_path],
+            # The state file itself must remain absent, so use an external
+            # custody lock keyed to its canonical name instead of allowing
+            # transaction setup to O_CREAT the state file or dirty checkout.
+            state_paths=[spec_path, custody_dir / f"{state_path.name}.recovery.lock", marker_path, manifest_path, receipt_path],
             effect=effect,
             claim_class="required",
             linked_receipts=[str(archive_path)],
