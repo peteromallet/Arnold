@@ -11531,6 +11531,41 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Independent interpreter receipt paired with --runtime-identity",
     )
 
+    paused_checkout_parser = chain_sub.add_parser(
+        "cutover-paused-checkout",
+        help=(
+            "Guardedly cut over a paused null-plan aborted-C2 checkout and "
+            "record its content-addressed source binding"
+        ),
+    )
+    paused_checkout_parser.add_argument("--spec", required=True)
+    paused_checkout_parser.add_argument("--project-dir", required=True)
+    paused_checkout_parser.add_argument("--marker", required=True)
+    paused_checkout_parser.add_argument("--aborted-plan", required=True)
+    paused_checkout_parser.add_argument("--session-id", required=True)
+    paused_checkout_parser.add_argument("--current-milestone", required=True)
+    paused_checkout_parser.add_argument("--cursor", required=True, type=int)
+    paused_checkout_parser.add_argument("--completed-prefix", required=True)
+    paused_checkout_parser.add_argument("--hold", required=True)
+    paused_checkout_parser.add_argument("--runtime-identity", required=True)
+    paused_checkout_parser.add_argument("--from-branch", required=True)
+    paused_checkout_parser.add_argument("--from-head", required=True)
+    paused_checkout_parser.add_argument("--from-milestone-base", required=True)
+    paused_checkout_parser.add_argument("--from-ref", required=True)
+    paused_checkout_parser.add_argument("--to-branch", required=True)
+    paused_checkout_parser.add_argument("--to-head", required=True)
+    paused_checkout_parser.add_argument("--to-milestone-base", required=True)
+    paused_checkout_parser.add_argument("--to-ref", required=True)
+    paused_checkout_parser.add_argument("--expected-chain-state-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-plan-state-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-marker-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-spec-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-target-spec-sha256")
+    paused_checkout_parser.add_argument("--expected-chain-revision", required=True, type=int)
+    paused_checkout_parser.add_argument("--reason", required=True)
+    paused_checkout_parser.add_argument("--actor", default="operator")
+    paused_checkout_parser.add_argument("--operation-id")
+
     seed_rematerialize_parser = chain_sub.add_parser(
         "seed-rematerialize",
         help=(
@@ -12527,6 +12562,55 @@ def run_chain_cli(
             )
             + "\n"
         )
+        return 0
+
+    if action == "cutover-paused-checkout":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import cutover_paused_checkout
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+            prefix = _guard_json(args.completed_prefix, "completed-prefix")
+            hold = _guard_json(args.hold, "hold")
+            runtime = _guard_json(args.runtime_identity, "runtime-identity")
+            if not isinstance(prefix, list) or not all(isinstance(item, Mapping) for item in prefix):
+                raise CliError("invalid_args", "completed-prefix must contain JSON objects")
+            if not isinstance(hold, Mapping) or not isinstance(runtime, Mapping):
+                raise CliError("invalid_args", "hold and runtime-identity must contain JSON objects")
+            result = cutover_paused_checkout(
+                spec_path,
+                project_root,
+                marker_path=Path(args.marker).expanduser().resolve(),
+                aborted_plan_path=Path(args.aborted_plan).expanduser().resolve(),
+                expected_session_id=args.session_id,
+                expected_current_milestone=args.current_milestone,
+                expected_cursor=args.cursor,
+                expected_completed_prefix=[dict(item) for item in prefix],
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                expected_marker_sha256=args.expected_marker_sha256,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
+                expected_chain_revision=args.expected_chain_revision,
+                expected_hold=dict(hold),
+                expected_runtime_identity=dict(runtime),
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_milestone_base=args.to_milestone_base,
+                to_ref=args.to_ref,
+                reason=args.reason,
+                actor=args.actor,
+                operation_id=args.operation_id,
+            )
+        except ChainControlHold as exc:
+            return _emit_error(CliError(exc.code, str(exc), extra=exc.details))
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps({"success": True, "spec": str(spec_path), "action": action, **result}, indent=2) + "\n")
         return 0
 
     if action == "target-rebind":
