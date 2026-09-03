@@ -44,7 +44,7 @@ at launch; no caller-supplied abbreviated value is authoritative.
 
 ## New continuation identity
 
-Canonical source is `main@5192ae0e49ede54ad23af615d837e3834d3ea309`, the asset-bearing commit whose content
+Canonical source is `main@7eeb0d2e7f9594c549dd405136bda8e8b042e6f4`, the asset-bearing commit whose content
 is pinned by the continuation chain.
 The intended branch is `fixer/native-build-forward-c2-d58a0346-20260903-r9`.
 The cloud workspace, runtime candidate, and session all use the unique
