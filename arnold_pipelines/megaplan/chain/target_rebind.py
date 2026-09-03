@@ -1100,6 +1100,8 @@ def cutover_paused_checkout(
     project_root = project_root.resolve(strict=False)
     marker_path = marker_path.resolve(strict=False)
     aborted_plan_path = aborted_plan_path.resolve(strict=False)
+    if expected_session_id != project_root.name:
+        refuse("session must equal the canonical project-root name")
     chain_path = chain_spec._state_path_for(spec_path)
     for path in (spec_path, chain_path, marker_path, aborted_plan_path):
         try:
@@ -1203,7 +1205,8 @@ def cutover_paused_checkout(
         refuse("marker is not paused, held, and action-off")
     if chain_meta.get(AUTHORITY_KEY) != dict(pause):
         refuse("chain and marker pause authorities do not match")
-    if hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or hold.get("workspace") != str(project_root) or not isinstance(hold.get("resume_authority"), Mapping):
+    resume_authority = hold.get("resume_authority")
+    if (hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or hold.get("workspace") != str(project_root) or not isinstance(resume_authority, Mapping) or resume_authority.get("schema_version") != AUTHORITY_SCHEMA or resume_authority.get("plan") != plan_name):
         refuse("canonical active hold identity is required")
     if dict(hold) != dict(expected_hold):
         refuse("active hold does not match guard")
@@ -1330,7 +1333,8 @@ def cutover_paused_checkout(
         refuse("chain metadata authority is unavailable")
     if chain_meta.get("operator_pause") != marker.get("operator_pause"):
         refuse("chain and marker pause authorities do not match")
-    if not isinstance(hold, Mapping) or hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path):
+    resume_authority = hold.get("resume_authority") if isinstance(hold, Mapping) else None
+    if (not isinstance(hold, Mapping) or hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or not isinstance(resume_authority, Mapping) or resume_authority.get("schema_version") != AUTHORITY_SCHEMA or resume_authority.get("plan") != plan_name):
         refuse("canonical active hold identity is required")
     canonical_plan_path = find_plan_dir(project_root, plan_name) / "state.json"
     if aborted_plan_path != canonical_plan_path.resolve(strict=False):

@@ -10,6 +10,7 @@ import pytest
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.incident.chain_control import chain_id_for_spec
 from arnold_pipelines.megaplan.cloud.operator_control import RESUME_HOLD_SCHEMA
+from arnold_pipelines.megaplan.chain.operator_pause import AUTHORITY_SCHEMA
 from arnold_pipelines.megaplan.chain.target_rebind import (
     cutover_paused_checkout,
     sha256_path,
@@ -69,7 +70,7 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
     plan_path = root / ".megaplan" / "plans" / "c2-aborted" / "state.json"
     _write(plan_path, {"name": "c2-aborted", "current_state": "aborted", "active_step": None, "history": [{"step": "execute", "result": "aborted"}], "meta": {}})
     marker_path = root / ".megaplan" / "marker.json"
-    hold = {"schema_version": RESUME_HOLD_SCHEMA, "active": True, "session": root.name, "spec": str(spec.resolve()), "workspace": str(root.resolve()), "resume_authority": {"kind": "test", "id": "paused-c2"}}
+    hold = {"schema_version": RESUME_HOLD_SCHEMA, "active": True, "session": root.name, "spec": str(spec.resolve()), "workspace": str(root.resolve()), "resume_authority": {"schema_version": AUTHORITY_SCHEMA, "active": True, "plan": "c2-aborted"}}
     _write(marker_path, {"should_run": False, "operator_pause": pause, "operator_resume_hold": hold, "runtime_binding": {"current_identity": runtime}, "editable_install_sync": {"source": str(root)}})
     return {"root": root, "spec": spec, "state": state_path, "plan": plan_path, "marker": marker_path, "old": old, "target": target, "prefix": completed, "pause": pause, "hold": hold, "runtime": runtime}
 
@@ -112,6 +113,29 @@ def test_cutover_paused_checkout_rejects_wrong_source_without_mutation(tmp_path:
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
     with pytest.raises(CliError, match="source milestone base"):
         _call(f, from_head="0" * 40)
+    assert _git(f["root"], "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_cutover_rejects_forged_session_before_mutation(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    with pytest.raises(CliError, match="canonical project-root name"):
+        _call(f, expected_session_id="forged-session")
+    assert _git(f["root"], "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_cutover_rejects_forged_resume_authority_before_mutation(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    marker = _json(f["marker"])
+    marker["operator_resume_hold"]["resume_authority"] = {"forged": True}
+    _write(f["marker"], marker)
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    expected_hold = dict(f["hold"])
+    expected_hold["resume_authority"] = {"forged": True}
+    with pytest.raises(CliError, match="canonical active hold identity"):
+        _call(f, expected_hold=expected_hold)
     assert _git(f["root"], "branch", "--show-current") == "legacy"
     assert {p: p.read_bytes() for p in before} == before
 
