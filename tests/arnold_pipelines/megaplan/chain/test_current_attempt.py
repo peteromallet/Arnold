@@ -169,6 +169,8 @@ def test_missing_authority_guard_refuses_without_creating_journal(
 ) -> None:
     args, _paths = _fixture(monkeypatch, tmp_path)
     args["guards"] = replace(args["guards"], **{missing_guard: None})
+    dispatches: list[dict[str, object]] = []
+    args["dispatch_handoff"] = dispatches.append
     journal = current_attempt.journal_for(tmp_path)
     events_path = journal.ledger.events_path
     before = events_path.read_bytes() if events_path.exists() else None
@@ -179,6 +181,7 @@ def test_missing_authority_guard_refuses_without_creating_journal(
     assert exc.value.code == "missing_guard"
     after = events_path.read_bytes() if events_path.exists() else None
     assert after == before
+    assert dispatches == []
 
 
 def test_wrong_canonical_prefix_refuses_before_journal_mutation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -216,17 +219,49 @@ def test_two_concurrent_adopters_commit_once_and_mocked_handoff_dispatches_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     args, _paths = _fixture(monkeypatch, tmp_path)
+    dispatches: list[str] = []
+
+    def handoff(continuation: dict[str, object]) -> None:
+        dispatches.append(str(continuation["continuation_id"]))
+
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _index: current_attempt.restart_current_attempt(**args), range(2)))
+        results = list(
+            pool.map(
+                lambda _index: current_attempt.restart_current_attempt(**(args | {"dispatch_handoff": handoff})),
+                range(2),
+            )
+        )
 
     assert sorted(result["outcome"] for result in results) == ["committed", "replay"]
-    dispatches = []
-    for result in results:
-        if result["outcome"] == "committed":
-            dispatches.append(result["continuation"]["continuation_id"])
     assert len(dispatches) == 1
     events = current_attempt.journal_for(tmp_path).replay_strict()["accepted"]
     assert [event["event_kind"] for event in events].count("chain_control.current_attempt_adopted") == 1
+
+
+def test_replay_rejects_forged_source_binding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+    current_attempt.restart_current_attempt(**args)
+    forged = replace(args["guards"], expected_source_binding={"branch": "forged", "sha": "forged"})
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**(args | {"guards": forged}))
+    assert exc.value.code == "identity_mismatch"
+    assert json.loads(paths["chain_path"].read_text())["current_plan_name"] is None
+
+
+def test_interrupted_recovery_rejects_forged_source_binding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+
+    def crash(stage: str) -> None:
+        if stage == "after_plan_cas":
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        current_attempt.restart_current_attempt(**args, failure_injector=crash)
+    forged = replace(args["guards"], expected_source_binding={"branch": "forged", "sha": "forged"})
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**(args | {"guards": forged}))
+    assert exc.value.code == "identity_mismatch"
+    assert json.loads(paths["chain_path"].read_text())["current_plan_name"] == "C2"
 
 
 def test_stale_revision_and_wrong_runtime_are_fail_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -303,6 +303,27 @@ def _plan_write(plan_path: Path, payload: Mapping[str, Any]) -> None:
     atomic_write_json(plan_path, dict(payload))
 
 
+def _guard_recovery_authority(
+    *,
+    guards: CurrentAttemptGuards,
+    spec_path: Path,
+    chain: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    marker: Mapping[str, Any],
+) -> None:
+    """Recheck mandatory authority bindings on replay and interrupted recovery."""
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
+    _assert_equal("recovery source binding", chain_meta.get("project_source_binding"), dict(guards.expected_source_binding or {}))
+    _assert_equal("recovery plan source binding", plan_meta.get("project_source_binding"), dict(guards.expected_source_binding or {}))
+    binding = chain_meta.get("execution_binding") if isinstance(chain_meta.get("execution_binding"), Mapping) else {}
+    launched = binding.get("launched_identity") if isinstance(binding.get("launched_identity"), Mapping) else {}
+    _assert_equal("recovery runtime identity", launched.get("runtime"), dict(guards.expected_runtime_identity or {}))
+    _assert_equal("recovery plan pause authority", plan_meta.get("operator_pause"), dict(chain_meta.get("operator_pause") or {}))
+    _assert_equal("recovery chain pause authority", chain_meta.get("operator_pause"), marker.get("operator_pause"))
+    _guard_marker(marker, guards, spec_path)
+
+
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
     """Return the exact bytes produced by ``atomic_write_json``."""
     return (json.dumps(dict(payload), indent=2, sort_keys=False) + "\n").encode("utf-8")
@@ -397,6 +418,7 @@ def restart_current_attempt(
     actor: str = "operator",
     operation_id: str | None = None,
     failure_injector: Callable[[str], None] | None = None,
+    dispatch_handoff: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Retire a paused progressed-C2 plan and commit one continuation identity."""
     if not reason.strip() or not actor.strip():
@@ -438,6 +460,9 @@ def restart_current_attempt(
         "marker_sha256": _sha(guards.expected_marker_sha256, "marker SHA-256"),
         "chain_revision": guards.expected_chain_revision,
         "plan_revision": guards.expected_plan_revision,
+        "source_binding": guards.expected_source_binding,
+        "runtime_identity": guards.expected_runtime_identity,
+        "expected_hold": guards.expected_hold,
         "attempt": guards.expected_attempt_identity,
         "prefix_digest": _prefix_digest([dict(item) for item in guards.expected_completed_prefix]),
     }
@@ -462,7 +487,7 @@ def restart_current_attempt(
             _fail("recovery_divergence", "committed adoption receipt lacks replay state")
         if state_digest_for(chain) != effect.get("post_chain_digest") or hashlib.sha256(plan_raw).hexdigest() != effect.get("post_plan_sha256"):
             _fail("recovery_divergence", "authoritative state diverged from committed adoption")
-        _guard_marker(marker, guards, spec_path)
+        _guard_recovery_authority(guards=guards, spec_path=spec_path, chain=chain, plan=plan, marker=marker)
         return _replay(journal, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor, state_paths=[chain_path, plan_path])
     replay = journal.replay_strict()
     incomplete = [event for event in replay.get("accepted", []) if event.get("operation_id") == operation_id and event.get("event_kind") == "chain_control.intent"]
@@ -481,7 +506,7 @@ def restart_current_attempt(
             _fail("recovery_divergence", "chain state diverged during interrupted adoption")
         if hashlib.sha256(plan_raw).hexdigest() not in {effect.get("pre_plan_sha256"), effect.get("post_plan_sha256")}:
             _fail("recovery_divergence", "plan state diverged during interrupted adoption")
-        _guard_marker(marker, guards, spec_path)
+        _guard_recovery_authority(guards=guards, spec_path=spec_path, chain=chain, plan=plan, marker=marker)
         with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, plan_path, marker_path, spec_path], operation_id=operation_id, actor={"id": actor, "class": "operator"}) as txn:
             if state_digest_for(chain) == effect.get("pre_chain_digest"):
                 chain_payload = dict(post_chain)
@@ -494,7 +519,10 @@ def restart_current_attempt(
             if state_digest_for(final_chain) != effect.get("post_chain_digest") or hashlib.sha256(final_plan_raw).hexdigest() != effect.get("post_plan_sha256"):
                 raise DurabilityUnknown("adoption recovery did not reach its recorded post-state")
             committed = journal.append_under_lock(txn, event_kind=COMMITTED_EVENT_KIND, chain_id=chain_id, operation_id=operation_id, causation_id=str(intent.get("event_id") or operation_id), correlation_id=operation_id, payload={"schema": SCHEMA, "effect": effect}, semantic_effect="metadata_only", claim_class="required", actor={"id": actor, "class": "operator"}, outcome="committed", intent=INTENT_KIND, expected_cursor=guards.expected_cursor, expected_revision=guards.expected_chain_revision, actual_cursor=guards.expected_cursor, actual_revision=effect.get("post_chain_revision"), pre_state_digest=effect.get("pre_chain_digest"), post_state_digest=effect.get("post_chain_digest"), source_identity=guards.expected_source_binding, spec_identity=str(spec_path))
-            return {"outcome": "committed", "receipt": committed, "continuation": effect["continuation"]}
+            result = {"outcome": "committed", "receipt": committed, "continuation": effect["continuation"]}
+            if dispatch_handoff is not None:
+                dispatch_handoff(dict(effect["continuation"]))
+            return result
     observed = _guard_state(
         root=project_dir,
         spec_path=spec_path,
@@ -601,7 +629,10 @@ def restart_current_attempt(
         if failure_injector:
             failure_injector("before_commit")
         committed = journal.append_under_lock(txn, event_kind=COMMITTED_EVENT_KIND, chain_id=chain_id, operation_id=operation_id, causation_id=str(intent.get("payload", {}).get("event_id") or operation_id), correlation_id=operation_id, payload={"schema": SCHEMA, "effect": effect}, semantic_effect="metadata_only", claim_class="required", actor={"id": actor, "class": "operator"}, outcome="committed", intent=INTENT_KIND, expected_cursor=guards.expected_cursor, expected_revision=guards.expected_chain_revision, actual_cursor=guards.expected_cursor, actual_revision=effect["post_chain_revision"], pre_state_digest=effect["pre_chain_digest"], post_state_digest=effect["post_chain_digest"], source_identity=guards.expected_source_binding, spec_identity=str(spec_path))
-    return {"outcome": "committed", "receipt": committed, "continuation": continuation}
+    result = {"outcome": "committed", "receipt": committed, "continuation": continuation}
+    if dispatch_handoff is not None:
+        dispatch_handoff(dict(continuation))
+    return result
 
 
 __all__ = ["CurrentAttemptAdoptionError", "CurrentAttemptGuards", "restart_current_attempt", "SCHEMA", "CONTINUATION_SCHEMA"]
