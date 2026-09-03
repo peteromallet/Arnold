@@ -1631,6 +1631,18 @@ class ChainControlJournal:
                             "committed-event failure could not be rolled back",
                             details={"error_type": type(rollback_exc).__name__},
                         ) from rollback_exc
+                # A low-level fsync failure can leave a reserved sequence
+                # whose line is either complete or absent.  Reconcile that
+                # reservation while the sequence lock is still held before
+                # appending the deterministic recovery hold.
+                try:
+                    if txn._seq_fd is not None:
+                        txn.journal.recover_reservations_locked(txn._seq_fd)
+                except BaseException as reservation_exc:
+                    raise DurabilityUnknown(
+                        "committed-event failure left sequence recovery unknown",
+                        details={"error_type": type(reservation_exc).__name__},
+                    ) from reservation_exc
                 try:
                     hold = self.append_under_lock(
                         txn,
