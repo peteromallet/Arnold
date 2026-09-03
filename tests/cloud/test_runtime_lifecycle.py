@@ -237,6 +237,9 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert m["epic"]["expected_head"] == local_head
     assert m["base"]["commit"] == local_head
     assert m["base"]["ref"] == "base/editable-install"
+    assert m["base"]["origin_url"] == str(sandbox["origin"])
+    assert m["epic"]["origin_url"] == str(sandbox["origin"])
+    assert git(worktree, "config", "--get", "remote.origin.url") == str(sandbox["origin"])
     assert m["timestamps"]["created"]
     assert isinstance(m["promotions"], list)
     # T-0301: NO per-worktree .venv fiction — the venv is the SHARED
@@ -284,9 +287,33 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     assert p["state"] == "active"
     assert p["generation"] == 1
     assert p["compatibility_only"] is True
-    # guard: same slug refuses with exit 2
+    # An exact clean runtime/manifest is now safely idempotent: the wrapper
+    # verifies and resumes it without recreation or mutation.
     again = sandbox["run"](CREATE, "epic-a", "base/editable-install")
-    assert again.returncode == 2
+    assert again.returncode == 0, again.stderr
+    assert "resumed" in again.stderr
+
+
+def test_runtime_create_foreign_authoritative_pointer_is_compatibility_receipted(
+    sandbox: dict[str, object],
+) -> None:
+    sandbox["create"]("epic-owner")
+    pointer = Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"]))
+    original = json.loads(pointer.read_text(encoding="utf-8"))
+    original["compatibility_only"] = False
+    pointer.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+    before = pointer.read_bytes()
+
+    proc = sandbox["run"](CREATE, "epic-compat", "base/editable-install")
+    assert proc.returncode == 0, proc.stderr
+    assert pointer.read_bytes() == before
+    receipt = manifest_path(sandbox, "epic-compat").with_suffix(
+        ".json.compatibility-pointer-conflict.json"
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert payload["type"] == "compatibility_pointer_conflict"
+    assert payload["code"] == "foreign_authoritative_pointer_conflict"
+    assert payload["preserved"] is True
 
 
 def test_runtime_create_fails_loudly_on_push_failure(sandbox: dict[str, object]) -> None:

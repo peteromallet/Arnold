@@ -1808,6 +1808,29 @@ def test_chain_runtime_probe_and_create_command_embeds_create_and_policy() -> No
     assert "/workspace/.megaplan/demo-abc123.json" in command
 
 
+def test_chain_runtime_probe_pins_canonical_origin_and_partial_recovery_guards() -> None:
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo-abc123",
+        manifest_path="/workspace/.megaplan/demo-abc123.json",
+        runtime_src="/workspace/runtime-candidates/demo-abc123",
+        manifest_dir="/workspace/.megaplan",
+        base_repo="/workspace/arnold",
+        base_ref="main",
+        policy_path=None,
+        canonical_origin_url="https://github.com/example/Arnold.git",
+        chain_state_path="/workspace/chain/.megaplan/plans/.chains/demo.json",
+        marker_path="/workspace/.megaplan/cloud-sessions/demo.json",
+        session_name="demo",
+    )
+    assert "export ARNOLD_CANONICAL_ORIGIN_URL=https://github.com/example/Arnold.git" in command
+    assert "chain runtime recovery refused" in command
+    assert '"${CHAIN_STATE:-}"' in command
+    assert "liveness-lease.json" in command
+    # Existing partial runtimes go through the same guarded create wrapper;
+    # the wrapper's idempotent path verifies instead of recreating them.
+    assert command.count('"$CREATE_BIN" "$SLUG" "$BASE_REF"') == 2
+
+
 def test_chain_runtime_probe_and_create_command_omits_policy_without_sidecar() -> None:
     command = _chain_runtime_probe_and_create_command(
         slug="demo-abc123",

@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan.cloud.runtime_manifest import (
     MANIFEST_FILENAME,
     MANIFEST_SCHEMA_VERSION,
     ManifestError,
+    ForeignAuthoritativePointerConflict,
     RuntimeManifest,
     active_manifest_path,
     add_deviation,
@@ -1179,8 +1180,9 @@ def test_write_active_pointer_refuses_foreign_epic_overwrite(tmp_path: Path) -> 
     write_active_pointer(foreign, pointer)
     incoming = _make_manifest_obj(generation=78)
     incoming.epic["branch"] = "fixer/astrid-first-20260814"
-    with pytest.raises(ManifestError, match="different epic"):
+    with pytest.raises(ForeignAuthoritativePointerConflict, match="different epic") as excinfo:
         write_active_pointer(incoming, pointer)
+    assert excinfo.value.code == "foreign_authoritative_pointer_conflict"
     # pointer untouched: the active epic's generation survives the attempt
     assert load_manifest(pointer).generation == 119
     assert (

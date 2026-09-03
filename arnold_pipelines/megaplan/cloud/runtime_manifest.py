@@ -181,6 +181,18 @@ class ManifestError(ValueError):
     """Raised when a runtime manifest is missing, corrupt, or schema-mismatched."""
 
 
+class ForeignAuthoritativePointerConflict(ManifestError):
+    """A valid authoritative pointer belongs to another epic.
+
+    This is deliberately distinct from malformed-pointer and I/O failures.
+    Runtime creation may record a compatibility-only degradation for this
+    specific, typed condition while continuing to use its per-epic manifest;
+    every other :class:`ManifestError` remains fail-closed.
+    """
+
+    code = "foreign_authoritative_pointer_conflict"
+
+
 def _require_keys(label: str, mapping: Any, required: tuple[str, ...]) -> None:
     if not isinstance(mapping, dict):
         raise ManifestError(f"{label} must be an object")
@@ -846,12 +858,17 @@ def _write_active_pointer_locked(manifest: RuntimeManifest, pointer: Path) -> No
                 (_current_pointer_manifest.epic or {}).get("branch") or ""
             )
             _incoming_epic_branch = str((manifest.epic or {}).get("branch") or "")
+            _current_epic_id = str(_current_pointer_manifest.epic_id or "")
+            _incoming_epic_id = str(manifest.epic_id or "")
             if (
-                _current_epic_branch
-                and _incoming_epic_branch
-                and _current_epic_branch != _incoming_epic_branch
+                (_current_epic_branch
+                 and _incoming_epic_branch
+                 and _current_epic_branch != _incoming_epic_branch)
+                or (_current_epic_id
+                    and _incoming_epic_id
+                    and _current_epic_id != _incoming_epic_id)
             ):
-                raise ManifestError(
+                raise ForeignAuthoritativePointerConflict(
                     "active pointer holds a different epic's manifest "
                     f"({_current_epic_branch!r}); refusing to overwrite it "
                     f"with {_incoming_epic_branch!r} "

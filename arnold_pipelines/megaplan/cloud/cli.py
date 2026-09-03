@@ -4207,9 +4207,13 @@ def _chain_runtime_probe_and_create_command(
     base_repo: str,
     base_ref: str,
     policy_path: str | None,
+    canonical_origin_url: str | None = None,
+    chain_state_path: str | None = None,
+    marker_path: str | None = None,
+    session_name: str | None = None,
 ) -> str:
     """Box-side probe for the per-epic runtime manifest; creates the runtime
-    when absent.
+    when absent and verifies/resumes an exact pre-chain partial runtime.
 
     Prints one JSON binding record on stdout (see
     ``_RUNTIME_MANIFEST_BINDING_READER``). When the manifest is absent the
@@ -4225,6 +4229,16 @@ def _chain_runtime_probe_and_create_command(
     ]
     if policy_path:
         create_env.append(f"export ARNOLD_RUNTIME_POLICY={shlex.quote(policy_path)}")
+    if canonical_origin_url:
+        create_env.append(
+            f"export ARNOLD_CANONICAL_ORIGIN_URL={shlex.quote(canonical_origin_url)}"
+        )
+    if chain_state_path:
+        create_env.append(f"CHAIN_STATE={shlex.quote(chain_state_path)}")
+    if marker_path:
+        create_env.append(f"CHAIN_MARKER={shlex.quote(marker_path)}")
+    if session_name:
+        create_env.append(f"CHAIN_SESSION={shlex.quote(session_name)}")
     return "\n".join(
         [
             "set -euo pipefail",
@@ -4232,24 +4246,29 @@ def _chain_runtime_probe_and_create_command(
             f"MANIFEST={shlex.quote(manifest_path)}",
             f"BASE_REPO={shlex.quote(base_repo)}",
             f"BASE_REF={shlex.quote(base_ref)}",
+            "CREATE_BIN=/usr/local/bin/arnold-runtime-create",
+            'if [ ! -x "$CREATE_BIN" ]; then',
+            '  CREATE_BIN="$BASE_REPO/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
+            "fi",
+            *create_env,
             'if [ -f "$MANIFEST" ]; then',
-            '  python3 - "$MANIFEST" 0 <<\'PY\'',
-            _RUNTIME_MANIFEST_BINDING_READER,
-            "PY",
+            # A present runtime is resumable only before any chain authority
+            # exists.  This prevents a second launch from adopting an active
+            # chain's runtime while preserving the exact partial pre-chain
+            # state created by a failed bootstrap.
+            '  for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-fence.json}"; do',
+            '    if [ -n "$authority" ] && [ -e "$authority" ]; then echo "chain runtime recovery refused: existing chain authority $authority" >&2; exit 1; fi',
+            '  done',
+            '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
             "else",
-            "  CREATE_BIN=/usr/local/bin/arnold-runtime-create",
-            '  if [ ! -x "$CREATE_BIN" ]; then',
-            '    CREATE_BIN="$BASE_REPO/arnold_pipelines/megaplan/cloud/wrappers/arnold-runtime-create"',
-            "  fi",
             # Best-effort ref refresh so creation resolves the configured
             # engine ref (the launch's own refresh would run too late).
             '  git -C "$BASE_REPO" fetch origin "$BASE_REF" >/dev/null 2>&1 || true',
-            *create_env,
             '  "$CREATE_BIN" "$SLUG" "$BASE_REF"',
-            '  python3 - "$MANIFEST" 1 <<\'PY\'',
+            "fi",
+            'python3 - "$MANIFEST" 0 <<\'PY\'',
             _RUNTIME_MANIFEST_BINDING_READER,
             "PY",
-            "fi",
         ]
     )
 
@@ -4339,6 +4358,10 @@ def _ensure_chain_runtime_binding(
         base_repo=base_repo,
         base_ref=base_ref,
         policy_path=policy_path,
+        canonical_origin_url=(launch_spec.repo.url or "").strip(),
+        chain_state_path=launch_ctx.state_path,
+        marker_path=launch_ctx.marker_path,
+        session_name=launch_ctx.session_name,
     )
     result = provider.ssh_exec(command)
     if result.returncode != 0:
