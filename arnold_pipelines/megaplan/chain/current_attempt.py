@@ -307,11 +307,22 @@ def _guard_recovery_authority(
     *,
     guards: CurrentAttemptGuards,
     spec_path: Path,
+    marker_path: Path,
     chain: Mapping[str, Any],
     plan: Mapping[str, Any],
     marker: Mapping[str, Any],
 ) -> None:
     """Recheck mandatory authority bindings on replay and interrupted recovery."""
+    _assert_equal(
+        "recovery spec SHA-256",
+        hashlib.sha256(spec_path.read_bytes()).hexdigest(),
+        guards.expected_spec_sha256,
+    )
+    _assert_equal(
+        "recovery marker SHA-256",
+        hashlib.sha256(marker_path.read_bytes()).hexdigest(),
+        guards.expected_marker_sha256,
+    )
     chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
     plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
     _assert_equal("recovery source binding", chain_meta.get("project_source_binding"), dict(guards.expected_source_binding or {}))
@@ -487,7 +498,9 @@ def restart_current_attempt(
             _fail("recovery_divergence", "committed adoption receipt lacks replay state")
         if state_digest_for(chain) != effect.get("post_chain_digest") or hashlib.sha256(plan_raw).hexdigest() != effect.get("post_plan_sha256"):
             _fail("recovery_divergence", "authoritative state diverged from committed adoption")
-        _guard_recovery_authority(guards=guards, spec_path=spec_path, chain=chain, plan=plan, marker=marker)
+        _guard_recovery_authority(
+            guards=guards, spec_path=spec_path, marker_path=marker_path, chain=chain, plan=plan, marker=marker
+        )
         return _replay(journal, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor, state_paths=[chain_path, plan_path])
     replay = journal.replay_strict()
     incomplete = [event for event in replay.get("accepted", []) if event.get("operation_id") == operation_id and event.get("event_kind") == "chain_control.intent"]
@@ -506,8 +519,10 @@ def restart_current_attempt(
             _fail("recovery_divergence", "chain state diverged during interrupted adoption")
         if hashlib.sha256(plan_raw).hexdigest() not in {effect.get("pre_plan_sha256"), effect.get("post_plan_sha256")}:
             _fail("recovery_divergence", "plan state diverged during interrupted adoption")
-        _guard_recovery_authority(guards=guards, spec_path=spec_path, chain=chain, plan=plan, marker=marker)
         with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, plan_path, marker_path, spec_path], operation_id=operation_id, actor={"id": actor, "class": "operator"}) as txn:
+            _guard_recovery_authority(
+                guards=guards, spec_path=spec_path, marker_path=marker_path, chain=chain, plan=plan, marker=marker
+            )
             if state_digest_for(chain) == effect.get("pre_chain_digest"):
                 chain_payload = dict(post_chain)
                 chain_adapter = __import__("arnold_pipelines.megaplan.incident.chain_control", fromlist=["ChainStateAdapter"]).ChainStateAdapter(txn, chain_path)

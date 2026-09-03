@@ -149,6 +149,62 @@ def test_adoption_recovers_after_partial_plan_write(monkeypatch: pytest.MonkeyPa
     assert chain["completed"] == paths["prefix"]
 
 
+def test_interrupted_recovery_rejects_spec_byte_divergence_without_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+
+    def crash(stage: str) -> None:
+        if stage == "after_plan_cas":
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        current_attempt.restart_current_attempt(**args, failure_injector=crash)
+    journal = current_attempt.journal_for(tmp_path)
+    snapshot_paths = (
+        paths["chain_path"], paths["plan_path"], paths["marker_path"], args["spec_path"], journal.ledger.events_path
+    )
+    before = {path: path.read_bytes() for path in snapshot_paths}
+    args["spec_path"].write_bytes(args["spec_path"].read_bytes() + b"# semantic-preserving change\n")
+
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**args)
+
+    assert exc.value.code == "identity_mismatch"
+    after = {path: path.read_bytes() for path in snapshot_paths}
+    assert after[args["spec_path"]] != before[args["spec_path"]]
+    assert all(after[path] == before[path] for path in snapshot_paths if path != args["spec_path"])
+    assert json.loads(paths["chain_path"].read_text())["current_plan_name"] == "C2"
+
+
+def test_interrupted_recovery_rejects_marker_byte_divergence_without_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, paths = _fixture(monkeypatch, tmp_path)
+
+    def crash(stage: str) -> None:
+        if stage == "after_plan_cas":
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        current_attempt.restart_current_attempt(**args, failure_injector=crash)
+    journal = current_attempt.journal_for(tmp_path)
+    snapshot_paths = (
+        paths["chain_path"], paths["plan_path"], paths["marker_path"], args["spec_path"], journal.ledger.events_path
+    )
+    before = {path: path.read_bytes() for path in snapshot_paths}
+    args["marker_path"].write_bytes(args["marker_path"].read_bytes() + b"\n")
+
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.restart_current_attempt(**args)
+
+    assert exc.value.code == "identity_mismatch"
+    after = {path: path.read_bytes() for path in snapshot_paths}
+    assert after[args["marker_path"]] != before[args["marker_path"]]
+    assert all(after[path] == before[path] for path in snapshot_paths if path != args["marker_path"])
+    assert json.loads(paths["chain_path"].read_text())["current_plan_name"] == "C2"
+
+
 def test_ambiguous_attempt_refuses_before_journal_mutation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args, paths = _fixture(monkeypatch, tmp_path)
     plan = json.loads(paths["plan_path"].read_text())
