@@ -157,6 +157,77 @@ def test_cutover_accepts_changed_target_chain_spec_after_checkout(tmp_path: Path
     assert sha256_path(f["spec"]) == target_spec_sha
 
 
+def test_changed_target_spec_replay_accepts_target_digest_and_is_idempotent(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    f["target"] = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].write_bytes(old_spec)
+    first = _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    second = _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert first["outcome"] == "committed"
+    assert second["outcome"] == "replay"
+    assert second["operation_id"] == first["operation_id"]
+    assert sha256_path(f["spec"]) == target_spec_sha
+    assert _json(f["state"])["metadata"]["chain_spec_sha256"] == target_spec_sha
+
+
+def test_changed_target_spec_after_state_write_recovers_with_target_digest(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    f["target"] = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].write_bytes(old_spec)
+
+    def lose_ack(stage: str) -> None:
+        if stage == "after_state_write":
+            raise RuntimeError("simulated changed-target post-state lost acknowledgement")
+
+    with pytest.raises(RuntimeError, match="changed-target post-state"):
+        _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha, failure_injector=lose_ack)
+    recovered = _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert recovered["outcome"] == "recovered"
+    assert sha256_path(f["spec"]) == target_spec_sha
+    assert _json(f["state"])["metadata"]["chain_spec_sha256"] == target_spec_sha
+
+
+def test_target_spec_bytes_on_source_checkout_refuse_before_first_attempt(tmp_path: Path) -> None:
+    f = _fixture(tmp_path)
+    root = f["root"]
+    old_spec = f["spec"].read_bytes()
+    old_spec_sha = sha256_path(f["spec"])
+    _git(root, "switch", "docs/target")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    _git(root, "add", "--force", str(f["spec"].relative_to(root)))
+    _git(root, "commit", "-m", "target chain spec amendment")
+    f["target"] = _git(root, "rev-parse", "HEAD")
+    target_spec_sha = sha256_path(f["spec"])
+    _git(root, "push", "origin", "HEAD:refs/heads/docs/target")
+    _git(root, "switch", "legacy")
+    f["spec"].write_bytes(old_spec + b"# target-only amendment\n")
+    before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}
+    with pytest.raises(CliError, match="chain spec SHA-256 changed"):
+        _call(f, expected_spec_sha256=old_spec_sha, expected_target_spec_sha256=target_spec_sha)
+    assert _git(root, "branch", "--show-current") == "legacy"
+    assert {p: p.read_bytes() for p in before} == before
+
+
 def test_cutover_rejects_wrong_target_spec_hash_after_checkout(tmp_path: Path) -> None:
     f = _fixture(tmp_path)
     before = {p: p.read_bytes() for p in (f["state"], f["plan"], f["marker"])}

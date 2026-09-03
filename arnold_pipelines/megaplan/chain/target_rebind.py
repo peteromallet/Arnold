@@ -1132,8 +1132,6 @@ def cutover_paused_checkout(
     plan_raw, plan = _load_json_bytes(aborted_plan_path, label="aborted C2 plan")
     marker_raw, marker = _load_json_bytes(marker_path, label="session marker")
     _assert_hash(plan_raw, expected_plan_state_sha256, label="plan-state SHA-256")
-    if sha256_path(spec_path) != expected_spec_sha256:
-        refuse("chain spec SHA-256 changed")
     spec = chain_spec.load_spec(spec_path)
     if expected_cursor >= len(spec.milestones) or spec.milestones[expected_cursor].label != expected_current_milestone:
         refuse("current milestone does not match the guarded C2 successor")
@@ -1198,6 +1196,20 @@ def cutover_paused_checkout(
     if pending_intent is not None and isinstance(pending_intent.get("operation_id"), str):
         early_operation_id = str(pending_intent["operation_id"])
     replay_identity_from_intent = pending_intent is not None
+    early_existing = next(
+        (event for event in reversed(early_replay.get("accepted", []))
+         if event.get("operation_id") == early_operation_id
+         and event.get("event_kind") == "chain_control.source_checkout_cutover"),
+        None,
+    )
+    live_spec_sha256 = sha256_path(spec_path)
+    target_replay = pending_intent is not None or early_existing is not None
+    if (live_spec_sha256 == target_spec_sha256
+            and target_spec_sha256 != expected_spec_sha256
+            and not target_replay):
+        refuse("chain spec SHA-256 changed")
+    if live_spec_sha256 not in (expected_spec_sha256, target_spec_sha256):
+        refuse("chain spec SHA-256 changed")
     foreign_incomplete = {
         operation: kind
         for operation, kind in _incomplete_operation_statuses(early_replay, chain_id).items()
@@ -1216,7 +1228,8 @@ def cutover_paused_checkout(
         refuse("chain is not paused at cursor 6 with a null current plan")
     if chain.get("chain_session") != expected_session_id or chain_meta.get("chain_id") != chain_id:
         refuse("canonical session or chain ID identity diverges")
-    if chain_meta.get("chain_spec_sha256") != expected_spec_sha256:
+    expected_chain_spec_sha256 = target_spec_sha256 if live_spec_sha256 == target_spec_sha256 else expected_spec_sha256
+    if chain_meta.get("chain_spec_sha256") != expected_chain_spec_sha256:
         refuse("chain spec identity diverges")
     if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
         refuse("aborted C2 plan is not immutable and inactive")
@@ -1263,12 +1276,6 @@ def cutover_paused_checkout(
                     or binding.get("original") not in (None, early_source)
                     or (binding.get("rebind_events") not in (None, []) and not committed_replay)):
                 refuse(f"existing {binding_name} source binding diverges from guarded source")
-    early_existing = next(
-        (event for event in reversed(early_replay.get("accepted", []))
-         if event.get("operation_id") == early_operation_id
-         and event.get("event_kind") == "chain_control.source_checkout_cutover"),
-        None,
-    )
     if early_existing is not None and early_existing.get("event_kind") == "chain_control.source_checkout_cutover":
         payload = early_existing.get("payload") if isinstance(early_existing.get("payload"), Mapping) else {}
         effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
@@ -1464,7 +1471,7 @@ def cutover_paused_checkout(
     binding = {"schema": PROJECT_SOURCE_BINDING_SCHEMA, "current": target, "original": source, "admission": {"schema": "arnold.megaplan.paused-checkout-admission.v1", "operation_id": operation_id, "guard_digest": guard_digest}, "rebind_events": [event], "last_rebound_at": event_time}
     post_chain = copy.deepcopy(chain)
     post_meta = dict(post_chain.get("metadata") or {})
-    post_meta.update({"chain_id": chain_id, "project_source_binding": binding})
+    post_meta.update({"chain_id": chain_id, "chain_spec_sha256": target_spec_sha256, "project_source_binding": binding})
     post_chain["chain_session"] = expected_session_id
     post_chain["metadata"] = post_meta
     post_chain["current_milestone_index"] = expected_cursor
