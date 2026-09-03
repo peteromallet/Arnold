@@ -1420,6 +1420,7 @@ class ChainControlJournal:
         source_identity: Any = None,
         committed_event_kind: str = "chain_control.committed",
         intent_context: Mapping[str, Any] | None = None,
+        on_commit_failure: Callable[[LockedChainControlTransaction, BaseException], Mapping[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
         authority_mode = "file"
         key = replay_tuple_for(
@@ -1590,31 +1591,75 @@ class ChainControlJournal:
                 return {"outcome": "tamper" if tamper else "hold", "result": hold, "error": exc}
             pre_digest = effect_result.get("pre_state_digest")
             post_digest = effect_result.get("post_state_digest")
-            committed = self.append_under_lock(
-                txn,
-                event_kind=committed_event_kind,
-                chain_id=chain_id,
-                operation_id=operation_id,
-                causation_id=claimed["payload"]["event_id"],
-                correlation_id=operation_id,
-                payload={"intent_kind": intent_kind, "effect": {key: value for key, value in effect_result.items() if key != "state"}},
-                semantic_effect=semantic_effect_for(committed_event_kind, pre_digest=pre_digest, post_digest=post_digest),
-                claim_class=claim_class,
-                actor=actor,
-                outcome="committed",
-                intent=intent_kind,
-                expected_revision=expected_revision,
-                expected_cursor=expected_cursor,
-                actual_cursor=effect_result.get("actual_cursor", expected_cursor),
-                actual_revision=effect_result.get("actual_revision"),
-                pre_state_digest=pre_digest,
-                post_state_digest=post_digest,
-                linked_receipts=linked_receipts or effect_result.get("linked_receipts") or [],
-                runtime_identity=effect_result.get("runtime_identity"),
-                spec_identity=spec_identity,
-                source_identity=source_identity,
-                parent_chain_id=parent_chain_id,
-            )
+            try:
+                committed = self.append_under_lock(
+                    txn,
+                    event_kind=committed_event_kind,
+                    chain_id=chain_id,
+                    operation_id=operation_id,
+                    causation_id=claimed["payload"]["event_id"],
+                    correlation_id=operation_id,
+                    payload={"intent_kind": intent_kind, "effect": {key: value for key, value in effect_result.items() if key != "state"}},
+                    semantic_effect=semantic_effect_for(committed_event_kind, pre_digest=pre_digest, post_digest=post_digest),
+                    claim_class=claim_class,
+                    actor=actor,
+                    outcome="committed",
+                    intent=intent_kind,
+                    expected_revision=expected_revision,
+                    expected_cursor=expected_cursor,
+                    actual_cursor=effect_result.get("actual_cursor", expected_cursor),
+                    actual_revision=effect_result.get("actual_revision"),
+                    pre_state_digest=pre_digest,
+                    post_state_digest=post_digest,
+                    linked_receipts=linked_receipts or effect_result.get("linked_receipts") or [],
+                    runtime_identity=effect_result.get("runtime_identity"),
+                    spec_identity=spec_identity,
+                    source_identity=source_identity,
+                    parent_chain_id=parent_chain_id,
+                )
+            except BaseException as exc:
+                # The effect may have crossed an external write boundary before
+                # the final journal append.  Give the operation one locked
+                # finalizer so it can restore authority and leave a durable
+                # hold instead of an unaccounted-for claimed operation.
+                rollback_result: Mapping[str, Any] | None = None
+                if on_commit_failure is not None:
+                    try:
+                        rollback_result = on_commit_failure(txn, exc)
+                    except BaseException as rollback_exc:
+                        raise DurabilityUnknown(
+                            "committed-event failure could not be rolled back",
+                            details={"error_type": type(rollback_exc).__name__},
+                        ) from rollback_exc
+                try:
+                    hold = self.append_under_lock(
+                        txn,
+                        event_kind="chain_control.hold",
+                        chain_id=chain_id,
+                        operation_id=operation_id,
+                        causation_id=claimed["payload"]["event_id"],
+                        correlation_id=operation_id,
+                        payload={
+                            "intent_kind": intent_kind,
+                            "reason": "committed event append failed",
+                            "error_type": type(exc).__name__,
+                            "rollback": dict(rollback_result or {}),
+                        },
+                        semantic_effect="no_change",
+                        claim_class="evidence-only",
+                        actor=actor,
+                        outcome="hold",
+                        failure_class="committed_event_append_failed",
+                        expected_revision=expected_revision,
+                        expected_cursor=expected_cursor,
+                        parent_chain_id=parent_chain_id,
+                    )
+                except BaseException as hold_exc:
+                    raise DurabilityUnknown(
+                        "committed-event failure left journal recovery unknown",
+                        details={"error_type": type(hold_exc).__name__},
+                    ) from hold_exc
+                return {"outcome": "hold", "result": hold, "error": exc}
             txn.result = committed
             return {
                 "outcome": "committed",

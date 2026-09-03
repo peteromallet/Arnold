@@ -425,6 +425,7 @@ def recover_failed_prechain(
         return {"outcome": "replay", "operation_id": operation_id, "event_hash": existing.get("event_hash"), "archive_manifest": str(archive_path), "receipt": str(receipt_path)}
 
     def effect(txn: Any) -> dict[str, Any]:
+        nonlocal rollback_state
         # Re-read every identity under the chain-control lock immediately
         # before the only source/manifest/marker writes.
         current_marker_raw = marker_path.read_bytes()
@@ -449,6 +450,28 @@ def recover_failed_prechain(
         failed_workspace = archive_path.parent / "failed-workspace"
         receipt_before = receipt_path.read_bytes() if receipt_path.exists() and receipt_path.stat().st_size else None
         promoted_workspace = False
+        restored = False
+
+        def restore() -> None:
+            nonlocal restored
+            if restored:
+                return
+            restored = True
+            if promoted_workspace and failed_workspace.exists() and source_path.exists():
+                if not staged_runtime_path.exists():
+                    os.replace(source_path, staged_runtime_path)
+                os.replace(failed_workspace, source_path)
+            _atomic_bytes(manifest_path, current_manifest_raw)
+            _atomic_bytes(marker_path, current_marker_raw)
+            if receipt_before is None:
+                if receipt_path.exists():
+                    receipt_path.unlink()
+            else:
+                _atomic_bytes(receipt_path, receipt_before)
+
+        # The journal finalizer invokes this if the committed-event append
+        # fails after this effect has returned.  It runs under the same lock.
+        rollback_state = restore
         try:
             _stage_runtime(source_path, staged_runtime_path, old_sha, new_sha)
             _promote_staged_runtime(source_path, staged_runtime_path, failed_workspace, new_sha=new_sha)
@@ -517,17 +540,7 @@ def recover_failed_prechain(
             # pre-effect bytes and leave the clean staged checkout as evidence.
             rollback_error: BaseException | None = None
             try:
-                if promoted_workspace and failed_workspace.exists() and source_path.exists():
-                    if not staged_runtime_path.exists():
-                        os.replace(source_path, staged_runtime_path)
-                    os.replace(failed_workspace, source_path)
-                _atomic_bytes(manifest_path, current_manifest_raw)
-                _atomic_bytes(marker_path, current_marker_raw)
-                if receipt_before is None:
-                    if receipt_path.exists():
-                        receipt_path.unlink()
-                else:
-                    _atomic_bytes(receipt_path, receipt_before)
+                restore()
             except BaseException as restore_exc:
                 rollback_error = restore_exc
             if rollback_error is not None:
@@ -548,6 +561,14 @@ def recover_failed_prechain(
             "linked_receipts": [str(archive_path), str(receipt_path)],
         }
 
+    rollback_state: Callable[[], None] | None = None
+
+    def on_commit_failure(_txn: Any, exc: BaseException) -> Mapping[str, Any]:
+        if rollback_state is None:
+            return {"rolled_back": False, "error_type": type(exc).__name__}
+        rollback_state()
+        return {"rolled_back": True, "error_type": type(exc).__name__}
+
     try:
         result = journal.mutate(
             chain_id=chain_id,
@@ -564,6 +585,7 @@ def recover_failed_prechain(
             spec_identity=str(spec_path),
             source_identity={"old_sha": old_sha, "new_sha": new_sha, "source": str(source_path)},
             intent_context={"session": expected_session_id, "old_sha": old_sha, "new_sha": new_sha},
+            on_commit_failure=on_commit_failure,
         )
     except ChainControlHold as exc:
         raise _refuse(str(exc)) from exc
