@@ -44,7 +44,7 @@ at launch; no caller-supplied abbreviated value is authoritative.
 
 ## New continuation identity
 
-Canonical source is `main@7fcd58db72119a70b238f1ae70a1b252c1b30436`.
+Canonical source is `main@c7135595df3afb7685eae0a68a006438294b1198`.
 The intended branch is `fixer/native-build-forward-c2-780129da-20260903-r5`.
 The cloud workspace, runtime candidate, and session all use the unique
 namespace `native-build-forward-c2-780129da-20260903-r5`:
@@ -90,7 +90,7 @@ the operator must:
 1. publish this branch (or an equivalent content-addressed commit) and make
    the remote `main`/`megaplan.ref` resolve the exact canonical source;
 2. verify that the chain driver's content-addressed revision pin
-   (`7fcd58db72119a70b238f1ae70a1b252c1b30436`) and the remote checkout agree,
+   (`c7135595df3afb7685eae0a68a006438294b1198`) and the remote checkout agree,
    then verify the chain spec, North Star, all 16 briefs, and the bound Muse
    profile resolve byte-for-byte at that revision;
 3. run the supported `cloud preflight` against `cloud.yaml`, then
