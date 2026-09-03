@@ -958,8 +958,10 @@ def reconcile_aborted_c2_authority(
         _aborted_chain_guard(
             root=project_dir, chain_raw=chain_raw, chain=chain, guards=guards, spec_path=spec_path, marker=marker
         )
-        if any(event.get("chain_id") == chain_id for event in replay.get("accepted", [])):
-            _fail("journal_mismatch", "aborted-C2 admission requires an unbound chain-control journal projection")
+        if replay.get("torn_tail"):
+            _fail("journal_mismatch", "aborted-C2 admission refuses a torn journal tail")
+        if replay.get("accepted"):
+            _fail("journal_mismatch", "aborted-C2 admission requires an empty chain-control journal projection")
     incomplete = next(
         (event for event in reversed(same_operation_events) if event.get("event_kind") == "chain_control.intent"),
         None,
@@ -1016,6 +1018,10 @@ def reconcile_aborted_c2_authority(
             replay_event = _append_replay_under_lock(journal, txn, chain_id=chain_id, operation_id=operation_id, existing=existing, actor=actor)
             return {"outcome": "replay", "receipt": dict(existing), "replay_event": replay_event, "external_effect": False}
         locked_replay = journal.replay_strict()
+        if not same_operation_events and locked_replay.get("torn_tail"):
+            _fail("journal_mismatch", "aborted-C2 admission refuses a torn journal tail")
+        if not same_operation_events and locked_replay.get("accepted"):
+            _fail("journal_mismatch", "aborted-C2 admission requires an empty chain-control journal projection")
         locked_admission_meta = (locked_chain.get("metadata") or {}).get("aborted_c2_authority_admission") if isinstance(locked_chain.get("metadata"), Mapping) else None
         if locked_admission_meta is not None and not (isinstance(locked_admission_meta, Mapping) and locked_admission_meta.get("operation_id") == operation_id):
             _fail("journal_mismatch", "a different aborted-C2 admission is already recorded for this chain")
@@ -1037,8 +1043,6 @@ def reconcile_aborted_c2_authority(
             pre_chain_digest = _aborted_chain_guard(
                 root=project_dir, chain_raw=locked_chain_raw, chain=locked_chain, guards=guards, spec_path=spec_path, marker=locked_marker
             )
-            if not same_operation_genesis and any(event.get("chain_id") == chain_id for event in locked_replay.get("accepted", [])):
-                _fail("journal_mismatch", "aborted-C2 admission requires an unbound chain-control journal projection")
             admission = {
                 "schema": ABORTED_ADMISSION_SCHEMA,
                 "operation_id": operation_id,
@@ -1066,7 +1070,7 @@ def reconcile_aborted_c2_authority(
                 "post_chain": post_chain,
                 "admission": admission,
             }
-            if not same_operation_genesis and not any(event.get("chain_id") == chain_id for event in locked_replay.get("accepted", [])):
+            if not same_operation_genesis:
                 journal.append_under_lock(
                     txn, event_kind="chain_control.genesis_accepted", chain_id=chain_id,
                     operation_id=operation_id, causation_id=operation_id,

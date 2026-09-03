@@ -530,6 +530,50 @@ def test_aborted_authority_admission_rejects_prebound_journal_without_mutation(
     assert journal.ledger.events_path.read_bytes() == before
 
 
+def test_aborted_authority_admission_rejects_unrelated_chain_journal_without_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, _paths = _aborted_fixture(monkeypatch, tmp_path)
+    journal = current_attempt.journal_for(tmp_path)
+    with journal.transaction(chain_ids=["unrelated-chain"], operation_id="unrelated", actor={"id": "test"}) as txn:
+        journal.append_under_lock(
+            txn,
+            event_kind="chain_control.genesis_accepted",
+            chain_id="unrelated-chain",
+            operation_id="unrelated",
+            causation_id="unrelated",
+            correlation_id="unrelated",
+            payload={"authority_mode": "file", "schema_version": "nbf08-chain-control-v1", "prefix_tip_seq": -1, "prefix_digest": "0" * 64},
+            semantic_effect="no_change",
+            claim_class="required",
+            actor={"id": "test", "class": "operator"},
+            outcome="committed",
+            expected_cursor=0,
+            expected_revision=0,
+            source_identity={},
+            spec_identity=str(args["spec_path"]),
+        )
+    before = journal.ledger.events_path.read_bytes()
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "journal_mismatch"
+    assert journal.ledger.events_path.read_bytes() == before
+
+
+def test_aborted_authority_admission_rejects_torn_tail_without_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args, _paths = _aborted_fixture(monkeypatch, tmp_path)
+    journal = current_attempt.journal_for(tmp_path)
+    journal.ledger.ledger_dir.mkdir(parents=True, exist_ok=True)
+    journal.ledger.events_path.write_bytes(b'{"torn":')
+    before = journal.ledger.events_path.read_bytes()
+    with pytest.raises(current_attempt.CurrentAttemptAdoptionError) as exc:
+        current_attempt.reconcile_aborted_c2_authority(**args)
+    assert exc.value.code == "journal_mismatch"
+    assert journal.ledger.events_path.read_bytes() == before
+
+
 def test_aborted_authority_admission_rejects_predecessor_artifact_drift(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
