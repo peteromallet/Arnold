@@ -316,6 +316,21 @@ def test_runtime_create_foreign_authoritative_pointer_is_compatibility_receipted
     assert payload["preserved"] is True
 
 
+def test_runtime_create_resume_rejects_same_head_with_different_base_ref(
+    sandbox: dict[str, object],
+) -> None:
+    """A matching commit is insufficient: recovery binds the exact base ref."""
+    sandbox["create"]("epic-ref-bound")
+    manifest = manifest_path(sandbox, "epic-ref-bound")
+    before = manifest.read_bytes()
+    # ``main`` and ``base/editable-install`` intentionally point at the same
+    # commit in this fixture; only the requested ref differs.
+    proc = sandbox["run"](CREATE, "epic-ref-bound", "main")
+    assert proc.returncode != 0
+    assert "base ref diverges" in proc.stderr
+    assert manifest.read_bytes() == before
+
+
 def test_runtime_create_fails_loudly_on_push_failure(sandbox: dict[str, object]) -> None:
     proc = sandbox["run"](
         CREATE,

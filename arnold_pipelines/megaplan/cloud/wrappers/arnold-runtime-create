@@ -156,12 +156,12 @@ if [[ -e "$RUNTIME_DIR" || -e "$MANIFEST_PATH" ]]; then
     echo "arnold-runtime-create: base-ref '$BASE_REF' is not resolvable in '$BASE_REPO'" >&2
     exit 1
   fi
-  python3 - "$MANIFEST_PATH" "$SLUG" "$RUNTIME_DIR" "$BASE_HEAD" "$CANONICAL_ORIGIN" <<'PY'
+  python3 - "$MANIFEST_PATH" "$SLUG" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$CANONICAL_ORIGIN" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 from arnold_pipelines.megaplan.cloud.runtime_manifest import load_manifest
 
-manifest_path, slug, runtime_root, base_head, canonical_origin = sys.argv[1:]
+manifest_path, slug, runtime_root, base_head, base_ref, canonical_origin = sys.argv[1:]
 try:
     manifest = load_manifest(Path(manifest_path))
 except Exception as exc:
@@ -173,6 +173,8 @@ if manifest.state != "active":
     raise SystemExit("arnold-runtime-create: existing runtime is not active; refusing recovery")
 if str(epic.get("runtime_root") or "") != runtime_root or str(epic.get("worktree_path") or "") != runtime_root:
     raise SystemExit("arnold-runtime-create: existing manifest runtime path diverges; refusing recovery")
+if str(manifest.base.get("ref") or "") != base_ref:
+    raise SystemExit("arnold-runtime-create: existing manifest base ref diverges from requested base; refusing recovery")
 if str(epic.get("expected_head") or "") != base_head or str(manifest.base.get("commit") or "") != base_head:
     raise SystemExit("arnold-runtime-create: existing runtime head diverges from requested base; refusing recovery")
 branch = str(epic.get("branch") or "")
