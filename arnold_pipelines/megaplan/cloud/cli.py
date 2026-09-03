@@ -1693,7 +1693,21 @@ def _ensure_repo_command(spec: CloudSpec) -> str:
 
 
 def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> None:
-    result = provider.ssh_exec(_ensure_repo_command(spec))
+    command = _ensure_repo_command(spec)
+    # Repository URLs are structured configuration, so the authenticated Git
+    # boundary is selected from the repo declarations rather than by scanning
+    # the rendered shell command (which may contain comments, JSON, or
+    # wrapper code). Local/file clones retain normal stdout and do not require
+    # the AgentBox credential helper.
+    repos = [spec.repo, *spec.extra_repos]
+    requires_git_auth = any(
+        repo.url.lower().startswith(("https://github.com/", "ssh://git@github.com/", "git@github.com:"))
+        for repo in repos
+    )
+    if requires_git_auth:
+        result = provider.git_auth_exec(command)
+    else:
+        result = provider.ssh_exec(command)
     if relay:
         _relay_output(result, secret_names=spec.secrets, env=os.environ)
     if result.returncode != 0:

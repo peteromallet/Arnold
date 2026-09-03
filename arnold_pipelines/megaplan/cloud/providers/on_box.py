@@ -23,10 +23,6 @@ from .base import Provider
 
 _ON_BOX_CONTROL_ROOT = Path("/workspace/.megaplan/cloud-sessions")
 _SCOPE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-_GIT_AUTH_COMMAND_RE = re.compile(
-    r"(?:^|[;&|]\s*|\s)git(?:\s+(?:-[^\s;&|]+|-[Cc]\s+[^\s;&|]+))*\s+"
-    r"(?:clone|fetch|pull|push)\b"
-)
 _URL_USERINFO_RE = re.compile(r"(https?://|ssh://)[^/@\s]+@", re.IGNORECASE)
 _GIT_AUTH_FAILURE_RE = re.compile(
     r"authentication failed|could not read username|terminal prompts disabled|"
@@ -63,19 +59,7 @@ class OnBoxProvider(Provider):
         """Return command text safe for the WBC journal and diagnostics."""
         return _URL_USERINFO_RE.sub(r"\1<redacted>@", redact_text(command))
 
-    @staticmethod
-    def _is_git_auth_operation(command: str) -> bool:
-        if _GIT_AUTH_COMMAND_RE.search(command) is None:
-            return False
-        # Local/file clones do not need the box credential and retain their
-        # normal stdout/stderr behavior for deterministic bootstrap tests.
-        is_clone = re.search(
-            r"(?:^|[;&|]\s*|\s)git(?:\s+(?:-[^\s;&|]+|-[Cc]\s+[^\s;&|]+))*\s+clone\b",
-            command,
-        ) is not None
-        return not (is_clone and "github.com" not in command.lower())
-
-    def _command_environment(self, command: str) -> dict[str, str]:
+    def _command_environment(self, *, require_git_auth: bool) -> dict[str, str]:
         """Build the environment inherited by every on-box command.
 
         A shell command is not a reliable boundary for Git capability: the
@@ -85,14 +69,24 @@ class OnBoxProvider(Provider):
         operations still fail closed when the helper is missing; non-Git
         commands retain normal local execution semantics.
         """
-        return on_box_git_credential_env(
-            required=self._is_git_auth_operation(command)
-        )
+        return on_box_git_credential_env(required=require_git_auth)
 
-    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+    def git_auth_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        """Run an explicitly authenticated Git operation.
+
+        The caller, rather than shell-text inspection, declares that this
+        command is a direct Git authentication boundary.  This is used by
+        repository checkout/fetch operations; compound runtime wrappers stay
+        on ``ssh_exec`` so their structured JSON remains observable.
+        """
+        return self.ssh_exec(command, redact_git_output=True)
+
+    def ssh_exec(
+        self, command: str, *, redact_git_output: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         safe_command = self._safe_command(command)
         try:
-            run_env = self._command_environment(command)
+            run_env = self._command_environment(require_git_auth=redact_git_output)
         except CliError as exc:
             attempt = self._begin_process_adapter_attempt(
                 surface="ssh_exec",
@@ -114,11 +108,14 @@ class OnBoxProvider(Provider):
             "check": False,
         }
         kwargs["env"] = run_env
-        is_git_operation = self._is_git_auth_operation(command)
+        # This is an explicit call-site intent, not a lexical classification
+        # of arbitrary shell text.  A wrapper may contain comments, heredocs,
+        # JSON, or invoke Git internally while still returning its own JSON.
+        is_git_operation = redact_git_output
         result = subprocess.run(["bash", "-lc", command], **kwargs)
         if result.returncode != 0:
             safe_stderr = self._safe_command((result.stderr or "").strip())
-            if self._is_git_auth_operation(command) and _GIT_AUTH_FAILURE_RE.search(
+            if redact_git_output and _GIT_AUTH_FAILURE_RE.search(
                 result.stderr or ""
             ):
                 attempt.terminal(

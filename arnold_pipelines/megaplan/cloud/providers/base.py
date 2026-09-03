@@ -152,6 +152,17 @@ class Provider(abc.ABC):
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess:
         raise NotImplementedError
 
+    def git_auth_exec(self, command: str) -> subprocess.CompletedProcess:
+        """Run a Git command whose output may contain authentication data.
+
+        Providers may override this boundary to require their path-only Git
+        credential setup and redact the command's output.  Keeping it a
+        separate call-site operation is deliberate: arbitrary shell wrappers
+        passed to ``ssh_exec`` must never be classified by searching their
+        source text for words such as ``git push``.
+        """
+        return self.ssh_exec(command)
+
     @abc.abstractmethod
     def upload_file(self, src: Path, dest: str) -> None:
         raise CliError("not_implemented", "This provider does not support file upload")

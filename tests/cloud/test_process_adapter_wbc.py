@@ -250,20 +250,31 @@ def test_on_box_compound_wrapper_inherits_path_only_git_helper_and_json_stdout(
     def fake_run(argv, **kwargs):
         calls.append((list(argv), dict(kwargs)))
         return subprocess.CompletedProcess(
-            argv, 0, '{"internal_push": "authorized", "ok": true}\n', ""
+            argv,
+            0,
+            '{"internal_push": "authorized", "note": "git push / git ls-remote"}\n',
+            "",
         )
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run", fake_run
     )
     provider = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh"))
-    command = "printf '%s\\n' '{\"internal_push\":\"authorized\",\"ok\":true}'"
-    assert not OnBoxProvider._is_git_auth_operation(command)
+    # Git words in JSON, a heredoc, and a comment must not classify this
+    # compound wrapper as a direct Git authentication operation.
+    command = """cat <<'JSON'
+{"internal_push":"authorized","note":"git push / git ls-remote"}
+JSON
+# git push origin main
+"""
 
     result = provider.ssh_exec(command)
 
     assert result.returncode == 0
-    assert json.loads(result.stdout) == {"internal_push": "authorized", "ok": True}
+    assert json.loads(result.stdout) == {
+        "internal_push": "authorized",
+        "note": "git push / git ls-remote",
+    }
     assert len(calls) == 1
     argv, kwargs = calls[0]
     assert secret not in repr(argv)
@@ -410,9 +421,11 @@ def test_on_box_github_checkout_missing_helper_is_typed_and_does_not_spawn(
     assert not spawned
 
 
+@pytest.mark.parametrize("command", ["git push origin main", "git ls-remote origin main"])
 def test_on_box_git_auth_failure_is_typed_and_redacted(
     tmp_path: Path,
     monkeypatch,
+    command: str,
 ) -> None:
     helper = tmp_path / "git-credentials"
     secret = "ghp_auth_failure_secret_1234567890"
@@ -434,7 +447,7 @@ def test_on_box_git_auth_failure_is_typed_and_redacted(
     )
     provider = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh"))
     with pytest.raises(CliError) as caught:
-        provider.ssh_exec("git push origin main")
+        provider.git_auth_exec(command)
     assert caught.value.code == "on_box_git_auth_failed"
     assert secret not in str(caught.value)
     journal = (
@@ -446,6 +459,44 @@ def test_on_box_git_auth_failure_is_typed_and_redacted(
         / "events.ndjson"
     )
     assert secret not in journal.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("command", ["git push origin main", "git ls-remote origin main"])
+def test_on_box_direct_git_auth_output_is_redacted_by_explicit_call_site(
+    tmp_path: Path,
+    monkeypatch,
+    command: str,
+) -> None:
+    """Direct Git callers opt into redaction; shell wrappers do not."""
+
+    helper = tmp_path / "git-credentials"
+    helper.write_text(
+        "https://x-access-token:helper-secret@example.test\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("ARNOLD_ON_BOX_GIT_CREDENTIAL_FILE", str(helper))
+    control_root = tmp_path / "control-plane"
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box._ON_BOX_CONTROL_ROOT",
+        control_root,
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    leaked_output = "remote https://x-access-token:secret-in-output@example.test\n"
+
+    def successful_git(argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        return subprocess.CompletedProcess(argv, 0, leaked_output, leaked_output)
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.providers.on_box.subprocess.run",
+        successful_git,
+    )
+    result = OnBoxProvider(_cloud_spec(tmp_path, provider="ssh")).git_auth_exec(command)
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert len(calls) == 1
+    assert "secret-in-output" not in repr(calls[0])
 
 
 def test_ssh_provider_ssh_exec_records_process_adapter_wbc(
