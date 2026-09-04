@@ -58,6 +58,7 @@ from .zero_recovery import (
     validate_bootstrap_reclaim_transaction,
     validate_predeploy_transaction,
 )
+from ..hot_env import HotEnvError, hot_env_install_command, render_hot_env, validate_hot_env_mapping
 
 LOGGER = logging.getLogger(__name__)
 
@@ -2888,6 +2889,49 @@ class SshProvider(Provider):
         )
         return 0
 
+    def _provision_cloud_hot_env(
+        self, secrets: Mapping[str, str], *, newly_started: bool
+    ) -> None:
+        """Install the credentials-only hot env in the running container.
+
+        The file lives on the persistent ``/workspace`` mount and is consumed
+        by session/recovery launches.  Install it after the target container
+        is running so the command verifies the exact mounted destination; an
+        install or verification failure raises before deploy can report ready.
+        """
+
+        try:
+            payload = render_hot_env(validate_hot_env_mapping(secrets))
+        except HotEnvError as exc:
+            raise CliError("cloud_hot_env_rejected", str(exc)) from exc
+        try:
+            result = self._remote_run_secret_input(
+                hot_env_install_command(container=self._ssh.container),
+                secret=payload,
+                surface="deploy_cloud_hot_env",
+            )
+            if result.returncode != 0:
+                raise CliError(
+                    "cloud_hot_env_verification_failed",
+                    "container .cloud-hot-env installation or verification failed",
+                )
+        except Exception:
+            if newly_started:
+                try:
+                    # Preserve the failed container for evidence; only stop it
+                    # so no chain can observe a container with unverified hot
+                    # credentials.  In particular, do not use docker rm here.
+                    self._remote_run_compatible(
+                        f"docker stop {shlex.quote(self._ssh.container)}",
+                        surface="deploy_cloud_hot_env_fail_closed_stop",
+                    )
+                except Exception as stop_exc:
+                    raise CliError(
+                        "cloud_hot_env_fail_closed",
+                        "hot-env installation failed and target container could not be stopped",
+                    ) from stop_exc
+            raise
+
     def deploy(
         self,
         deploy_dir: Path,
@@ -2895,6 +2939,12 @@ class SshProvider(Provider):
         secrets: dict[str, str],
         predeploy_transaction: Mapping[str, Any] | None = None,
     ) -> int:
+        try:
+            validate_hot_env_mapping(secrets)
+        except HotEnvError as exc:
+            # Reject malformed/non-credential names before reserving the WBC
+            # effect or making any SSH mutation.
+            raise CliError("cloud_hot_env_rejected", str(exc)) from exc
         # Step 13F: every SSH mutation routes through the WBC effect adapter;
         # a missing adapter is a typed denial, never a direct-transport fallback.
         return self._maybe_route_through_wbc(
@@ -2927,6 +2977,13 @@ class SshProvider(Provider):
                 "isolated_chain_runner_secrets_denied",
                 "isolated chain-runner deploy requires an empty startup secret environment",
             )
+        # Validate before the first host/container mutation.  The same policy
+        # is used by scripts/cloud_hot_upload.py, so selectors/model/sync
+        # overrides can never enter either the Docker env file or hot env.
+        try:
+            validated_hot_env = validate_hot_env_mapping(secrets)
+        except HotEnvError as exc:
+            raise CliError("cloud_hot_env_rejected", str(exc)) from exc
         if self._spec.zero_recovery_canary:
             if predeploy_transaction is None:
                 raise CliError(
@@ -3173,6 +3230,11 @@ class SshProvider(Provider):
                         "isolated chain-runner image identity was not resolved",
                     )
                 self.attest_isolated_chain_runner_runtime()
+        if not self._spec.zero_recovery_canary and not self._spec.isolated_chain_runner:
+            self._provision_cloud_hot_env(
+                validated_hot_env,
+                newly_started=launch_container,
+            )
         if transaction is not None:
             verify_fence = self._remote_run_compatible(
                 fence_command(

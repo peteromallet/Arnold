@@ -11,7 +11,6 @@ import argparse
 import base64
 import hashlib
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -20,6 +19,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, SshSpec, load_spec
+from arnold_pipelines.megaplan.cloud import hot_env as _hot_env
+from arnold_pipelines.megaplan.cloud.hot_env import (
+    HotEnvError,
+    hot_env_install_command,
+    render_hot_env,
+    validate_hot_env_mapping,
+)
+
+# Compatibility exports for operators/tests that imported the policy constants
+# from this script before policy was centralized.
+HOT_ENV_CREDENTIAL_RE = _hot_env.HOT_ENV_CREDENTIAL_RE
+HOT_ENV_FORBIDDEN_NONSECRET_NAMES = _hot_env.HOT_ENV_FORBIDDEN_NONSECRET_NAMES
+HOT_ENV_GHOST_CONFIG_NAMES = _hot_env.HOT_ENV_GHOST_CONFIG_NAMES
+HOT_ENV_RUNTIME_SELECTOR_NAMES = _hot_env.HOT_ENV_RUNTIME_SELECTOR_NAMES
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -46,51 +59,6 @@ FORBIDDEN_LEGACY_BIN_PREFIXES: tuple[str, ...] = (
     "/usr/local/bin/arnold-",
     "/usr/local/bin/mp-",
 )
-
-# .cloud-hot-env is credentials-only (P4 config cleanup).  These legacy
-# runtime selectors are retired: runtime identity resolves from the per-epic
-# runtime manifest (epic.runtime_root / epic.branch) with a fixed
-# /workspace/arnold fallback, so hot env can never re-point a supervisor.
-HOT_ENV_RUNTIME_SELECTOR_NAMES: tuple[str, ...] = (
-    "MEGAPLAN_RUNTIME_SRC",
-    "MEGAPLAN_LAUNCH_RUNTIME_SRC",
-    "MEGAPLAN_SUPERVISOR_SOURCE",
-    "CLOUD_WATCHDOG_ARNOLD_SRC",
-    "MEGAPLAN_META_ARNOLD_SRC",
-    "MEGAPLAN_AUDIT_ARNOLD_SRC",
-    "CLOUD_WATCHDOG_SYNC_BRANCH",
-    "KIMI_GOAL_SYNC_BRANCH",
-    "MEGAPLAN_META_SYNC_BRANCH",
-    # Retired selectors (T-0023/G5): kept so hot env can never re-introduce
-    # them; runtime identity comes from the per-session manifest only.
-    "KIMI_GOAL_ARNOLD_SRC",
-    "MEGAPLAN_DISCORD_DM_ARNOLD_SRC",
-    "MEGAPLAN_DISCOVER_ARNOLD_SRC",
-)
-
-# Nonsecret tuning that must never ride in the credentials-only hot env:
-# feature gates, model pins (any *MODEL* name), and sync switches (any
-# *SYNC* name).
-HOT_ENV_FORBIDDEN_NONSECRET_NAMES: tuple[str, ...] = (
-    "ARNOLD_META_REPAIR_ENABLED",
-    "ARNOLD_META_REPAIR_COMMIT_ENABLED",
-    "ARNOLD_AUDIT_AUTOFIX_ENABLED",
-    "ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED",
-)
-
-# Ghost configuration names that must never ride in hot env: they have NO
-# reader anywhere in this tree (verified T-0208).  ARNOLD_REPAIR_TRIGGER_
-# SESSION_ALLOWLIST was documented as nonexistent since G5; rejecting it here
-# keeps an absent control from being resurrected as a plausible-looking knob.
-HOT_ENV_GHOST_CONFIG_NAMES: tuple[str, ...] = (
-    "ARNOLD_REPAIR_TRIGGER_SESSION_ALLOWLIST",
-)
-
-# A hot-env name is acceptable ONLY when it looks like a credential.  The
-# fragment set mirrors the census redaction policy minus MODEL (model pins are
-# configuration, not credentials, and are rejected above as nonsecret tuning).
-HOT_ENV_CREDENTIAL_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|API)", re.IGNORECASE)
-
 
 @dataclass(frozen=True)
 class Upload:
@@ -345,60 +313,25 @@ def upload_file(remote: Remote, upload: Upload) -> None:
 def upload_env_names(remote: Remote, names: list[str]) -> None:
     if not names:
         return
-    lines = []
+    values: dict[str, str] = {}
     for name in dict.fromkeys(names):
-        if not name.replace("_", "").isalnum() or ((not name[0].isalpha()) and name[0] != "_"):
-            raise HotUploadError(f"invalid environment variable name: {name!r}")
-        if name in HOT_ENV_RUNTIME_SELECTOR_NAMES:
-            raise HotUploadError(
-                f"refusing to hot-upload retired runtime selector {name!r}: "
-                "runtime identity resolves from the per-epic runtime manifest, "
-                "not .cloud-hot-env"
-            )
-        if name in HOT_ENV_GHOST_CONFIG_NAMES:
-            raise HotUploadError(
-                f"refusing to hot-upload ghost config name {name!r}: "
-                "no code in this tree reads it; an absent control must not "
-                "be resurrected as a plausible-looking knob"
-            )
-        if (
-            name in HOT_ENV_FORBIDDEN_NONSECRET_NAMES
-            or "MODEL" in name.upper()
-            or "SYNC" in name.upper()
-        ):
-            raise HotUploadError(
-                f"refusing to hot-upload nonsecret tuning {name!r}: "
-                ".cloud-hot-env is credentials-only"
-            )
-        if not HOT_ENV_CREDENTIAL_RE.search(name):
-            raise HotUploadError(
-                f"refusing to hot-upload non-credential env {name!r}: "
-                ".cloud-hot-env is credentials-only (API_KEY/TOKEN/SECRET/PASSWORD names)"
-            )
         if name not in os.environ:
             raise HotUploadError(f"environment variable is not set locally: {name}")
-        lines.append(f"export {name}={shlex.quote(os.environ[name])}")
-    payload = "\n".join(lines) + "\n"
-    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-    command = (
-        "umask 077; "
-        "tmp=$(mktemp); "
-        "trap 'rm -f \"$tmp\"' EXIT; "
-        "base64 -d > \"$tmp\"; "
-        "python3 - \"$tmp\" <<'PY'\n"
-        "from pathlib import Path\n"
-        "import sys\n"
-        "incoming_path = Path(sys.argv[1])\n"
-        "path = Path('/workspace/.cloud-hot-env')\n"
-        "existing = path.read_text() if path.exists() else ''\n"
-        "incoming = incoming_path.read_text()\n"
-        "names = {line.split('=', 1)[0].replace('export ', '', 1) for line in incoming.splitlines() if line.startswith('export ')}\n"
-        "kept = [line for line in existing.splitlines() if not any(line.startswith(f'export {name}=') for name in names)]\n"
-        "path.write_text('\\n'.join(kept + incoming.splitlines()) + '\\n')\n"
-        "path.chmod(0o600)\n"
-        "PY"
+        values[name] = os.environ[name]
+    try:
+        payload = render_hot_env(validate_hot_env_mapping(values))
+    except HotEnvError as exc:
+        raise HotUploadError(str(exc)) from exc
+    command = hot_env_install_command(
+        container=remote.ssh.container,
+        merge=True,
     )
-    remote.docker_exec(command, input_text=encoded, sensitive=True)
+    # The installer command already contains the exact docker exec target;
+    # route it through the SSH host boundary so it is not nested in another
+    # container shell.
+    # The installer reads the rendered source directly from stdin.  Keep the
+    # credentials out of argv and provider/SSH command logs.
+    remote.run(command, input_text=payload, sensitive=True)
     rendered = ", ".join(dict.fromkeys(names))
     verb = "uploaded" if remote.apply else "[dry-run] would upload"
     print(f"{verb} env names to /workspace/.cloud-hot-env: {rendered}")

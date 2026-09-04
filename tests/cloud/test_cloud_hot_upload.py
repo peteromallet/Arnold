@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shlex
+
+import pytest
+
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
@@ -56,6 +60,7 @@ def test_recreate_container_preserves_current_image(monkeypatch) -> None:
 
 def test_upload_env_names_accepts_only_credentials(monkeypatch) -> None:
     from scripts import cloud_hot_upload as hot_upload
+    from arnold_pipelines.megaplan.cloud.hot_env import HOT_ENV_INSTALL_SCRIPT, render_hot_env
 
     spec = _ssh_spec()
     assert spec.ssh is not None
@@ -63,22 +68,56 @@ def test_upload_env_names_accepts_only_credentials(monkeypatch) -> None:
     commands: list[str] = []
     inputs: list[str] = []
 
-    def fake_docker_exec(command: str, *, input_text: str | None = None, **_kwargs):
+    def fake_run(command: str, *, input_text: str | None = None, **_kwargs):
         commands.append(command)
         inputs.append(input_text or "")
 
-    monkeypatch.setattr(remote, "docker_exec", fake_docker_exec)
+    monkeypatch.setattr(remote, "run", fake_run)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-test")
 
     hot_upload.upload_env_names(remote, ["OPENAI_API_KEY", "GITHUB_TOKEN"])
 
     assert len(commands) == 1
-    import base64
-
-    payload = base64.b64decode(inputs[0]).decode("utf-8")
+    payload = inputs[0]
     assert "export OPENAI_API_KEY=" in payload
     assert "export GITHUB_TOKEN=" in payload
+    assert payload == render_hot_env(
+        {"OPENAI_API_KEY": "sk-test", "GITHUB_TOKEN": "gh-test"}
+    )
+    # Verify the captured command uses the installer's real stdin contract;
+    # decoding an invented transport encoding would mask this mismatch.
+    assert "sys.stdin.buffer.read()" in HOT_ENV_INSTALL_SCRIPT
+    assert HOT_ENV_INSTALL_SCRIPT in shlex.split(commands[0])
+    assert "--merge" in commands[0]
+    assert "O_NOFOLLOW" in commands[0]
+    assert "os.fsync" in commands[0]
+    assert "sha256" in commands[0]
+    assert "read_text" not in commands[0]
+    assert "write_text" not in commands[0]
+
+
+def test_upload_env_names_rejects_newline_injection_before_remote_mutation(monkeypatch) -> None:
+    from scripts import cloud_hot_upload as hot_upload
+
+    spec = _ssh_spec()
+    assert spec.ssh is not None
+    remote = Remote(spec.ssh, apply=False)
+    calls: list[str] = []
+
+    def fake_run(command: str, **_kwargs):
+        calls.append(command)
+
+    monkeypatch.setattr(remote, "run", fake_run)
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "secret\nMODEL=gpt-5.5\nMEGAPLAN_RUNTIME_SRC=/workspace/stale",
+    )
+
+    with pytest.raises(hot_upload.HotUploadError, match="invalid value"):
+        hot_upload.upload_env_names(remote, ["OPENAI_API_KEY"])
+
+    assert calls == []
 
 
 def test_upload_env_names_rejects_retired_runtime_selectors(monkeypatch) -> None:
