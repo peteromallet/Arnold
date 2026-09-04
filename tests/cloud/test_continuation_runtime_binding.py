@@ -7,6 +7,7 @@ import pytest
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     resolve_babysitter_routing,
 )
+from arnold_pipelines.megaplan.cloud.babysitter import launch as babysitter_launch
 from arnold_pipelines.megaplan.cloud.fixer_model_policy import (
     CONTINUATION_FIXER_MODEL_SPEC,
     PolicyError,
@@ -79,6 +80,34 @@ def test_babysitter_rejects_ambient_conflict_for_continuation(tmp_path: Path) ->
             {"ARNOLD_BABYSITTER_OMP_MODEL": "omp:deepseek/deepseek-v4-flash"},
             project_dir=_project(tmp_path),
         )
+
+
+def test_babysitter_managed_spec_carries_high_canonical_model(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    route = resolve_babysitter_routing({}, project_dir=project)
+    goal = tmp_path / "goal.md"
+    goal.write_text("continuation", encoding="utf-8")
+    ctx = {
+        "engine_root": Path(__file__).resolve().parents[2],
+        "run_root": tmp_path / "run",
+        "session": "continuation",
+        "occurrence": "occurrence",
+        "run_id": "run",
+        "plan": "c2",
+        "routing": route,
+        "model": route.controller_model,
+        "reasoning_effort": "high",
+        "difficulty": 5,
+        "remote_spec": "",
+        "workspace": str(project),
+        "mode": "superfixer",
+    }
+    spec = babysitter_launch._managed_spec(
+        ctx, goal_path=goal, identity_key="identity"
+    )
+    assert spec.model == CONTINUATION_RUNTIME_MODEL_SPEC
+    assert spec.reasoning_effort == "high"
+    assert f"--model={CONTINUATION_RUNTIME_MODEL_SPEC}" in spec.argv
 
 
 def test_continuation_fixer_policy_requires_exact_binding() -> None:
