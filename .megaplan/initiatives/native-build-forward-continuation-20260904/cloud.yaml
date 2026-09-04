@@ -11,6 +11,7 @@ megaplan:
   ref: main
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
+  runtime_python: /workspace/nbf-main-continuation-20260904/Arnold/.venv/bin/python
 agents:
   default: omp
 ssh:
