@@ -4231,7 +4231,7 @@ def _chain_runtime_worktree_path(slug: str) -> str:
 # command then aborts the probe so the launch fails loudly. Any other failure
 # also exits non-zero (set -e in the calling command), so the launch fails
 # loudly.
-_RUNTIME_MANIFEST_BINDING_READER = f"""import json, pathlib, sys
+_RUNTIME_MANIFEST_BINDING_READER = f"""import hashlib, json, pathlib, sys
 TOP_LEVEL_REQUIRED = {json.dumps(list(TOP_LEVEL_REQUIRED))}
 EPIC_REQUIRED = {json.dumps(list(EPIC_REQUIRED))}
 MANIFEST_SCHEMA_VERSION = {json.dumps(MANIFEST_SCHEMA_VERSION)}
@@ -4251,13 +4251,35 @@ if not (
         "refusing to read raw fields\\n"
     )
     sys.exit(24)
+runtime_root = str(epic.get("runtime_root") or "")
+runtime_revision = str(epic.get("expected_head") or "")
+runtime_identity = {{
+        "import_root": runtime_root,
+        "source_revision": runtime_revision,
+        "editable_root": "",
+        "editable_revision": "",
+        "direct_url": {{}},
+        "pth": [],
+        "imports": {{
+            "arnold": runtime_root + "/arnold/__init__.py",
+            "arnold_pipelines": runtime_root + "/arnold_pipelines/__init__.py",
+            "megaplan": runtime_root + "/arnold_pipelines/megaplan/__init__.py",
+        }},
+}}
+identity_core = dict(runtime_identity)
+for key in ("editable_root", "editable_revision", "direct_url", "pth", "imports"):
+    identity_core[key] = None
+runtime_identity["content_sha256"] = hashlib.sha256(
+    json.dumps(identity_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
 print(json.dumps({{
     "present": True,
     "created": created,
     "epic_id": payload.get("epic_id", ""),
     "runtime_id": payload.get("runtime_id", ""),
-    "runtime_src": epic.get("runtime_root", ""),
-    "runtime_revision": epic.get("expected_head", ""),
+    "runtime_src": runtime_root,
+    "runtime_revision": runtime_revision,
+    "runtime_identity": runtime_identity,
 }}, sort_keys=True))
 """
 
@@ -4461,6 +4483,7 @@ def _parse_chain_runtime_binding(
         "runtime_src": runtime_src,
         "runtime_revision": runtime_revision,
         "runtime_id": str(payload.get("runtime_id") or ""),
+        "runtime_identity": dict(payload.get("runtime_identity") or {}),
         "created": bool(payload.get("created")),
     }
 
@@ -4552,6 +4575,26 @@ def _chain_runtime_provenance_payload(
         "binding": "manifest_bound",
         "created_by_launch": bool(binding.get("created")),
         "policy_path": policy_path,
+    }
+
+
+def _chain_runtime_marker_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the strict marker-side identity for a validated runtime.
+
+    ``runtime_manifest`` records the selector and provenance path.  The
+    attestation reader deliberately consumes the separate marker binding, so
+    launch must publish the canonical identity produced by the manifest
+    probe, never reconstructing it from caller/configuration text.
+    """
+    identity = binding.get("runtime_identity")
+    if not isinstance(identity, Mapping) or not identity:
+        raise CliError(
+            "chain_runtime_manifest_incomplete",
+            "cloud chain runtime manifest declares no canonical runtime identity",
+        )
+    return {
+        "schema": "arnold.megaplan.marker_runtime_binding.v1",
+        "current_identity": dict(identity),
     }
 
 
@@ -6124,6 +6167,11 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         runtime_binding,
         policy_path=runtime_binding.get("policy_path"),
     )
+    # The runtime manifest selects the worktree, while the session marker's
+    # canonical runtime binding is the launch attestation identity consumed by
+    # runtime_attestation. Keep both records: the former retains manifest
+    # provenance and the latter is the content-addressed current identity.
+    marker_payload["runtime_binding"] = _chain_runtime_marker_binding(runtime_binding)
     marker_payload["bootstrap_manifest_path"] = str(runtime_binding["manifest_path"])
     sys.stderr.write(
         "cloud chain runtime binding: "

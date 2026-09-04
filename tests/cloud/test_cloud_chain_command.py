@@ -26,6 +26,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_runtime_policy_upload,
     _chain_runtime_probe_and_create_command,
     _chain_runtime_provenance_payload,
+    _chain_runtime_marker_binding,
     _chain_start_command,
     _epic_chain_start_command,
     _manifest_runtime_activate_command,
@@ -1809,6 +1810,16 @@ def _runtime_binding(**overrides: Any) -> dict[str, Any]:
         "slug": "demo-abc123",
         "created": True,
         "policy_path": None,
+        "runtime_identity": {
+            "import_root": "/workspace/runtime-candidates/demo-abc123",
+            "source_revision": "a" * 40,
+            "editable_root": "",
+            "editable_revision": "",
+            "direct_url": {},
+            "pth": [],
+            "imports": {},
+            "content_sha256": "b" * 64,
+        },
     }
     binding.update(overrides)
     return binding
@@ -2080,6 +2091,16 @@ def test_parse_chain_runtime_binding_accepts_binding_record() -> None:
         "runtime_id": "demo-abc123-20260810",
         "runtime_src": "/workspace/runtime-candidates/demo-abc123",
         "runtime_revision": "a" * 40,
+        "runtime_identity": {
+            "import_root": "/workspace/runtime-candidates/demo-abc123",
+            "source_revision": "a" * 40,
+            "editable_root": "",
+            "editable_revision": "",
+            "direct_url": {},
+            "pth": [],
+            "imports": {},
+            "content_sha256": "b" * 64,
+        },
     }
     result = subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
     binding = _parse_chain_runtime_binding(
@@ -2089,6 +2110,7 @@ def test_parse_chain_runtime_binding_accepts_binding_record() -> None:
     assert binding["runtime_revision"] == "a" * 40
     assert binding["runtime_src"] == "/workspace/runtime-candidates/demo-abc123"
     assert binding["created"] is True
+    assert binding["runtime_identity"]["source_revision"] == "a" * 40
 
 
 def test_parse_chain_runtime_binding_rejects_unreadable_output() -> None:
@@ -2194,6 +2216,9 @@ def test_runtime_binding_reader_emits_binding_for_canonical_manifest(
     assert binding["present"] is True
     assert binding["runtime_src"] == str(runtime_root)
     assert binding["runtime_revision"] == "a" * 40
+    assert binding["runtime_identity"]["import_root"] == str(runtime_root)
+    assert binding["runtime_identity"]["source_revision"] == "a" * 40
+    assert len(binding["runtime_identity"]["content_sha256"]) == 64
 
 
 @pytest.mark.parametrize(
@@ -2294,6 +2319,20 @@ def test_chain_runtime_provenance_payload_records_bound_manifest() -> None:
     assert payload["expected_head"] == "a" * 40
     assert payload["created_by_launch"] is True
     assert payload["policy_path"].endswith("demo.runtime_policy.json")
+
+
+def test_chain_runtime_marker_binding_publishes_canonical_identity() -> None:
+    marker_binding = _chain_runtime_marker_binding(_runtime_binding())
+    assert marker_binding["schema"] == "arnold.megaplan.marker_runtime_binding.v1"
+    assert marker_binding["current_identity"]["import_root"] == (
+        "/workspace/runtime-candidates/demo-abc123"
+    )
+    assert marker_binding["current_identity"]["source_revision"] == "a" * 40
+
+
+def test_chain_runtime_marker_binding_rejects_missing_identity() -> None:
+    with pytest.raises(CliError, match="canonical runtime identity"):
+        _chain_runtime_marker_binding(_runtime_binding(runtime_identity=None))
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
