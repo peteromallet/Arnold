@@ -7619,10 +7619,14 @@ def _reconcile_would_mutate_protected_spec(
 def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
     """Resolve the cloud-session marker for the chain's session.
 
-    Mirrors the canonical cloud resolution (execution_binding.py): env override
-    ``ARNOLD_CHAIN_SESSION_MARKER_DIR`` -> canonical workspace marker dir
-    (``/workspace/.megaplan/cloud-sessions``) -> project-relative fallback.
+    Mirrors the canonical cloud resolution (execution_binding.py).  An
+    explicit ``ARNOLD_CHAIN_SESSION_MARKER_DIR`` is authoritative for a
+    managed operation: it is never followed by a fallback to a shared/global
+    marker root, which could select another operation's marker.  Unmanaged
+    local launches retain the historical canonical/project-relative fallbacks.
     """
+    env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "").strip()
+    managed_marker_dir = Path(env_marker_dir).expanduser() if env_marker_dir else None
     session = str(getattr(state, "chain_session", "") or "").strip()
     if not session:
         # Direct `chain start` (non-cloud) does not carry a launch_ctx, so
@@ -7639,7 +7643,8 @@ def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
             )
 
             try:
-                markers = sorted(CLOUD_SESSION_MARKER_DIR_DEFAULT.glob("*.json"))
+                marker_scan_dir = managed_marker_dir or CLOUD_SESSION_MARKER_DIR_DEFAULT
+                markers = sorted(marker_scan_dir.glob("*.json"))
             except OSError:
                 markers = []
             if len(markers) == 1:
@@ -7667,20 +7672,26 @@ def _chain_session_marker_path(state: Any, project_root: Path) -> Path:
             "runtime_launch_attestation_mismatch",
             "chain launch-seed build refused: chain session is unresolved",
         )
-    env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
     candidate_dirs: list[Path] = []
-    if env_marker_dir.strip():
-        candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
-    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-        CLOUD_SESSION_MARKER_DIR_DEFAULT,
-    )
+    if managed_marker_dir is not None:
+        candidate_dirs.append(managed_marker_dir)
+    else:
+        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+            CLOUD_SESSION_MARKER_DIR_DEFAULT,
+        )
 
-    candidate_dirs.append(CLOUD_SESSION_MARKER_DIR_DEFAULT)
-    candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
+        candidate_dirs.append(CLOUD_SESSION_MARKER_DIR_DEFAULT)
+        candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
     for candidate_dir in candidate_dirs:
         probe = candidate_dir / (session + ".json")
         if probe.exists():
             return probe
+    if managed_marker_dir is not None:
+        raise CliError(
+            "runtime_launch_attestation_mismatch",
+            f"cloud-session marker is missing for managed marker root {session!r} "
+            f"(searched {candidate_dirs})",
+        )
     # Last resort: scan the canonical marker dir for the marker whose
     # chain_slug matches the project's initiative slug, so a direct
     # (non-cloud) chain start can still bind its launch seed.

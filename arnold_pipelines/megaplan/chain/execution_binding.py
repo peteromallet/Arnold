@@ -3823,20 +3823,19 @@ def migrate_execution_binding(
                 EXECUTION_BINDING_MIGRATE_ERROR,
                 "migration refused: chain session is unresolved",
             )
-        # T-0101 live-run fix: the cloud-session marker lives in the CANONICAL
-        # workspace marker dir (/workspace/.megaplan/cloud-sessions — the same
-        # default the cloud CLI uses, cli.py:2633), NOT under the epic
-        # project_root. The rehearsal's tmp layout had project_root ==
-        # workspace, so a project-relative resolution never exercised the live
-        # box layout. Resolve: env override -> canonical workspace marker dir
-        # -> project-relative fallback (keeps the rehearsal layout working).
+        # T-0101 live-run fix: the cloud-session marker lives in the canonical
+        # workspace marker dir unless the managed launcher supplies an
+        # operation-local ``ARNOLD_CHAIN_SESSION_MARKER_DIR``.  That explicit
+        # root is authoritative: never fall through to a shared/global or
+        # project-relative marker, which could attest the wrong operation.
         marker_path = None
         env_marker_dir = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "")
         candidate_dirs = []
         if env_marker_dir.strip():
             candidate_dirs.append(Path(env_marker_dir.strip()).expanduser())
-        candidate_dirs.append(Path("/workspace/.megaplan/cloud-sessions"))
-        candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
+        else:
+            candidate_dirs.append(Path("/workspace/.megaplan/cloud-sessions"))
+            candidate_dirs.append(project_root / ".megaplan" / "cloud-sessions")
         for candidate_dir in candidate_dirs:
             probe = candidate_dir / (session + ".json")
             if probe.exists():
@@ -4158,7 +4157,15 @@ def promote_legacy_runtime_binding(
         )
 
     marker_path: Path | None = None
-    canonical_marker_dir = CLOUD_SESSION_MARKER_DIR_DEFAULT
+    # Managed launches may bind an operation-local marker root.  Treat that
+    # explicit authority as canonical for this operation; only unmanaged
+    # legacy promotion uses the historical workspace root.
+    _marker_dir_override = os.environ.get("ARNOLD_CHAIN_SESSION_MARKER_DIR", "").strip()
+    canonical_marker_dir = (
+        Path(_marker_dir_override).expanduser()
+        if _marker_dir_override
+        else CLOUD_SESSION_MARKER_DIR_DEFAULT
+    )
 
     def _resolve_marker(session: str) -> Path:
         candidate = canonical_marker_dir / f"{session}.json"

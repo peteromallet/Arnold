@@ -4161,6 +4161,10 @@ def _managed_run_env_prefix(
         "export ARNOLD_REPAIR_QUEUE_ROOT="
         '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
         f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
+        # Keep chain/seed readers on the same operation-local marker root as
+        # the launch writer.  Without this export they fall back to the
+        # shared box root and cannot see the marker just written here.
+        f"export ARNOLD_CHAIN_SESSION_MARKER_DIR={shlex.quote(marker_dir)}; "
         f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
         # Chain startup resolves its canonical cloud-session marker from this
         # exact session name.  Keep it pinned in managed launches so a
@@ -4395,6 +4399,12 @@ def _chain_runtime_probe_and_create_command(
         create_env.append(f"CHAIN_STATE={shlex.quote(chain_state_path)}")
     if marker_path:
         create_env.append(f"CHAIN_MARKER={shlex.quote(marker_path)}")
+        # Runtime-create's preflight/recovery readers must inspect the same
+        # operation-local lease/fence sidecars as the marker writer.
+        create_env.append(
+            "export ARNOLD_CHAIN_SESSION_MARKER_DIR="
+            f"{shlex.quote(str(PurePosixPath(marker_path).parent))}"
+        )
     if session_name:
         create_env.append(f"CHAIN_SESSION={shlex.quote(session_name)}")
     # Runtime creation is a source-bound bootstrap operation.  The installed
@@ -4458,7 +4468,7 @@ def _chain_runtime_probe_and_create_command(
             '  RECOVERED_PRECHAIN=0',
             '  if [ -n "${CHAIN_MARKER:-}" ] && "$PYTHON_BIN" -m arnold_pipelines.megaplan.cloud.recovered_prechain_admission "$MANIFEST" "$CHAIN_MARKER" "${CHAIN_STATE:-}" "$RUNTIME_SRC" "${CHAIN_SESSION:-}" "$SLUG" "$EXPECTED_SPEC" "$EXPECTED_WORKSPACE" "$CANONICAL_ORIGIN"; then RECOVERED_PRECHAIN=1; else admission_rc=$?; if [ "$admission_rc" -ne 77 ]; then exit "$admission_rc"; fi; fi',
             '  if [ "$RECOVERED_PRECHAIN" -ne 1 ]; then',
-            '    for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+/workspace/.megaplan/cloud-sessions/$CHAIN_SESSION.liveness-fence.json}"; do',
+            '    for authority in "${CHAIN_STATE:-}" "${CHAIN_MARKER:-}" "${CHAIN_SESSION:+$ARNOLD_CHAIN_SESSION_MARKER_DIR/$CHAIN_SESSION.liveness-lease.json}" "${CHAIN_SESSION:+$ARNOLD_CHAIN_SESSION_MARKER_DIR/$CHAIN_SESSION.liveness-fence.json}"; do',
             '    if [ -n "$authority" ] && [ -e "$authority" ]; then echo "chain runtime recovery refused: existing chain authority $authority" >&2; exit 1; fi',
             '    done',
             '  fi',

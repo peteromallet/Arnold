@@ -724,6 +724,20 @@ def test_managed_chain_start_exports_canonical_repair_route() -> None:
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
 
 
+def test_managed_chain_start_exports_operation_marker_root() -> None:
+    """The marker writer and chain launch-seed reader share one root."""
+    marker_dir = "/workspace/operation-clean1/.megaplan/cloud-sessions"
+    command = _chain_start_command(
+        "/workspace/operation-clean1/chain.yaml",
+        project_dir="/workspace/operation-clean1",
+        engine_dir="/workspace/operation-clean1/runtime",
+        repair_session="operation-clean1",
+        repair_marker_dir=marker_dir,
+    )
+
+    assert f"export ARNOLD_CHAIN_SESSION_MARKER_DIR={marker_dir}" in command
+
+
 def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     command = _tmux_chain_launch_command(
         "/workspace/project",
@@ -1855,10 +1869,12 @@ def test_chain_runtime_probe_command_binds_operation_roots() -> None:
         base_repo="/workspace/demo-clean1/Arnold",
         base_ref="main",
         policy_path=None,
+        marker_path="/workspace/demo-clean1/.megaplan/cloud-sessions/demo-clean1.json",
         base_dir="/workspace/demo-clean1",
     )
     assert "export ARNOLD_BASE_DIR=/workspace/demo-clean1" in command
     assert "export ARNOLD_RUNTIME_MANIFEST_DIR=/workspace/demo-clean1/.megaplan" in command
+    assert "export ARNOLD_CHAIN_SESSION_MARKER_DIR=/workspace/demo-clean1/.megaplan/cloud-sessions" in command
 
 
 def test_chain_launch_env_propagates_operation_roots() -> None:

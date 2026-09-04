@@ -4198,6 +4198,63 @@ def test_execution_binding_migrate_env_marker_dir_takes_precedence(
     assert result["engine_root"] == str(Path(runtime["import_root"]).resolve())
 
 
+def test_execution_binding_managed_marker_root_has_no_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing operation marker must not select the project marker."""
+    fixture = _migrate_fixture(tmp_path, monkeypatch, session="g7-marker-strict")
+    operation_dir = tmp_path / "operation-layout" / "cloud-sessions"
+    operation_dir.mkdir(parents=True)
+    state_before = _state_path_for(fixture["spec_path"]).read_bytes()
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", str(operation_dir))
+
+    with pytest.raises(CliError, match="cloud-session marker is missing"):
+        migrate_execution_binding(
+            fixture["spec_path"],
+            tmp_path,
+            expected_current_milestone="c1",
+            expected_current_plan="c1-plan",
+            expected_branch="canary-work",
+            reason="managed marker root is authoritative",
+            actor="test-operator",
+            verified_external_runtime_identity=fixture["runtime"],
+        )
+    assert _state_path_for(fixture["spec_path"]).read_bytes() == state_before
+
+
+def test_chain_seed_marker_env_is_operation_authority_without_global_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A managed operation must not attest a same-session global decoy."""
+    operation_dir = tmp_path / "operation" / "cloud-sessions"
+    operation_dir.mkdir(parents=True)
+    project_dir = tmp_path / "project"
+    global_marker_dir = tmp_path / "global" / "cloud-sessions"
+    global_marker_dir.mkdir(parents=True)
+    session = "operation-clean1"
+    operation_marker = operation_dir / f"{session}.json"
+    operation_marker.write_text("{}\n", encoding="utf-8")
+    global_marker = global_marker_dir / f"{session}.json"
+    global_marker.write_text("{ not the operation marker\n", encoding="utf-8")
+    state = SimpleNamespace(chain_session=session)
+    monkeypatch.setattr(
+        runtime_attestation_module,
+        "CLOUD_SESSION_MARKER_DIR_DEFAULT",
+        global_marker_dir,
+    )
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION_MARKER_DIR", str(operation_dir))
+
+    assert chain_module._chain_session_marker_path(state, project_dir) == operation_marker
+
+    operation_marker.unlink()
+    with pytest.raises(CliError, match="managed marker root") as caught:
+        chain_module._chain_session_marker_path(state, project_dir)
+    assert str(operation_dir) in str(caught.value)
+    assert str(global_marker_dir) not in str(caught.value)
+
+
 def test_execution_binding_migrate_canonical_workspace_marker_dir_used_without_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
