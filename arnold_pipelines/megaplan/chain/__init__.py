@@ -11516,6 +11516,22 @@ def build_chain_parser(subparsers: Any) -> None:
     failed_prechain_parser.add_argument("--expected-old-sha", required=True)
     failed_prechain_parser.add_argument("--reviewed-new-sha", required=True)
     failed_prechain_parser.add_argument(
+        "--quarantine-state",
+        help="Quarantine one exact empty/parse-fragment chain state left by a failed pre-chain launch",
+    )
+    failed_prechain_parser.add_argument(
+        "--expected-state-sha256",
+        help="Expected SHA-256 of the empty/parse-fragment chain state",
+    )
+    failed_prechain_parser.add_argument(
+        "--failed-operation-id",
+        help="Exact failed host operation identity bound to the state artifact",
+    )
+    failed_prechain_parser.add_argument(
+        "--occupancy",
+        help="Optional canonical occupancy evidence proving no owner/supervisor/current plan",
+    )
+    failed_prechain_parser.add_argument(
         "--reconcile-held",
         metavar="OPERATION_ID",
         help="Close one exact prior failed-prechain hold with an auditable no-effect disposition",
@@ -12631,9 +12647,38 @@ def run_chain_cli(
     if action == "failed-prechain-recover":
         try:
             from arnold_pipelines.megaplan.chain.failed_prechain_recovery import (
+                quarantine_failed_prechain_state,
                 reconcile_failed_prechain_hold,
                 recover_failed_prechain,
             )
+
+            if args.quarantine_state:
+                if not args.expected_state_sha256 or not args.failed_operation_id:
+                    raise CliError(
+                        "invalid_args",
+                        "--quarantine-state requires --expected-state-sha256 and --failed-operation-id",
+                    )
+                result = quarantine_failed_prechain_state(
+                    Path(args.spec).expanduser().resolve(),
+                    Path(args.project_dir).expanduser().resolve(),
+                    state_path=Path(args.quarantine_state).expanduser().resolve(),
+                    expected_state_sha256=args.expected_state_sha256,
+                    expected_spec_sha256=args.expected_spec_sha256,
+                    expected_session_id=args.expected_session_id,
+                    failed_operation_id=args.failed_operation_id,
+                    custody_dir=Path(args.custody_dir).expanduser().resolve(),
+                    occupancy_path=(Path(args.occupancy).expanduser().resolve() if args.occupancy else None),
+                    reason=args.reason,
+                    actor=args.actor,
+                )
+                sys.stdout.write(
+                    json.dumps(
+                        {"success": True, "spec": str(spec_path), "action": action, **result},
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                return 0
 
             common = dict(
                 marker_path=Path(args.marker).expanduser().resolve(),

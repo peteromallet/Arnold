@@ -82,6 +82,79 @@ def test_secret_like_operator_text_is_rejected_before_persistence() -> None:
         recovery._safe_text("operator api_key=should-not-persist", label="reason")
 
 
+def _empty_chain_state_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    project = tmp_path / "continuation-session"
+    spec = project / ".megaplan" / "initiatives" / "continuation" / "chain.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    state = recovery.chain_spec._state_path_for(spec)
+    state.parent.mkdir(parents=True)
+    state.write_bytes(b"")
+    custody = tmp_path / "custody"
+    return project, spec, state, str(custody)
+
+
+def test_zero_byte_chain_state_is_quarantined_and_replayable(tmp_path: Path) -> None:
+    project, spec, state, custody = _empty_chain_state_fixture(tmp_path)
+    state_sha = hashlib.sha256(b"").hexdigest()
+    spec_sha = hashlib.sha256(spec.read_bytes()).hexdigest()
+    kwargs = dict(
+        state_path=state,
+        expected_state_sha256=state_sha,
+        expected_spec_sha256=spec_sha,
+        expected_session_id="continuation-session",
+        failed_operation_id="host-op-live2",
+        custody_dir=Path(custody),
+        reason="failed host session left no chain progress",
+    )
+    first = recovery.quarantine_failed_prechain_state(spec, project, **kwargs)
+    assert first["outcome"] == "committed"
+    archive = Path(first["effect"]["quarantine_path"])
+    assert archive.is_file() and archive.read_bytes() == b""
+    assert not state.exists()
+    second = recovery.quarantine_failed_prechain_state(spec, project, **kwargs)
+    assert second["outcome"] == "replay"
+    assert not state.exists()
+
+
+def test_nonempty_or_progress_chain_state_is_rejected_without_quarantine(tmp_path: Path) -> None:
+    project, spec, state, custody = _empty_chain_state_fixture(tmp_path)
+    state.write_text('{"cursor": 0}\n', encoding="utf-8")
+    before = state.read_bytes()
+    with pytest.raises(CliError, match="progress or authority"):
+        recovery.quarantine_failed_prechain_state(
+            spec,
+            project,
+            state_path=state,
+            expected_state_sha256=hashlib.sha256(before).hexdigest(),
+            expected_spec_sha256=hashlib.sha256(spec.read_bytes()).hexdigest(),
+            expected_session_id="continuation-session",
+            failed_operation_id="host-op-progress",
+            custody_dir=Path(custody),
+            reason="test",
+        )
+    assert state.read_bytes() == before
+    assert not Path(custody).exists()
+
+
+def test_parser_fragment_chain_state_is_quarantined(tmp_path: Path) -> None:
+    project, spec, state, custody = _empty_chain_state_fixture(tmp_path)
+    state.write_bytes(b"{")
+    result = recovery.quarantine_failed_prechain_state(
+        spec,
+        project,
+        state_path=state,
+        expected_state_sha256=hashlib.sha256(b"{").hexdigest(),
+        expected_spec_sha256=hashlib.sha256(spec.read_bytes()).hexdigest(),
+        expected_session_id="continuation-session",
+        failed_operation_id="host-op-fragment",
+        custody_dir=Path(custody),
+        reason="test parser fragment",
+    )
+    assert result["outcome"] == "committed"
+    assert not state.exists()
+
+
 def test_wrong_identity_or_live_owner_has_zero_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source, old, _new = _repo(tmp_path)
     (source / "tracked.txt").write_text("dirty\n", encoding="utf-8")

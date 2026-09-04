@@ -44,6 +44,22 @@ _OCCUPANCY_KEYS = (
     "owner", "runner", "tmux_session", "chain_pid", "worker_pid",
     "fixer_owner", "fixer_pid",
 )
+_PRECHAIN_STATE_KEYS = frozenset(
+    {
+        "completed",
+        "current_milestone_index",
+        "current_plan",
+        "cursor",
+        "chain_id",
+        "chain_session",
+        "metadata",
+        "milestones",
+        "plans",
+        "owner",
+        "operation_id",
+        "status",
+    }
+)
 
 
 def _refuse(message: str, *, extra: Mapping[str, Any] | None = None) -> CliError:
@@ -409,6 +425,224 @@ def _occupied(marker: Mapping[str, Any]) -> str | None:
         if value not in (None, False, "", [], {}, 0):
             return key
     return None
+
+
+def _assert_prechain_state_artifact(path: Path, expected_sha256: str) -> tuple[bytes, str]:
+    """Validate the only state shape safe to quarantine before chain progress.
+
+    A failed host launch can leave either an empty file or a parser fragment
+    containing only a lone JSON delimiter.  Anything containing a field (or
+    any other non-structural bytes) is ambiguous and must remain untouched.
+    """
+    expected = _full(expected_sha256, label="chain-state SHA-256")
+    try:
+        info = path.lstat()
+    except FileNotFoundError as exc:
+        raise _refuse("chain-state artifact is unavailable") from exc
+    except OSError as exc:
+        raise _refuse("chain-state artifact is unreadable") from exc
+    if stat.S_ISLNK(info.st_mode):
+        raise _refuse("chain-state artifact must not be a symlink")
+    if not stat.S_ISREG(info.st_mode):
+        raise _refuse("chain-state artifact must be a regular file")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise _refuse("chain-state artifact is unreadable") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != expected:
+        raise _refuse("chain-state artifact changed since recovery guards were computed")
+    stripped = raw.strip()
+    if not stripped:
+        return raw, "empty"
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if stripped not in {b"{", b"["}:
+            raise _refuse("non-empty invalid chain state is ambiguous") from exc
+        return raw, "parser-fragment"
+    if not isinstance(parsed, dict) or parsed:
+        keys = sorted(parsed) if isinstance(parsed, dict) else []
+        if keys and set(keys).isdisjoint(_PRECHAIN_STATE_KEYS):
+            raise _refuse("chain-state contains unrecoverable fields")
+        raise _refuse("chain-state contains progress or authority")
+    return raw, "empty-object"
+
+
+def _assert_no_current_plan_artifacts(project_root: Path) -> None:
+    plans_root = project_root / ".megaplan" / "plans"
+    if not plans_root.is_dir():
+        return
+    for path in plans_root.rglob("state.json"):
+        if ".chains" in path.parts:
+            continue
+        try:
+            raw = path.read_bytes()
+            parsed = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _refuse("current plan artifact is unreadable") from exc
+        if parsed:
+            raise _refuse("current plan artifact exists")
+
+
+def quarantine_failed_prechain_state(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    state_path: Path,
+    expected_state_sha256: str,
+    expected_spec_sha256: str,
+    expected_session_id: str,
+    failed_operation_id: str,
+    custody_dir: Path,
+    occupancy_path: Path | None = None,
+    reason: str,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    """Quarantine a pre-progress empty/parse-fragment chain state atomically."""
+    from arnold_pipelines.megaplan.incident.chain_control import chain_id_for_spec, journal_for
+
+    spec_path = spec_path.expanduser().resolve(strict=False)
+    project_root = project_root.expanduser().resolve(strict=False)
+    state_path = state_path.expanduser().resolve(strict=False)
+    custody_dir = custody_dir.expanduser().resolve(strict=False)
+    expected_spec = _full(expected_spec_sha256, label="chain spec SHA-256")
+    _safe_text(expected_session_id, label="session")
+    failed_operation_id = _safe_text(failed_operation_id, label="failed operation")
+    if "/" in failed_operation_id or "\\" in failed_operation_id:
+        raise _refuse("failed operation identity must be a single path component")
+    reason = _safe_text(reason, label="reason")
+    actor = _safe_text(actor, label="actor")
+    canonical_state = chain_spec._state_path_for(spec_path).resolve(strict=False)
+    if state_path != canonical_state:
+        raise _refuse("chain-state path is not the canonical spec state path")
+    if not spec_path.is_file() or _sha(spec_path) != expected_spec:
+        raise _refuse("chain spec identity does not match")
+    journal = journal_for(project_root)
+    chain_id = chain_id_for_spec(spec_path)
+    archive_path = custody_dir / failed_operation_id / (state_path.name + ".quarantined")
+    operation_id = hashlib.sha256(
+        f"failed-prechain-state-quarantine\0{expected_session_id}\0{failed_operation_id}\0{expected_spec}\0{expected_state_sha256}".encode()
+    ).hexdigest()
+    existing = journal.operation_result(operation_id)
+    if existing is not None:
+        if state_path.exists():
+            raise _refuse("quarantine replay has state artifact present")
+        if not archive_path.is_file() or _sha(archive_path) != _full(expected_state_sha256, label="chain-state SHA-256"):
+            raise _refuse("quarantine replay archive is missing or changed")
+        raw, shape = archive_path.read_bytes(), "replay"
+    else:
+        raw, shape = _assert_prechain_state_artifact(state_path, expected_state_sha256)
+    _assert_no_current_plan_artifacts(project_root)
+    if occupancy_path is not None:
+        occupancy_path = occupancy_path.expanduser().resolve(strict=False)
+        try:
+            occupancy = json.loads(occupancy_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _refuse("occupancy evidence is unreadable") from exc
+        if not isinstance(occupancy, Mapping):
+            raise _refuse("occupancy evidence must be an object")
+        occupied = _occupied(occupancy)
+        if occupied:
+            raise _refuse(f"live owner evidence is present: {occupied}")
+    journal.ensure_genesis(
+        chain_id=chain_id,
+        actor={"id": actor, "class": "operator"},
+        spec_identity=str(spec_path),
+        source_identity={"session": expected_session_id, "failed_operation_id": failed_operation_id},
+    )
+    rollback: Callable[[], None] | None = None
+
+    from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+    def effect(_txn: Any) -> dict[str, Any]:
+        nonlocal rollback
+        try:
+            current_raw, current_shape = _assert_prechain_state_artifact(state_path, expected_state_sha256)
+        except CliError as exc:
+            raise ChainControlHold("state_cas_conflict", str(exc)) from exc
+        if current_shape != shape or current_raw != raw:
+            raise ChainControlHold("state_cas_conflict", "chain-state shape changed under recovery lock")
+        if archive_path.exists():
+            if archive_path.is_symlink() or not archive_path.is_file() or archive_path.read_bytes() != raw:
+                raise ChainControlHold("quarantine_cas_conflict", "quarantine archive conflicts with guarded bytes")
+            raise ChainControlHold("quarantine_cas_conflict", "quarantine archive exists before the guarded effect")
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(state_path, archive_path)
+        try:
+            fd = os.open(str(archive_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            os.replace(archive_path, state_path)
+            raise ChainControlHold("quarantine_durability_failed", "quarantine directory could not be fsynced") from exc
+        restored = False
+
+        def restore() -> None:
+            nonlocal restored
+            if restored:
+                return
+            restored = True
+            if archive_path.exists() and not state_path.exists():
+                os.replace(archive_path, state_path)
+
+        rollback = restore
+        return {
+            "state_path": str(state_path),
+            "quarantine_path": str(archive_path),
+            "state_sha256": expected_state_sha256,
+            "state_shape": shape,
+            "failed_operation_id": failed_operation_id,
+            "session": expected_session_id,
+            "chain_id": chain_id,
+            "chain_state": "absent",
+            "linked_receipts": [str(archive_path)],
+        }
+
+    def on_commit_failure(_txn: Any, _exc: BaseException) -> Mapping[str, Any]:
+        if rollback is not None:
+            rollback()
+            return {"rolled_back": True}
+        return {"rolled_back": False}
+
+    result = journal.mutate(
+        chain_id=chain_id,
+        operation_id=operation_id,
+        intent_kind="failed_prechain_state_quarantine",
+        actor={"id": actor, "class": "operator"},
+        state_paths=[
+            spec_path,
+            custody_dir / "locks" / (state_path.name + ".quarantine.lock"),
+        ],
+        effect=effect,
+        claim_class="required",
+        linked_receipts=[str(archive_path)],
+        spec_identity=str(spec_path),
+        source_identity={"session": expected_session_id, "failed_operation_id": failed_operation_id},
+        intent_context={
+            "session": expected_session_id,
+            "failed_operation_id": failed_operation_id,
+            "state_path": str(state_path),
+            "state_sha256": expected_state_sha256,
+            "state_shape": shape,
+            "reason": reason,
+        },
+        on_commit_failure=on_commit_failure,
+    )
+    if result.get("outcome") == "hold":
+        raise _refuse("state quarantine was held", extra=result)
+    event = result.get("result") if isinstance(result.get("result"), Mapping) else {}
+    event_payload = event.get("payload") if isinstance(event, Mapping) else {}
+    effect = event_payload.get("effect") if isinstance(event_payload, Mapping) else {}
+    return {
+        "outcome": result.get("outcome", "committed"),
+        "operation_id": operation_id,
+        "event": event,
+        "effect": effect,
+        **result,
+    }
 
 
 def _assert_marker(
@@ -1495,6 +1729,7 @@ __all__ = [
     "RECOVERY_ERROR",
     "RECOVERY_SCHEMA",
     "RECOVERY_INTENT",
+    "quarantine_failed_prechain_state",
     "recover_failed_prechain",
     "reconcile_failed_prechain_hold",
 ]
