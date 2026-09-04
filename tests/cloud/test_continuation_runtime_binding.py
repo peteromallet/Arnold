@@ -78,6 +78,11 @@ def test_continuation_cloud_declares_distinct_source_project_and_runtime_roots()
     assert source_root != runtime_root
     assert cloud.repo.workspace == project_root
     assert cloud.megaplan.src_path == source_root
+    assert cloud.megaplan.runtime_python == (
+        project_root + "/.venv/bin/python"
+    )
+    assert len(cloud.extra_repos) == 1
+    assert cloud.extra_repos[0].workspace == source_root
     assert raw["chain"]["spec"].startswith(project_root + "/")
     assert raw["ssh"]["workspace_dir"].endswith(
         "nbf-main-continuation-clean2-20260904"

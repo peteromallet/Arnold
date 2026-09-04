@@ -19,8 +19,10 @@ This continuation intentionally separates three roots:
 2. `/workspace/projects/native-build-forward-main-continuation-20260904/Arnold`
    is the unique writable operation/project root. The uploaded chain spec lives
    here, and chain state, plans, projections, logs, and operation evidence are
-   expected to live under its `.megaplan` directory.
-3. `/workspace/runtime-candidates/native-build-forward-main-continuation-20260904`
+   expected to live under its `.megaplan` directory. The entrypoint-provisioned
+   bootstrap interpreter is its `.venv/bin/python`; it is not the selected
+   per-epic execution runtime.
+3. `/workspace/projects/native-build-forward-main-continuation-20260904/runtime-candidates/native-build-forward-main-continuation-20260904`
    is the manifest-created immutable runtime candidate. The chain launcher
    derives its cwd, `PYTHONPATH`, and generation interpreter from this
    candidate's runtime manifest; it is not the chain state root.
@@ -38,12 +40,12 @@ override is prohibited because it skips the supervisor receipt.
 - Published source authority: branch `main`; the exact SHA/tree are read from
   the deployment receipt and immutable runtime manifest at launch. They are
   intentionally not duplicated here, so this document cannot become stale.
-- Chain session: `nbf-continuation-main-clean2-20260904`
+- Chain session: `nbf-main-continuation-main-clean2-20260904`
 - Writable operation/project root: `/workspace/projects/native-build-forward-main-continuation-20260904/Arnold`
 - Reviewed source root: `/workspace/arnold`
-- Runtime candidate root: `/workspace/runtime-candidates/native-build-forward-main-continuation-20260904`
+- Runtime candidate root: `/workspace/projects/native-build-forward-main-continuation-20260904/runtime-candidates/native-build-forward-main-continuation-20260904`
 - Runtime manifest identity: `native-build-forward-main-continuation-20260904`
-- First operation namespace: `nbf-continuation-main-clean2-20260904` (the supported
+- First operation namespace: `nbf-main-continuation-main-clean2-20260904` (the supported
   cloud identity tuple is the explicit workspace/session/shared runner in
   `cloud.yaml`; operation IDs remain journal-owned and are never caller-
   invented).
@@ -63,7 +65,7 @@ workspace, the old chain/marker session, implicit `megaplan-chain`, and any
 missing identity field. The shared `megaplan-cloud-agent` is not a new
 container; uniqueness comes from the continuation workspace/session tuple.
 Operation IDs are journal-owned under the
-  `nbf-continuation-main-clean2-20260904` namespace and must be derived by the supported
+  `nbf-main-continuation-main-clean2-20260904` namespace and must be derived by the supported
 transaction, never supplied by a caller or reused from the old chain.
 
 No remote container, checkout, hold, marker, plan, or chain has been created
