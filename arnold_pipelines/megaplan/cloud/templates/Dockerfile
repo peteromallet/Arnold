@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYENV_ROOT=/root/.pyenv \
+    LD_LIBRARY_PATH=/root/.pyenv/versions/3.13.6/lib:/root/.pyenv/versions/3.11.11/lib \
     PATH=/root/.pyenv/shims:/root/.pyenv/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin \
     NVM_DIR=/root/.nvm \
     BUN_INSTALL=/root/.bun
@@ -57,14 +58,9 @@ RUN curl -fsSL https://pyenv.run | bash \
     && /root/.pyenv/shims/pip install --upgrade pip pipx
 
 # Immutable dependency generations may point at either interpreter.  Register
-# both pyenv shared-library directories with the dynamic loader and prove the
+# both pyenv shared-library directories in the image environment and prove the
 # newer generation interpreter can actually start during image construction.
-RUN printf '%s\n' \
-      /root/.pyenv/versions/3.11.11/lib \
-      /root/.pyenv/versions/3.13.6/lib \
-      > /etc/ld.so.conf.d/pyenv.conf \
-    && ldconfig \
-    && test -f /root/.pyenv/versions/3.13.6/lib/libpython3.13.so.1.0 \
+RUN test -f /root/.pyenv/versions/3.13.6/lib/libpython3.13.so.1.0 \
     && /root/.pyenv/versions/3.13.6/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 13)'
 
 # nvm + Node 20

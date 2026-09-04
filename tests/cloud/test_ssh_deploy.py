@@ -645,7 +645,7 @@ def test_cloud_image_keeps_default_python_and_bakes_generation_interpreter() -> 
     assert "PYTHON_CONFIGURE_OPTS=--enable-shared /root/.pyenv/bin/pyenv install 3.13.6" in dockerfile
     assert "/root/.pyenv/versions/3.13.6/lib/libpython3.13.so.1.0" in dockerfile
     assert "/root/.pyenv/versions/3.13.6/bin/python -c" in dockerfile
-    assert "/etc/ld.so.conf.d/pyenv.conf" in dockerfile
+    assert "LD_LIBRARY_PATH=/root/.pyenv/versions/3.13.6/lib:/root/.pyenv/versions/3.11.11/lib" in dockerfile
 
 
 def test_cloud_image_installs_account_management_before_finite_uid_creation() -> None:
