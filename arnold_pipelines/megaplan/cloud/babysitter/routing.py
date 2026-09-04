@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 ROUTING_ENV = "ARNOLD_BABYSITTER_ROUTING"
@@ -52,23 +53,49 @@ def _codex_model(value: str, *, variable: str) -> str:
         )
     return f"codex:{model}"
 
-def resolve_babysitter_routing(env: Mapping[str, str] | None = None) -> BabysitterRouting:
+def resolve_babysitter_routing(
+    env: Mapping[str, str] | None = None,
+    *,
+    project_dir: Path | str | None = None,
+) -> BabysitterRouting:
     """Resolve the babysitter route from an explicit, fail-closed toggle."""
 
     values = os.environ if env is None else env
+    canonical_model = None
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
     selected = str(values.get(ROUTING_ENV, "")).strip().lower() or OMP_ROUTING
     if selected in {OMP_ROUTING, "default", "legacy"}:
         # ``legacy`` remains accepted as a back-compat alias for the omp route.
+        configured_model = str(values.get(OMP_MODEL_ENV, "")).strip()
+        if canonical_model is not None:
+            if configured_model and configured_model != canonical_model:
+                raise ValueError(
+                    f"{OMP_MODEL_ENV} conflicts with the continuation canonical model"
+                )
+            return BabysitterRouting(
+                mode=OMP_ROUTING,
+                controller_backend="omp",
+                controller_model=canonical_model,
+                investigator_backend="omp",
+                investigator_model=canonical_model,
+            )
         return BabysitterRouting(
             mode=OMP_ROUTING,
             controller_backend="omp",
-            controller_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
+            controller_model=configured_model or OMP_CONTROLLER_MODEL,
             investigator_backend="omp",
-            investigator_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
+            investigator_model=configured_model or OMP_CONTROLLER_MODEL,
         )
     if selected != CODEX_ROUTING:
         raise ValueError(
             f"{ROUTING_ENV} must be unset, 'omp', or 'codex'; got {selected!r}"
+        )
+    if canonical_model is not None:
+        raise ValueError(
+            f"{ROUTING_ENV}={selected!r} conflicts with the continuation canonical OMP model"
         )
     controller = _codex_model(
         str(values.get(CODEX_MODEL_ENV, CODEX_CONTROLLER_MODEL)),

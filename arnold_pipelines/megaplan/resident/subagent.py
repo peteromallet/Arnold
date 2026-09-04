@@ -7696,6 +7696,16 @@ def launch_superfixer_proactive_managed(
     The model spec defaults to the fixed omp deepseek-v4-flash backstop
     identity used by the hourly schedule; anything else fails closed.
     """
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
+        if canonical_model is not None:
+            if model_spec not in {SUPERFIXER_PROACTIVE_MODEL_SPEC, canonical_model}:
+                raise ValueError(
+                    "superfixer model conflicts with the continuation canonical model"
+                )
+            model_spec = canonical_model
     if not model_spec.startswith("omp:"):
         raise ValueError(
             f"superfixer model spec requires the omp backend: {model_spec!r}"
@@ -7712,6 +7722,7 @@ def launch_superfixer_proactive_managed(
         backend=backend,
         model=model,
         model_spec=model_spec,
+        reasoning_effort="high" if model_spec.endswith(":high") else "medium",
         task_kind="autonomous",
         work_intent="execution",
         mutation_claim="auto",
@@ -7781,7 +7792,29 @@ async def launch_subagent_task(
             "claude": "opus",
         },
     )
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
+        if canonical_model is not None:
+            if model is not None and provider_route.model_spec != canonical_model:
+                raise ValueError(
+                    "resident model conflicts with the continuation canonical model"
+                )
+            provider_route = ManagedAgentRoute(
+                backend="omp",
+                model=canonical_model.removeprefix("omp:"),
+                model_spec=canonical_model,
+                effort="high",
+                backend_source="continuation_profile",
+            )
     selected_effort = reasoning_effort or provider_route.effort or route.reasoning_effort
+    if (
+        project_dir is not None
+        and provider_route.backend_source == "continuation_profile"
+        and reasoning_effort not in {None, "high"}
+    ):
+        raise ValueError("continuation canonical model requires high reasoning effort")
     if selected_effort not in _VALID_DELEGATED_EFFORTS:
         raise ValueError(
             "reasoning_effort must be one of "

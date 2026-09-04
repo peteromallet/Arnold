@@ -10,6 +10,8 @@ from ..fallback_chains import normalize_fallback_spec_list
 from ..types import CliError, is_premium_placeholder_agent, parse_agent_spec
 from .policy import (
     CANONICAL_PREP_MODELS,
+    CONTINUATION_RUNTIME_MODEL_SPEC,
+    CONTINUATION_RUNTIME_PROFILE,
     DEFAULT_AGENT_ROUTING,
     DEFAULT_DEEPSEEK_PROVIDER,
     DEPTH_AUTHOR_PHASES,
@@ -646,6 +648,47 @@ def load_profile_metadata(
     return metadata
 
 
+def resolve_continuation_runtime_model(project_dir: Path | None) -> str | None:
+    """Resolve the continuation's single canonical runtime model binding.
+
+    A project opts into this stricter contract by declaring the named profile.
+    Every executable Megaplan phase must then contain the same explicit OMP
+    model/effort tuple.  Partial profiles, fallback arrays, and ambient model
+    substitutions fail closed before a continuation can execute.
+    """
+    if project_dir is None:
+        return None
+    profiles = load_profiles(project_dir=Path(project_dir))
+    raw = profiles.get(CONTINUATION_RUNTIME_PROFILE)
+    if raw is None:
+        return None
+    expected = set(VALID_PHASE_KEYS)
+    actual = set(raw)
+    if actual != expected:
+        missing = ", ".join(sorted(expected - actual)) or "(none)"
+        extra = ", ".join(sorted(actual - expected)) or "(none)"
+        raise CliError(
+            "runtime_model_binding_mismatch",
+            f"profile {CONTINUATION_RUNTIME_PROFILE!r} must cover exactly "
+            f"all phases; missing={missing}; extra={extra}",
+        )
+    for phase in sorted(expected):
+        value = raw[phase]
+        if value != CONTINUATION_RUNTIME_MODEL_SPEC:
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                f"profile {CONTINUATION_RUNTIME_PROFILE!r} phase {phase!r} "
+                f"must be exactly {CONTINUATION_RUNTIME_MODEL_SPEC!r}; got {value!r}",
+            )
+        parsed = parse_agent_spec(str(value))
+        if parsed.agent != "omp" or parsed.effort != "high":
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                f"phase {phase!r} must be an omp model with explicit high effort",
+            )
+    return CONTINUATION_RUNTIME_MODEL_SPEC
+
+
 def resolve_profile(name: str, profiles: dict[str, dict[str, str | list[str]]]) -> dict[str, str | list[str]]:
     try:
         return dict(profiles[name])
@@ -1221,6 +1264,8 @@ def load_profile_metadata(*args: Any, **kwargs: Any) -> Any:
 __all__ = [
     "AgentSpecShape",
     "CANONICAL_PREP_MODELS",
+    "CONTINUATION_RUNTIME_MODEL_SPEC",
+    "CONTINUATION_RUNTIME_PROFILE",
     "DEFAULT_AGENT_ROUTING",
     "DEFAULT_DEEPSEEK_PROVIDER",
     "DEPTH_AUTHOR_PHASES",
@@ -1258,6 +1303,7 @@ __all__ = [
     "resolve_prep_models",
     "resolve_default_profile",
     "resolve_profile",
+    "resolve_continuation_runtime_model",
     "resolve_pipeline_profile",
     "validate_prep_stage_provider",
     "validate_declared_stage_keys",

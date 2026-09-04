@@ -116,7 +116,7 @@ class FakeRpcClient:
         if self.set_model_error is not None:
             raise self.set_model_error
         self.set_model_calls.append((provider, model_id))
-        return type(
+        self.model = type(
             "ModelInfo",
             (),
             {
@@ -126,13 +126,14 @@ class FakeRpcClient:
                 "reasoning": True,
             },
         )()
+        return self.model
 
     def get_state(self) -> Any:
         return type(
             "SessionState",
             (),
             {
-                "model": None,
+                "model": self.model,
                 "session_id": "fake-session",
                 "thinking_level": self.thinking,
                 "is_streaming": False,
@@ -141,6 +142,7 @@ class FakeRpcClient:
 
     def set_thinking_level(self, level: str) -> None:
         self.thinking_levels.append(level)
+        self.thinking = level
 
     def abort(self) -> None:
         self.abort_calls += 1

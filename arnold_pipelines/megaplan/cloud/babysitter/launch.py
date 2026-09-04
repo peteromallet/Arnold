@@ -263,6 +263,7 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
         "model": routing.controller_model
         if routing.mode == "codex"
         else os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip() or DEFAULT_MODEL,
+        "reasoning_effort": REASONING_EFFORT,
         "routing": routing,
         "difficulty": _difficulty_env(),
     }
@@ -655,7 +656,7 @@ def _managed_spec(
         task_kind=TASK_KIND,
         difficulty=ctx["difficulty"],
         model=ctx["model"],
-        reasoning_effort=REASONING_EFFORT,
+        reasoning_effort=ctx.get("reasoning_effort", REASONING_EFFORT),
         route_class=route_class,
         backend=backend,
         command_display=(
@@ -1224,6 +1225,13 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             return 0
 
         ctx["engine_root"] = _resolve_engine_root()
+        # A continuation project profile is the canonical authority for all
+        # managed role routing; resolve it only after the engine root is known.
+        ctx["routing"] = resolve_babysitter_routing(project_dir=ctx["engine_root"])
+        if ctx["routing"].mode == "omp":
+            ctx["model"] = ctx["routing"].controller_model
+            if ctx["model"].endswith(":high"):
+                ctx["reasoning_effort"] = "high"
         goal_path = _resolve_goal_file(ctx)
         ctx["goal_path"] = str(goal_path)
 

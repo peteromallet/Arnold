@@ -29,11 +29,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
 MODEL_POLICY_SHA_ALGORITHM = "sha256"
+CONTINUATION_FIXER_MODEL_SPEC = (
+    "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+)
 
 # Budgets are seconds per repair rung.  Values follow the existing wrapper
 # conventions: reactive repair defaults to 7200s total for the babysitter
@@ -143,6 +146,37 @@ def resolve_model_policy(
             return row
     known = ", ".join(row.mode_rung for row in MODEL_POLICY_TABLE)
     raise PolicyError(f"unknown fixer mode/rung {mode_rung!r}; known: {known}")
+
+
+def resolve_continuation_fixer_policy(
+    mode_rung: str,
+    *,
+    runtime_model_spec: str,
+    replay_approved: bool = False,
+    replay_evidence_path: str | None = None,
+) -> PolicyRow:
+    """Resolve a fixer rung under the continuation's canonical model pin.
+
+    The ordinary table remains unchanged for legacy projects.  A continuation
+    must pass the exact profile-derived spec; no DeepSeek/default fallback is
+    silently accepted at this seam.
+    """
+    if runtime_model_spec != CONTINUATION_FIXER_MODEL_SPEC:
+        raise PolicyError(
+            "continuation fixer model binding is missing or conflicts with "
+            f"{CONTINUATION_FIXER_MODEL_SPEC!r}"
+        )
+    row = resolve_model_policy(
+        mode_rung,
+        replay_approved=replay_approved,
+        replay_evidence_path=replay_evidence_path,
+    )
+    return replace(
+        row,
+        agent_backend="omp",
+        provider_spec="openrouter",
+        model="openrouter/meta/muse-spark-1.3-contributor",
+    )
 
 
 def _require_replay_evidence(
@@ -304,6 +338,8 @@ __all__ = [
     "main",
     "model_policy_sha",
     "resolve_model_policy",
+    "resolve_continuation_fixer_policy",
+    "CONTINUATION_FIXER_MODEL_SPEC",
     "validate_hot_env_credentials_only",
 ]
 

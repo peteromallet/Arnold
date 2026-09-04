@@ -84,8 +84,10 @@ _OMP_SPEC_PREFIX = "omp:"
 
 # Canonical catalog model per provider route.  ``deepseek`` accepts either of
 # its two catalog rows; every other route has exactly one canonical model.
-# Every row below was verified present in the omp catalog
-# (oh-my-pi/packages/catalog/src/models.json) during B1/B4.
+# Every pre-existing row below was verified present in the omp catalog
+# (oh-my-pi/packages/catalog/src/models.json) during B1/B4.  The continuation
+# row is an explicit local catalog admission and still requires live provider
+# probing before the continuation may launch.
 _OMP_CATALOG_MODELS: dict[str, tuple[str, ...]] = {
     "deepseek": ("deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"),
     "fireworks": (
@@ -104,6 +106,7 @@ _OMP_CATALOG_MODELS: dict[str, tuple[str, ...]] = {
         "openrouter/z-ai/glm-5.1",
         "openrouter/z-ai/glm-5.3-flash",
         "openrouter/meta/muse-spark-1.2-contributor",
+        "openrouter/meta/muse-spark-1.3-contributor",
     ),
     "xai": ("xai/grok-4-fast-non-reasoning",),
     # omp-native credential routes: omp resolves credentials from its own
@@ -395,6 +398,53 @@ def validate_omp_catalog_model(provider: str, model_id: str) -> str:
         f"omp model {canonical!r} is not a canonical catalog row for "
         f"{provider!r} (canonical: {list(candidates)})",
     )
+
+
+def _verify_omp_session_binding(
+    client: Any, *, provider: str, model_id: str, thinking: str | None
+) -> None:
+    """Fail closed unless RPC readback matches the requested model/effort."""
+    if not hasattr(client, "get_state"):
+        raise CliError(
+            "runtime_model_mismatch",
+            "omp RPC client cannot read back effective model/thinking state",
+        )
+    try:
+        state = client.get_state()
+    except Exception as exc:
+        raise CliError(
+            "runtime_model_mismatch",
+            "omp RPC state readback failed while verifying model/thinking",
+        ) from exc
+
+    def _field(name: str) -> Any:
+        if isinstance(state, Mapping):
+            return state.get(name)
+        return getattr(state, name, None)
+
+    effective_model = _field("model")
+    effective_provider = getattr(effective_model, "provider", None)
+    effective_id = getattr(effective_model, "id", None)
+    if isinstance(effective_model, Mapping):
+        effective_provider = effective_model.get("provider")
+        effective_id = effective_model.get("id") or effective_model.get("model")
+    if effective_provider != provider or effective_id != model_id:
+        raise CliError(
+            "runtime_model_mismatch",
+            "omp RPC effective model differs from requested catalog identity",
+            extra={
+                "requested_provider": provider,
+                "requested_model": model_id,
+                "effective_provider": effective_provider,
+                "effective_model": effective_id,
+            },
+        )
+    if thinking is not None and _field("thinking_level") != thinking:
+        raise CliError(
+            "thinking_verification",
+            "omp RPC effective thinking level differs from requested effort",
+            extra={"requested": thinking, "effective": _field("thinking_level")},
+        )
 
 
 # RPC client seam (tests inject deterministic fakes here)
@@ -1544,8 +1594,17 @@ def run_omp_step(
             if thinking is not None:
                 try:
                     client.set_thinking_level(thinking)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise CliError(
+                        "thinking_verification",
+                        "omp RPC could not apply the requested thinking level",
+                    ) from exc
+            _verify_omp_session_binding(
+                client,
+                provider=provider,
+                model_id=model_id,
+                thinking=thinking,
+            )
 
             call_transaction_id = _emit_llm_start(
                 plan_dir,

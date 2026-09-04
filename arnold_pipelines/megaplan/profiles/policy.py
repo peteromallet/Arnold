@@ -92,6 +92,14 @@ DEPTH_AUTHOR_PHASES = frozenset({
     "tiebreaker_challenger",
 })
 
+# The continuation initiative deliberately has one runtime identity.  Keep
+# this contract here, alongside phase-policy constants, so cloud/resident
+# callers do not grow independent model knobs.
+CONTINUATION_RUNTIME_PROFILE = "all-muse-spark-1-3-contributor"
+CONTINUATION_RUNTIME_MODEL_SPEC = (
+    "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+)
+
 _CLAUDE_MODEL_TO_CODEX_SPEC: tuple[tuple[str, str], ...] = (
     ("haiku", "codex:gpt-5.4"),
     ("sonnet", "codex:gpt-5.4"),
