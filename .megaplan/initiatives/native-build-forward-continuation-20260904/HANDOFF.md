@@ -56,7 +56,10 @@ no shared ownership with the old chain. A supported launch must first create a
 new content-addressed runtime manifest and handoff receipt, verify all six
 labels and evidence without turning them into new completed rows, and prove
 the candidate branch/ref/object/package/profile closure. It may then create
-one fresh C2 plan, acquire one new owner reservation, and route every actual
-chain role through the Muse Spark 1.3 Contributor high profile. Hold release,
-plan creation, and dispatch are separate guarded actions; any mismatch leaves
-the old chain untouched and the new continuation paused.
+one fresh C2 plan, acquire one new owner reservation, and route supported chain
+lifecycle phases through the Muse Spark 1.3 Contributor high profile. The
+current profile schema does not bind product fixer/oracle/researcher roles;
+those roles remain an explicit pre-launch dependency and must not silently use
+the resident DeepSeek defaults. Hold release, plan creation, and dispatch are
+separate guarded actions; any mismatch leaves the old chain untouched and the
+new continuation paused.
