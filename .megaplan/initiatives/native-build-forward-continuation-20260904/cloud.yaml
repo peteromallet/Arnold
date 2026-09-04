@@ -9,7 +9,7 @@ chain:
   spec: /workspace/nbf-continuation-c2-20260904/Arnold/.megaplan/initiatives/native-build-forward-continuation-20260904/chain.yaml
 megaplan:
   ref: main
-  src_path: /workspace/nbf-main-continuation-20260904/Arnold
+  src_path: /workspace/nbf-main-continuation-20260904-source/Arnold
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
   runtime_python: /workspace/nbf-main-continuation-20260904/Arnold/.venv/bin/python
