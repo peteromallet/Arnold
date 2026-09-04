@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan._core import (
     scatter_worker_units,
 )
 from arnold_pipelines.megaplan._core.process_fanout import GenericScatterResult
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.profiles import (
     CANONICAL_PREP_MODELS,
@@ -455,6 +456,22 @@ def _run_prep_worker_step(
     resolved: AgentMode,
     prompt: str,
 ) -> WorkerResult:
+    # Triage and distill are logical workers nested inside the parent ``prep``
+    # phase.  Unlike research fan-out (which builds its dispatch spec in
+    # ``_dispatch_worker_unit_attempt``), this direct path must bind its
+    # worker dispatch explicitly to the already-active parent phase WBC.  Do
+    # not activate a second phase WBC for either sub-step: that would create a
+    # second lifecycle authority for the same prep attempt.
+    wbc_dispatch = build_worker_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        phase_step="prep",
+        agent=resolved.agent,
+        selected_spec=_prep_stage_agent_spec(resolved),
+        route_kind="direct",
+        dispatch_key=step,
+    )
     worker, agent, mode, refreshed = run_step_with_worker(
         step,
         state,
@@ -464,6 +481,7 @@ def _run_prep_worker_step(
         resolved=resolved,
         prompt_override=prompt,
         read_only=True,
+        wbc_dispatch=wbc_dispatch,
     )
     session_kwargs: dict[str, Any] = {
         "mode": mode,
