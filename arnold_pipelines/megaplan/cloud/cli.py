@@ -4123,6 +4123,11 @@ def _managed_run_env_prefix(
         '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
         f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
         f"export ARNOLD_REPAIR_SESSION={shlex.quote(session)}; "
+        # Chain startup resolves its canonical cloud-session marker from this
+        # exact session name.  Keep it pinned in managed launches so a
+        # workspace with multiple historical markers cannot fall back to a
+        # stale marker during launch-seed attestation.
+        f"export ARNOLD_CHAIN_SESSION={shlex.quote(session)}; "
         f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(run_kind)}; "
     )
 

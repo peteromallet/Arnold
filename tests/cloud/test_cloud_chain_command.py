@@ -720,6 +720,7 @@ def test_managed_chain_start_exports_canonical_repair_route() -> None:
     assert "ARNOLD_REPAIR_QUEUE_ROOT" in command
     assert "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions" in command
     assert "ARNOLD_REPAIR_SESSION=demo-chain" in command
+    assert "ARNOLD_CHAIN_SESSION=demo-chain" in command
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
 
 
