@@ -56,6 +56,7 @@ cloud.yaml
 cloud.*.yaml
 chain.yaml
 !.megaplan/initiatives/**/chain.yaml
+!.megaplan/initiatives/**/cloud.yaml
 plan.md
 !tests/fixtures/m5a_six_review_regression/04_stale_metadata/plan.md
 /plan_v*.md

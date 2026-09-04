@@ -1,0 +1,27 @@
+provider: ssh
+repo:
+  url: https://github.com/peteromallet/Arnold.git
+  branch: docs/nbf-durable-start-20260903
+  workspace: /workspace/nbf-continuation-c2-20260904/Arnold
+mode: idle
+chain_session: nbf-continuation-c2-20260904
+chain:
+  spec: /workspace/nbf-continuation-c2-20260904/Arnold/.megaplan/initiatives/native-build-forward-continuation-20260904/chain.yaml
+megaplan:
+  ref: docs/nbf-durable-start-20260903
+  codex_auth: chatgpt
+  repo: https://github.com/peteromallet/Arnold.git
+agents:
+  default: omp
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  identity_file: /Users/peteromalley/.ssh/services/agentbox_159_69_51_216_ed25519
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+driver:
+  babysitter:
+    mode: off
+secrets: []
