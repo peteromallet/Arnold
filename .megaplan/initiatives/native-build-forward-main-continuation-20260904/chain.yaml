@@ -3,112 +3,112 @@ anchors:
   north_star: NORTHSTAR.md
 milestones:
 - label: native-c2-completion-evaluation
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-c2-completion-evaluation.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-c2-completion-evaluation.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-c2
   notes: Fresh C2 start; six historical predecessors are admitted only by HANDOFF.md
     and are not new completed rows.
 - label: native-s2r-durable-primitives
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s2r-durable-primitives.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s2r-durable-primitives.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s2r
   depends_on:
   - native-c2-completion-evaluation
 - label: native-s3a-plan-quality-cutover
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s3a-plan-quality-cutover.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s3a-plan-quality-cutover.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s3a
   depends_on:
   - native-s2r-durable-primitives
 - label: native-s3b-gate-revise-cutover
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s3b-gate-revise-cutover.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s3b-gate-revise-cutover.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s3b
   depends_on:
   - native-s3a-plan-quality-cutover
 - label: native-s4-tiebreaker-finalize-reentry
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s4-tiebreaker-finalize-reentry.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s4-tiebreaker-finalize-reentry.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s4
   depends_on:
   - native-s3b-gate-revise-cutover
 - label: native-s5a-delivery-shadow
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s5a-delivery-shadow.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s5a-delivery-shadow.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s5a
   depends_on:
   - native-s4-tiebreaker-finalize-reentry
 - label: native-s5b-live-delivery
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s5b-live-delivery.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s5b-live-delivery.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s5b
   depends_on:
   - native-s5a-delivery-shadow
 - label: native-s6-control-plane
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s6-control-plane.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s6-control-plane.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s6
   depends_on:
   - native-s5b-live-delivery
 - label: native-s7-conformance
-  idea: .megaplan/initiatives/native-build-forward/briefs/native-s7-conformance.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/native-s7-conformance.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-s7
   depends_on:
   - native-s6-control-plane
 - label: platform-s1-inventory
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s1-inventory.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s1-inventory.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s1
   depends_on:
   - native-s7-conformance
 - label: platform-s2a-runtime-authority
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s2a-runtime-authority.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s2a-runtime-authority.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s2a
   depends_on:
   - platform-s1-inventory
 - label: platform-s2b-authoring-core
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s2b-authoring-core.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s2b-authoring-core.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s2b
   depends_on:
   - platform-s2a-runtime-authority
 - label: platform-s3-developer-tooling
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s3-developer-tooling.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s3-developer-tooling.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s3
   depends_on:
   - platform-s2b-authoring-core
 - label: platform-s4-recomposition
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s4-recomposition.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s4-recomposition.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s4
   depends_on:
   - platform-s3-developer-tooling
 - label: platform-s5-second-consumer
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s5-second-consumer.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s5-second-consumer.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s5
   depends_on:
   - platform-s4-recomposition
 - label: platform-s6-certification
-  idea: .megaplan/initiatives/native-build-forward/briefs/platform-s6-certification.md
+  idea: .megaplan/initiatives/native-build-forward-main-continuation-20260904/briefs/platform-s6-certification.md
   profile: all-muse-spark-1-3-contributor
   depth: high
   branch: nbf-main-continuation-live12-20260904-platform-s6

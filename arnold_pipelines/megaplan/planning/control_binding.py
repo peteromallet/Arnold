@@ -1597,6 +1597,8 @@ class PlanningControlBinding:
                 )
             from arnold_pipelines.megaplan.profiles import (
                 _canonicalize_tier_models_for_json,
+                CONTINUATION_RUNTIME_MODEL_SPEC,
+                CONTINUATION_RUNTIME_PROFILE,
                 _resolve_prep_models_with_inheritance,
                 _resolve_tier_models_with_inheritance,
                 load_profile_metadata,
@@ -1710,6 +1712,11 @@ class PlanningControlBinding:
             prep_models, prep_trace = resolve_prep_models(
                 flat_prep_spec=_prep_flat_spec_from_profile(resolved),
                 prep_models=inherited_prep_models,
+                canonical_model=(
+                    CONTINUATION_RUNTIME_MODEL_SPEC
+                    if new_profile == CONTINUATION_RUNTIME_PROFILE
+                    else None
+                ),
             )
             if prep_models:
                 next_config["prep_models"] = prep_models

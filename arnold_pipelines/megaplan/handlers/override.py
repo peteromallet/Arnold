@@ -9,6 +9,8 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.profiles import (
+    CONTINUATION_RUNTIME_MODEL_SPEC,
+    CONTINUATION_RUNTIME_PROFILE,
     DEFAULT_AGENT_ROUTING,
     ROBUSTNESS_ACCEPTED,
     effective_premium_vendor,
@@ -1915,6 +1917,11 @@ def _override_set_profile(
     prep_models, prep_trace = resolve_prep_models(
         flat_prep_spec=_prep_flat_spec_from_profile(resolved),
         prep_models=inherited_prep_models,
+        canonical_model=(
+            CONTINUATION_RUNTIME_MODEL_SPEC
+            if new_profile == CONTINUATION_RUNTIME_PROFILE
+            else None
+        ),
     )
 
     previous_profile = state["config"].get("profile")

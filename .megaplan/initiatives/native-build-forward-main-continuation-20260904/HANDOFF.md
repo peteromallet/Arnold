@@ -45,10 +45,9 @@ The source-side reviewed evidence is retained in the durable-start run:
 
 The reviewed continuation source is the published `main` branch at the
 post-port SHA recorded by the launch run (the source is always revalidated by
-its immutable tree before deployment).
-`9d210d6c2b3e7bed4d03c264c8f900dbc7a8e43c`, tree
-`874a1e7f8894bcd96d32f3d52cd235bcad833d2e`. Fresh admission must rehash every
-old and new authority and must refuse on drift.
+its immutable tree before deployment). Fresh admission must rehash every old
+and new authority and must refuse on drift; the deployment receipt and runtime
+manifest are the sole exact SHA/tree authority.
 
 ## Fresh continuation contract
 
@@ -58,9 +57,9 @@ new content-addressed runtime manifest and handoff receipt, verify all six
 labels and evidence without turning them into new completed rows, and prove
 the candidate branch/ref/object/package/profile closure. It may then create
 one fresh C2 plan, acquire one new owner reservation, and route supported chain
-lifecycle phases through the Muse Spark 1.3 Contributor high profile. The
-current profile schema does not bind product fixer/oracle/researcher roles;
-those roles remain an explicit pre-launch dependency and must not silently use
-the resident DeepSeek defaults. Hold release, plan creation, and dispatch are
+  lifecycle phases, fixer, oracle, researcher, and superfixer roles through the
+  canonical Muse Spark 1.3 Contributor high profile. The exact-output provider
+  receipt and preflight must prove this binding before dispatch; no fallback to
+  resident defaults is permitted. Hold release, plan creation, and dispatch are
 separate guarded actions; any mismatch leaves the old chain untouched and the
 new continuation paused.

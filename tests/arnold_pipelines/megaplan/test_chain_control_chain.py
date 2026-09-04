@@ -62,6 +62,30 @@ def test_context_free_bound_save_fails_closed(tmp_path: Path) -> None:
     assert loaded.last_state == "ready"
 
 
+def test_bound_save_installs_committed_revision_for_repeated_saves(tmp_path: Path) -> None:
+    """A bound caller can persist successive lifecycle changes without self-conflict."""
+    spec = _spec(tmp_path)
+    journal = journal_for(tmp_path)
+    journal.ensure_genesis(chain_id=chain_id_for_spec(spec), actor={"id": "t", "class": "test"})
+    state = ChainState(current_milestone_index=-1, last_state="starting")
+
+    save_chain_state(spec, state)
+    assert state.metadata["_nbf08_revision"] == 0
+    state.current_milestone_index = 0
+    state.last_state = "initialized"
+    save_chain_state(spec, state)
+    assert state.metadata["_nbf08_revision"] == 1
+    state.current_plan_name = "demo-plan"
+    save_chain_state(spec, state)
+    assert state.metadata["_nbf08_revision"] == 2
+
+    loaded = load_chain_state(spec)
+    assert loaded.metadata["_nbf08_revision"] == 2
+    projection = tmp_path / ".megaplan" / "plans" / ".chains" / "projections" / "chain-state.projection.jsonl"
+    rows = [json.loads(line) for line in projection.read_text(encoding="utf-8").splitlines()]
+    assert [row["payload"]["state"]["metadata"].get("_nbf08_revision") for row in rows] == [0, 1, 2]
+
+
 def test_pause_resume_drive_production_door_and_journal(tmp_path: Path) -> None:
     spec = _spec(tmp_path)
     plan = tmp_path / ".megaplan" / "plans" / "demo-plan"

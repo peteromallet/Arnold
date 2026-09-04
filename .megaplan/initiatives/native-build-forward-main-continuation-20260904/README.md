@@ -12,8 +12,9 @@ digests and explicitly does not claim `chain_completed`.
 ## Identities
 
 - Published ref: `main` (the exact SHA is captured by the deployment receipt)
-- Candidate SHA: `9d210d6c2b3e7bed4d03c264c8f900dbc7a8e43c`
-- Candidate tree: `874a1e7f8894bcd96d32f3d52cd235bcad833d2e`
+- Published source authority: branch `main`; the exact SHA/tree are read from
+  the deployment receipt and immutable runtime manifest at launch. They are
+  intentionally not duplicated here, so this document cannot become stale.
 - Chain session: `nbf-main-continuation-live12-20260904`
 - Runtime/workspace root: `/workspace/nbf-main-continuation-live12-20260904/Arnold`
 - Runtime manifest identity: `native-build-forward-main-continuation-20260904`
@@ -21,14 +22,12 @@ digests and explicitly does not claim `chain_completed`.
   cloud identity tuple is the explicit workspace/session/shared runner in
   `cloud.yaml`; operation IDs remain journal-owned and are never caller-
   invented).
-- Chain lifecycle phases and tiebreaker roles resolve to
-  `meta/muse-spark-1.3-contributor`, thinking `high`, through
-  `.megaplan/profiles.toml`. Product fixer/oracle/researcher role binding is
-  not expressible by the current profile schema and is therefore not claimed.
-  `cloud.yaml` sets the supported babysitter mode to `off` so the resident
-  DeepSeek superfixer default cannot silently dispatch. A supported product
-  role-binding seam must be verified before launch. This is distinct from the
-  local Megado Luna/Grok model policy.
+- Chain lifecycle, tiebreaker, fixer, oracle, researcher, and superfixer roles
+  all resolve to `omp:openrouter/meta/muse-spark-1.3-contributor:high` through
+  the canonical continuation runtime binding and are checked by preflight and
+  the exact-output provider receipt. `cloud.yaml` enables the supported
+  superfixer/babysitter mode after that probe. This is distinct from the local
+  Megado Luna/Grok model policy.
 
 ## Pre-launch identity guards
 

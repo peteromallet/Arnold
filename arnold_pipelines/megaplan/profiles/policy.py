@@ -263,10 +263,25 @@ def resolve_prep_models(
     *,
     flat_prep_spec: str | None,
     prep_models: dict[str, str | list[str]] | None,
+    canonical_model: str | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
+    """Resolve prep stages, optionally under one pinned continuation model.
+
+    A continuation profile is intentionally stricter than ordinary projects:
+    every prep stage (including nested research fan-out) must inherit the
+    profile's exact model/effort tuple.  This prevents the ordinary DeepSeek
+    defaults from becoming an implicit fallback when a pinned profile omits
+    prep metadata, and rejects an explicit conflicting chain before dispatch.
+    """
     explicit_raw = dict(prep_models or {})
     explicit: dict[str, str] = {}
     for stage, spec_value in explicit_raw.items():
+        values = spec_value if isinstance(spec_value, list) else [spec_value]
+        if canonical_model is not None and any(value != canonical_model for value in values):
+            raise _cli_error(
+                "runtime_model_binding_mismatch",
+                f"continuation prep_models.{stage} must be exactly {canonical_model!r}",
+            )
         if isinstance(spec_value, str):
             explicit[stage] = spec_value
         else:
@@ -275,7 +290,10 @@ def resolve_prep_models(
     canonical_fallback_used: dict[str, bool] = {}
     flat_agent = parse_agent_spec(flat_prep_spec).agent if flat_prep_spec else None
     for stage in PREP_MODEL_STAGES:
-        if stage in explicit:
+        if canonical_model is not None:
+            resolved[stage] = canonical_model
+            canonical_fallback_used[stage] = False
+        elif stage in explicit:
             resolved[stage] = explicit[stage]
             canonical_fallback_used[stage] = False
         elif flat_agent == "codex" and stage in {"triage", "distill"}:
@@ -289,6 +307,7 @@ def resolve_prep_models(
         "explicit_prep_models": explicit,
         "resolved_stage_models": dict(resolved),
         "canonical_fallback_used": canonical_fallback_used,
+        "continuation_model": canonical_model,
     }
     return resolved, trace
 
@@ -1062,6 +1081,11 @@ def apply_profile_expansion(
         prep_models, prep_trace = resolve_prep_models(
             flat_prep_spec=_prep_flat_spec_from_profile(resolved),
             prep_models=inherited_prep_models,
+            canonical_model=(
+                CONTINUATION_RUNTIME_MODEL_SPEC
+                if profile_name == CONTINUATION_RUNTIME_PROFILE
+                else None
+            ),
         )
         _validate_resolved_profile_invariants(
             profile_name,

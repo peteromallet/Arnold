@@ -2305,7 +2305,7 @@ def save_chain_state(
     state.metadata = metadata
     bound_journal = None if _direct else require_bound_context(spec_path)
     if bound_journal is not None or active_transaction() is not None:
-        persist_bound_chain_state(
+        persisted = persist_bound_chain_state(
             spec_path,
             state.to_dict(),
             state_path=state_path,
@@ -2321,6 +2321,18 @@ def save_chain_state(
             actor={"id": "chain", "class": "system"},
             expected_revision=metadata.get("_nbf08_revision"),
         )
+        # The CAS adapter assigns the committed revision while writing the
+        # authority file.  Keep the caller's object aligned with that result
+        # before recording projection evidence or performing another save in
+        # the same chain turn; otherwise a second save reuses the predecessor
+        # revision and deterministically self-conflicts.
+        # ``journal.mutate`` wraps the effect result under ``effect`` while
+        # an already-active transaction returns it directly.
+        actual_revision = persisted.get("actual_revision")
+        if actual_revision is None and isinstance(persisted.get("effect"), dict):
+            actual_revision = persisted["effect"].get("actual_revision")
+        if actual_revision is not None:
+            state.metadata["_nbf08_revision"] = actual_revision
     else:
         tmp = state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")

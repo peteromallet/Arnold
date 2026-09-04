@@ -356,6 +356,54 @@ def test_continuation_rejects_noncanonical_fallback_entry(tmp_path: Path) -> Non
         )
 
 
+def test_persisted_c2_plan_inherits_nested_continuation_model(tmp_path: Path) -> None:
+    """A persisted C2 config cannot fall back to the ambient DeepSeek ladder."""
+    from arnold_pipelines.megaplan.orchestration.prep_research import (
+        resolve_prep_stage_model,
+    )
+
+    project = _project(tmp_path)
+    state = {
+        "config": {
+            "profile": "all-muse-spark-1-3-contributor",
+            "project_dir": str(project),
+            "prep_models": {"triage": CONTINUATION_RUNTIME_MODEL_SPEC},
+        }
+    }
+    for stage in ("triage", "fanout", "distill"):
+        resolved = resolve_prep_stage_model(state, stage)
+        assert resolved.resolved_model == "openrouter/meta/muse-spark-1.3-contributor"
+        assert resolved.effort == "high"
+
+    state["config"]["prep_models"]["fanout"] = "omp:deepseek/deepseek-v4-flash"
+    with pytest.raises(CliError, match="must be exactly"):
+        resolve_prep_stage_model(state, "fanout")
+
+
+def test_c2_profile_expansion_persists_canonical_nested_routes(tmp_path: Path) -> None:
+    from argparse import Namespace
+    from arnold_pipelines.megaplan.profiles.policy import apply_profile_expansion
+
+    project = _project(tmp_path)
+    args = Namespace(
+        profile="all-muse-spark-1-3-contributor",
+        phase_model=[],
+        tier_models=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+    )
+    apply_profile_expansion(args, project)
+    assert args.prep_models == {
+        stage: CONTINUATION_RUNTIME_MODEL_SPEC
+        for stage in ("triage", "fanout", "distill")
+    }
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        stage: False for stage in ("triage", "fanout", "distill")
+    }
+
+
 def test_exact_muse_probe_receipt_is_replayable_and_identity_bound(tmp_path: Path) -> None:
     from types import SimpleNamespace
 

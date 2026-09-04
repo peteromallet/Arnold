@@ -20,7 +20,10 @@ from arnold_pipelines.megaplan._core.process_fanout import GenericScatterResult
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.profiles import (
     CANONICAL_PREP_MODELS,
+    CONTINUATION_RUNTIME_MODEL_SPEC,
+    CONTINUATION_RUNTIME_PROFILE,
     normalize_robustness,
+    resolve_continuation_runtime_model,
     validate_prep_stage_provider,
 )
 from arnold_pipelines.megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
@@ -245,14 +248,37 @@ def _prep_stage_agent_spec(resolved: AgentMode) -> str:
 
 
 def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
-    raw_models = state.get("config", {}).get("prep_models", {})
+    config = state.get("config", {})
+    raw_models = config.get("prep_models", {})
+    continuation_model: str | None = None
+    if config.get("profile") == CONTINUATION_RUNTIME_PROFILE:
+        project_dir = config.get("project_dir")
+        continuation_model = resolve_continuation_runtime_model(
+            Path(project_dir) if isinstance(project_dir, str) else None
+        )
+        if continuation_model is None:
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                "continuation profile is missing its canonical runtime model binding",
+            )
     if isinstance(raw_models, dict) and stage in raw_models:
         raw_spec = raw_models[stage]
     else:
-        try:
-            raw_spec = CANONICAL_PREP_MODELS[stage]
-        except KeyError as exc:
-            raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+        if continuation_model is not None:
+            raw_spec = continuation_model
+        else:
+            try:
+                raw_spec = CANONICAL_PREP_MODELS[stage]
+            except KeyError as exc:
+                raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+
+    if continuation_model is not None:
+        values = raw_spec if isinstance(raw_spec, list) else [raw_spec]
+        if any(value != continuation_model for value in values):
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                f"continuation prep_models.{stage} must be exactly {CONTINUATION_RUNTIME_MODEL_SPEC!r}",
+            )
 
     try:
         spec = validate_prep_stage_provider(raw_spec, stage=stage)
@@ -261,6 +287,11 @@ def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
             raise
         raise CliError("invalid_prep_model", exc.message) from exc
     if isinstance(spec, list):
+        if continuation_model is not None and any(value != continuation_model for value in spec):
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                f"continuation prep_models.{stage} fallback chain is not canonical",
+            )
         spec = select_fallback_spec(spec, 0, path=f"prep_models.{stage}")
 
     parsed = parse_agent_spec(spec)
