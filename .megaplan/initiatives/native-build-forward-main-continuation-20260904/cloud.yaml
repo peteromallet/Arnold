@@ -18,13 +18,14 @@ chain:
   spec: /workspace/projects/native-build-forward-main-continuation-20260904/Arnold/.megaplan/initiatives/native-build-forward-main-continuation-20260904/chain.yaml
 megaplan:
   ref: main
-  # Bootstrap interpreter in the writable operation checkout. Per-epic
-  # execution uses the manifest's runtime_root under the operation base's
-  # runtime-candidates/ directory instead.
+  # Image-provisioned Python 3.11 bootstrap interpreter. Per-epic execution
+  # uses the manifest's runtime_root under the operation base's
+  # runtime-candidates/ directory instead (with its attested Python 3.13
+  # generation interpreter).
   src_path: /workspace/arnold
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  runtime_python: /workspace/projects/native-build-forward-main-continuation-20260904/Arnold/.venv/bin/python
+  runtime_python: /root/.pyenv/versions/3.11.11/bin/python
 agents:
   default: omp
 ssh:

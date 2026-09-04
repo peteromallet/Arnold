@@ -69,8 +69,8 @@ def test_continuation_cloud_declares_distinct_source_project_and_runtime_roots()
     project_root = raw["repo"]["workspace"]
     source_root = raw["megaplan"]["src_path"]
     runtime_root = (
-        "/workspace/runtime-candidates/"
-        "native-build-forward-main-continuation-20260904"
+        "/workspace/projects/native-build-forward-main-continuation-20260904/"
+        "runtime-candidates/native-build-forward-main-continuation-20260904"
     )
 
     assert project_root != source_root
@@ -78,9 +78,7 @@ def test_continuation_cloud_declares_distinct_source_project_and_runtime_roots()
     assert source_root != runtime_root
     assert cloud.repo.workspace == project_root
     assert cloud.megaplan.src_path == source_root
-    assert cloud.megaplan.runtime_python == (
-        project_root + "/.venv/bin/python"
-    )
+    assert cloud.megaplan.runtime_python == "/root/.pyenv/versions/3.11.11/bin/python"
     assert len(cloud.extra_repos) == 1
     assert cloud.extra_repos[0].workspace == source_root
     assert raw["chain"]["spec"].startswith(project_root + "/")
@@ -88,6 +86,21 @@ def test_continuation_cloud_declares_distinct_source_project_and_runtime_roots()
         "nbf-main-continuation-clean2-20260904"
     )
     assert raw["ssh"]["container"] == "nbf-main-continuation-clean2-20260904"
+
+
+def test_continuation_bootstrap_python_is_image_pinned_and_generation_is_distinct() -> None:
+    dockerfile = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/templates/Dockerfile"
+    ).read_text(encoding="utf-8")
+    cloud = load_cloud_spec(CONTINUATION_CLOUD)
+
+    assert cloud.megaplan.runtime_python == "/root/.pyenv/versions/3.11.11/bin/python"
+    assert "pyenv install 3.11.11" in dockerfile
+    assert "pyenv install 3.13.6" in dockerfile
+    assert "pyenv global 3.11.11" in dockerfile
+    assert "/root/.pyenv/versions/3.13.6/bin/python" in dockerfile
+    assert cloud.megaplan.runtime_python != "/root/.pyenv/versions/3.13.6/bin/python"
 
 
 def test_continuation_cloud_requires_canonical_entrypoint_and_isolated_supervisor_root() -> None:

@@ -19,9 +19,10 @@ This continuation intentionally separates three roots:
 2. `/workspace/projects/native-build-forward-main-continuation-20260904/Arnold`
    is the unique writable operation/project root. The uploaded chain spec lives
    here, and chain state, plans, projections, logs, and operation evidence are
-   expected to live under its `.megaplan` directory. The entrypoint-provisioned
-   bootstrap interpreter is its `.venv/bin/python`; it is not the selected
-   per-epic execution runtime.
+   expected to live under its `.megaplan` directory. The image-provisioned
+   bootstrap interpreter is `/root/.pyenv/versions/3.11.11/bin/python`; it is
+   not the selected per-epic execution runtime. The manifest-attested runtime
+   candidate has a distinct Python 3.13.6 generation interpreter.
 3. `/workspace/projects/native-build-forward-main-continuation-20260904/runtime-candidates/native-build-forward-main-continuation-20260904`
    is the manifest-created immutable runtime candidate. The chain launcher
    derives its cwd, `PYTHONPATH`, and generation interpreter from this
