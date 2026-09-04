@@ -22,7 +22,7 @@ ssh:
   identity_file: /Users/peteromalley/.ssh/services/agentbox_159_69_51_216_ed25519
   remote_dir: /opt/megaplan-cloud/deploy
   workspace_dir: /opt/megaplan-cloud/workspace
-  container: megaplan-cloud-agent
+  container: nbf-cloud-agent-python313-20260904
 driver:
   babysitter:
     mode: superfixer
