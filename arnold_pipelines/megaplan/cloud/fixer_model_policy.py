@@ -166,16 +166,24 @@ def resolve_continuation_fixer_policy(
             "continuation fixer model binding is missing or conflicts with "
             f"{CONTINUATION_FIXER_MODEL_SPEC!r}"
         )
-    row = resolve_model_policy(
-        mode_rung,
-        replay_approved=replay_approved,
-        replay_evidence_path=replay_evidence_path,
+    # Resolve the rung name without resolving its legacy provider policy.  The
+    # legacy table's Flash rows are deliberately gated, but that gate must not
+    # leak into a continuation which has explicitly pinned its own provider.
+    # Still reject unknown rungs here; accepting an arbitrary label would make
+    # the continuation override an untyped escape hatch.
+    row = next(
+        (candidate for candidate in MODEL_POLICY_TABLE if candidate.mode_rung == mode_rung),
+        None,
     )
+    if row is None:
+        known = ", ".join(candidate.mode_rung for candidate in MODEL_POLICY_TABLE)
+        raise PolicyError(f"unknown fixer mode/rung {mode_rung!r}; known: {known}")
     return replace(
         row,
         agent_backend="omp",
         provider_spec="openrouter",
         model="openrouter/meta/muse-spark-1.3-contributor",
+        status="default",
     )
 
 
@@ -273,20 +281,39 @@ def validate_hot_env_credentials_only(env: Mapping[str, str]) -> list[str]:
     return sorted(violations)
 
 
-def _canonical_table_serialization() -> str:
-    """Deterministic JSON serialization of MODEL_POLICY_TABLE sorted by mode_rung."""
+def _canonical_table_serialization(*, continuation_model_spec: str | None = None) -> str:
+    """Deterministic JSON serialization of the effective fixer policy.
+
+    The historical table remains the default serialization for compatibility.
+    A continuation receipt asks for the effective policy, which includes its
+    explicit model override so its digest cannot be mistaken for the legacy
+    DeepSeek policy.
+    """
     rows = sorted(
         (asdict(row) for row in MODEL_POLICY_TABLE),
         key=lambda row: row["mode_rung"],
     )
+    if continuation_model_spec == CONTINUATION_FIXER_MODEL_SPEC:
+        rows.append(
+            {
+                "mode_rung": "continuation_override",
+                "agent_backend": "omp",
+                "provider_spec": "openrouter",
+                "model": "openrouter/meta/muse-spark-1.3-contributor",
+                "budget": None,
+                "status": "default",
+            }
+        )
     return json.dumps(rows, sort_keys=True, ensure_ascii=True)
 
 
-def model_policy_sha() -> str:
-    """Deterministic digest over the canonical serialization of the policy table."""
+def model_policy_sha(*, continuation_model_spec: str | None = None) -> str:
+    """Digest the legacy or explicitly selected effective model policy."""
     return hashlib.new(
         MODEL_POLICY_SHA_ALGORITHM,
-        _canonical_table_serialization().encode("utf-8"),
+        _canonical_table_serialization(
+            continuation_model_spec=continuation_model_spec
+        ).encode("utf-8"),
     ).hexdigest()
 
 

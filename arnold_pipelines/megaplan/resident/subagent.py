@@ -7684,7 +7684,7 @@ def launch_superfixer_proactive_managed(
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
     schedule_context: Mapping[str, Any] | None = None,
-    model_spec: str = SUPERFIXER_PROACTIVE_MODEL_SPEC,
+    model_spec: str | None = None,
 ) -> SubagentResult:
     """Launch the hourly superfixer backstop through the durable managed-run path.
 
@@ -7693,19 +7693,39 @@ def launch_superfixer_proactive_managed(
     the durable manifest (``schedule_occurrence``), and ``launch_origin``
     carries the scheduled-turn source kind, so the durable launch receipt
     links back to the occurrence claim and forward to the final run receipt.
-    The model spec defaults to the fixed omp deepseek-v4-flash backstop
-    identity used by the hourly schedule; anything else fails closed.
+    Legacy callers default to the fixed omp deepseek-v4-flash backstop.  A
+    continuation caller must provide its exact profile-derived model spec;
+    this seam never rewrites a legacy/default value into a continuation pin.
     """
     if project_dir is not None:
         from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
 
         canonical_model = resolve_continuation_runtime_model(Path(project_dir))
         if canonical_model is not None:
-            if model_spec not in {SUPERFIXER_PROACTIVE_MODEL_SPEC, canonical_model}:
+            if model_spec != canonical_model:
                 raise ValueError(
-                    "superfixer model conflicts with the continuation canonical model"
+                    "continuation superfixer requires the explicit canonical model"
                 )
-            model_spec = canonical_model
+            from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+                resolve_omp_live_membership,
+            )
+
+            route = canonical_model.removeprefix("omp:")
+            provider, separator, model_and_effort = route.partition("/")
+            model, effort_separator, effort = model_and_effort.rpartition(":")
+            if not separator or not provider or not effort_separator or effort != "high":
+                raise ValueError("continuation superfixer provider route is not canonical")
+            proof = resolve_omp_live_membership(provider, model)
+            if (
+                proof.get("identity") != f"{provider}/{model}"
+                or not proof.get("digest")
+                or proof.get("model") != model
+            ):
+                raise ValueError(
+                    "continuation superfixer provider probe did not attest the exact model"
+                )
+    if model_spec is None:
+        model_spec = SUPERFIXER_PROACTIVE_MODEL_SPEC
     if not model_spec.startswith("omp:"):
         raise ValueError(
             f"superfixer model spec requires the omp backend: {model_spec!r}"
@@ -7797,9 +7817,9 @@ async def launch_subagent_task(
 
         canonical_model = resolve_continuation_runtime_model(Path(project_dir))
         if canonical_model is not None:
-            if model is not None and provider_route.model_spec != canonical_model:
+            if model is None or provider_route.model_spec != canonical_model:
                 raise ValueError(
-                    "resident model conflicts with the continuation canonical model"
+                    "continuation resident dispatch requires the explicit canonical model"
                 )
             provider_route = ManagedAgentRoute(
                 backend="omp",

@@ -311,6 +311,15 @@ def _recovery_evidence_root(workspace: str) -> str:
 
 
 def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.cloud.fixer_model_policy import model_policy_sha
+    from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import policy_sha
+
+    resolved_model = str(ctx.get("model") or "")
+    continuation_model = (
+        resolved_model
+        if resolved_model == "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+        else None
+    )
     payload: dict[str, Any] = {
         "schema": LAUNCH_RECEIPT_SCHEMA,
         "session": ctx["session"],
@@ -323,6 +332,14 @@ def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[
         "remote_spec": ctx["remote_spec"],
         "mode": ctx["mode"],
         "model": ctx["model"],
+        "reasoning_effort": ctx.get("reasoning_effort"),
+        "provider_probe": ctx.get("provider_probe"),
+        "policy_sha": policy_sha(),
+        # Include the continuation override in the effective digest.  Legacy
+        # receipts retain the historical table digest for compatibility.
+        "model_policy_sha": model_policy_sha(
+            continuation_model_spec=continuation_model
+        ),
         "toolsets": TOOLSETS,
         "babysitter_pid": os.getpid(),
         "supervisor_pid": os.getpid(),
@@ -568,6 +585,29 @@ def _managed_spec(
 ) -> ManagedCommandSpec:
     engine_root = ctx["engine_root"]
     routing = ctx["routing"]
+    if routing.mode == "omp":
+        # A continuation's babysitter is also a fixer dispatch.  Resolve the
+        # explicit fixer rung through its canonical policy seam so this
+        # production consumer cannot accidentally fall back to the legacy
+        # gated DeepSeek table.
+        from arnold_pipelines.megaplan.cloud.fixer_model_policy import (
+            CONTINUATION_FIXER_MODEL_SPEC,
+            resolve_continuation_fixer_policy,
+        )
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        continuation_model = resolve_continuation_runtime_model(engine_root)
+        if continuation_model is not None:
+            fixer_policy = resolve_continuation_fixer_policy(
+                "proactive", runtime_model_spec=continuation_model
+            )
+            expected_model = f"omp:{fixer_policy.model}:high"
+            if continuation_model != CONTINUATION_FIXER_MODEL_SPEC:
+                raise RuntimeError("continuation fixer policy/profile identity diverged")
+            if ctx.get("model") != expected_model:
+                raise RuntimeError(
+                    "continuation babysitter model does not match the canonical fixer policy"
+                )
     if routing.mode == "codex":
         # Codex reads the sealed goal from stdin.  Keeping the goal out of argv
         # also makes the managed manifest's stdin hash the exact controller
@@ -1201,6 +1241,41 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     return result
 
 
+def _require_continuation_provider_probe(ctx: dict[str, Any]) -> None:
+    """Require and retain an exact live OMP membership proof before launch."""
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        resolve_omp_live_membership,
+    )
+    from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+    continuation_model = resolve_continuation_runtime_model(ctx["engine_root"])
+    if continuation_model is None:
+        return
+    if ctx.get("reasoning_effort") != "high":
+        raise RuntimeError("continuation provider probe requires high reasoning effort")
+    route = continuation_model.removeprefix("omp:")
+    provider, separator, model_and_effort = route.partition("/")
+    model_id, effort_separator, effort = model_and_effort.rpartition(":")
+    if not separator or not provider or not effort_separator or effort != "high":
+        raise RuntimeError("continuation provider probe route is not canonical")
+    proof = resolve_omp_live_membership(provider, model_id)
+    if (
+        proof.get("identity") != f"{provider}/{model_id}"
+        or not proof.get("digest")
+        or proof.get("model") != model_id
+    ):
+        raise RuntimeError("continuation provider probe did not attest the exact model")
+    ctx["provider_probe"] = {
+        "spec": continuation_model,
+        "provider": provider,
+        "model": model_id,
+        "reasoning_effort": effort,
+        "identity": proof["identity"],
+        "catalog_digest": proof["digest"],
+        "observed_at": proof.get("observed_at"),
+    }
+
+
 def launch_babysitter(argv: Sequence[str] | None = None) -> int:
     """Run the single-flash babysitter launch flow; returns the process rc."""
     args = _build_parser().parse_args(argv)
@@ -1232,6 +1307,7 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             ctx["model"] = ctx["routing"].controller_model
             if ctx["model"].endswith(":high"):
                 ctx["reasoning_effort"] = "high"
+        _require_continuation_provider_probe(ctx)
         goal_path = _resolve_goal_file(ctx)
         ctx["goal_path"] = str(goal_path)
 

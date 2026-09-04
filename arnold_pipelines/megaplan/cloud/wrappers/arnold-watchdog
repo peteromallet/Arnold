@@ -2632,21 +2632,15 @@ babysitter_policy_dispatch() {
   after="${mode_after#*$'\t'}"
   [[ -n "$mode" ]] || mode="superfixer"
   if [[ "$mode" == "off" ]]; then
-    # mode=off disables REPAIR dispatch for this chain, but a STOPPED
-    # PRE-EXECUTE STALL (plan born, no active step, no live driver — e.g.
-    # a fresh m2 milestone never driven into prep) is not a repair; it is a
-    # chain the fixer must DRIVE.  Dispatch the babysitter for the parked
-    # stall even when mode=off, so a healthy-but-unstarted milestone cannot
-    # sit forever (astrid-first m2 case, grok/codex fixer-gap family B).
-    if babysitter_parked_chain_stall "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}"; then
-      log "babysitter mode=off but parked-chain stall detected; dispatching drive session=$session reason=$reason"
-    else
-      log "babysitter mode=off; observing without babysitter dispatch session=$session reason=$reason"
-      report_item "$report_items" "$session" "repair" "babysitter_off" \
-        "babysitter disabled for this chain (driver.babysitter.mode=off); $reason" \
-        "$workspace" "$remote_spec"
-      return 0
-    fi
+    # `off` is an absolute action gate.  A parked/pre-execute stall is still
+    # observed, never converted into an implicit babysitter launch.  This is
+    # especially important for continuations that remain off until their
+    # real provider/role probe has produced durable evidence.
+    log "babysitter mode=off; observing without babysitter dispatch session=$session reason=$reason"
+    report_item "$report_items" "$session" "repair" "babysitter_off" \
+      "babysitter disabled for this chain (driver.babysitter.mode=off); $reason" \
+      "$workspace" "$remote_spec"
+    return 0
   fi
   digest="$(babysitter_occurrence_digest "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" 2>>"${LOG:-/dev/null}" || true)"
   if [[ -n "$digest" ]]; then
