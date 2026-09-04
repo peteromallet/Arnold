@@ -47,11 +47,25 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# pyenv + Python 3.11
+# pyenv + the supported default Python 3.11 and the immutable-generation
+# interpreter used by runtime manifests.  Keep 3.11 as the image default;
+# 3.13 is explicit and shared so existing generation venvs remain executable.
 RUN curl -fsSL https://pyenv.run | bash \
     && /root/.pyenv/bin/pyenv install 3.11.11 \
+    && PYTHON_CONFIGURE_OPTS=--enable-shared /root/.pyenv/bin/pyenv install 3.13.6 \
     && /root/.pyenv/bin/pyenv global 3.11.11 \
     && /root/.pyenv/shims/pip install --upgrade pip pipx
+
+# Immutable dependency generations may point at either interpreter.  Register
+# both pyenv shared-library directories with the dynamic loader and prove the
+# newer generation interpreter can actually start during image construction.
+RUN printf '%s\n' \
+      /root/.pyenv/versions/3.11.11/lib \
+      /root/.pyenv/versions/3.13.6/lib \
+      > /etc/ld.so.conf.d/pyenv.conf \
+    && ldconfig \
+    && test -f /root/.pyenv/versions/3.13.6/lib/libpython3.13.so.1.0 \
+    && /root/.pyenv/versions/3.13.6/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 13)'
 
 # nvm + Node 20
 RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
