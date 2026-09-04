@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import tomllib
+import argparse
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from .._core.user_config import config_dir
-from ..fallback_chains import normalize_fallback_spec_list
-from ..types import CliError, is_premium_placeholder_agent, parse_agent_spec
+from ..fallback_chains import decode_phase_model_value, normalize_fallback_spec_list
+from ..types import CliError, format_agent_spec, is_premium_placeholder_agent, parse_agent_spec
 from .policy import (
     CANONICAL_PREP_MODELS,
     CONTINUATION_RUNTIME_MODEL_SPEC,
@@ -689,6 +690,30 @@ def resolve_continuation_runtime_model(project_dir: Path | None) -> str | None:
     return CONTINUATION_RUNTIME_MODEL_SPEC
 
 
+def validate_continuation_agent_override(
+    project_dir: Path | None, args: argparse.Namespace, step: str
+) -> None:
+    """Reject explicit routes that bypass a pinned continuation model."""
+    canonical = resolve_continuation_runtime_model(project_dir)
+    if canonical is None:
+        return
+    explicit_agent = getattr(args, "agent", None)
+    if explicit_agent and format_agent_spec(parse_agent_spec(str(explicit_agent))) != canonical:
+        raise CliError(
+            "runtime_model_binding_mismatch",
+            f"continuation phase {step!r} rejects explicit agent override; expected {canonical!r}",
+        )
+    for phase_model in getattr(args, "phase_model", None) or []:
+        if "=" not in phase_model:
+            continue
+        phase, chain = decode_phase_model_value(phase_model)
+        if phase == step and any(spec != canonical for spec in chain.specs):
+            raise CliError(
+                "runtime_model_binding_mismatch",
+                f"continuation phase {step!r} rejects a noncanonical phase-model chain; expected every entry to be {canonical!r}",
+            )
+
+
 def resolve_profile(name: str, profiles: dict[str, dict[str, str | list[str]]]) -> dict[str, str | list[str]]:
     try:
         return dict(profiles[name])
@@ -1304,6 +1329,7 @@ __all__ = [
     "resolve_default_profile",
     "resolve_profile",
     "resolve_continuation_runtime_model",
+    "validate_continuation_agent_override",
     "resolve_pipeline_profile",
     "validate_prep_stage_provider",
     "validate_declared_stage_keys",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -157,25 +158,32 @@ def test_continuation_superfixer_probes_before_launch(
     from arnold_pipelines.megaplan.cloud import worker_dispatch
     from arnold_pipelines.megaplan.resident import subagent
 
-    observed: list[tuple[str, str]] = []
-
-    def fake_probe(provider: str, model: str) -> dict[str, str]:
-        observed.append((provider, model))
-        return {"identity": f"{provider}/{model}", "model": model, "digest": "catalog"}
-
-    monkeypatch.setattr(worker_dispatch, "resolve_omp_live_membership", fake_probe)
+    launch_kwargs: dict[str, object] = {}
     monkeypatch.setattr(
-        subagent,
-        "launch_managed_subagent_detached",
-        lambda **_kwargs: SimpleNamespace(run_id="continuation-run"),
+        worker_dispatch,
+        "ensure_continuation_provider_probe",
+        lambda _project, spec: {
+            "spec": spec,
+            "catalog_digest": "catalog",
+            "probe_session": "probe-session",
+            "output": "NBF_MUSE_PROBE_OK",
+            "output_sha256": "output-sha",
+            "profile_sha256": "profile-sha",
+            "observed_at": "2026-09-04T00:00:00Z",
+        },
     )
+    def fake_launch(**kwargs):
+        launch_kwargs.update(kwargs)
+        return SimpleNamespace(run_id="continuation-run")
+
+    monkeypatch.setattr(subagent, "launch_managed_subagent_detached", fake_launch)
     result = subagent.launch_superfixer_proactive_managed(
         task="x",
         project_dir=str(_project(tmp_path)),
         model_spec=CONTINUATION_RUNTIME_MODEL_SPEC,
     )
     assert result.run_id == "continuation-run"
-    assert observed == [("openrouter", "meta/muse-spark-1.3-contributor")]
+    assert launch_kwargs["provider_probe"]["catalog_digest"] == "catalog"  # type: ignore[index]
 
 
 def test_continuation_receipt_binds_reasoning_and_effective_policy(tmp_path: Path) -> None:
@@ -209,24 +217,25 @@ def test_continuation_babysitter_requires_live_probe_before_dispatch(
 ) -> None:
     from arnold_pipelines.megaplan.cloud import worker_dispatch
 
-    observed: list[tuple[str, str]] = []
-
-    def fake_probe(provider: str, model: str) -> dict[str, str]:
-        observed.append((provider, model))
-        return {
-            "identity": f"{provider}/{model}",
-            "model": model,
-            "digest": "catalog",
+    monkeypatch.setattr(
+        worker_dispatch,
+        "ensure_continuation_provider_probe",
+        lambda _project, spec: {
+            "spec": spec,
+            "catalog_digest": "catalog",
+            "probe_session": "probe-session",
+            "output": "NBF_MUSE_PROBE_OK",
+            "output_sha256": "output-sha",
+            "profile_sha256": "profile-sha",
             "observed_at": "2026-09-04T00:00:00Z",
-        }
-
-    monkeypatch.setattr(worker_dispatch, "resolve_omp_live_membership", fake_probe)
+        },
+    )
     ctx = {
         "engine_root": _project(tmp_path),
         "reasoning_effort": "high",
     }
     babysitter_launch._require_continuation_provider_probe(ctx)
-    assert observed == [("openrouter", "meta/muse-spark-1.3-contributor")]
+    assert ctx["provider_probe"]["output"] == "NBF_MUSE_PROBE_OK"
     assert ctx["provider_probe"]["spec"] == CONTINUATION_RUNTIME_MODEL_SPEC
     assert ctx["provider_probe"]["catalog_digest"] == "catalog"
 
@@ -283,3 +292,120 @@ def test_omp_readback_rejects_effective_thinking_mismatch() -> None:
             model_id="meta/muse-spark-1.3-contributor",
             thinking="high",
         )
+
+
+def test_tiebreaker_resolved_mode_preserves_omp_effort(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    from arnold_pipelines.megaplan.prompts.tiebreaker_orchestrator import _build_resolved
+
+    args = Namespace(
+        agent=None,
+        phase_model=[
+            f"tiebreaker_researcher={CONTINUATION_RUNTIME_MODEL_SPEC}"
+        ],
+        profile=None,
+        vendor=None,
+        depth=None,
+        critic=None,
+        fresh=False,
+        persist=False,
+        ephemeral=True,
+    )
+    resolved = _build_resolved(
+        args,
+        "tiebreaker_researcher",
+        project_dir=_project(tmp_path),
+    )
+    assert resolved.model == "openrouter/meta/muse-spark-1.3-contributor"
+    assert resolved.effort == "high"
+    assert resolved.resolved_model == "openrouter/meta/muse-spark-1.3-contributor"
+
+
+def test_continuation_rejects_conflicting_cli_agent_override(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    from arnold_pipelines.megaplan.profiles import validate_continuation_agent_override
+
+    with pytest.raises(CliError, match="rejects explicit agent override"):
+        validate_continuation_agent_override(
+            _project(tmp_path),
+            Namespace(agent="codex", phase_model=[]),
+            "tiebreaker_researcher",
+        )
+
+
+def test_continuation_rejects_noncanonical_fallback_entry(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    from arnold_pipelines.megaplan.fallback_chains import (
+        FallbackSpecChain,
+        encode_phase_model_value,
+    )
+    from arnold_pipelines.megaplan.profiles import validate_continuation_agent_override
+
+    phase_model = encode_phase_model_value(
+        "tiebreaker_researcher",
+        FallbackSpecChain((CONTINUATION_RUNTIME_MODEL_SPEC, "omp:deepseek/deepseek-v4-pro")),
+    )
+    with pytest.raises(CliError, match="noncanonical phase-model chain"):
+        validate_continuation_agent_override(
+            _project(tmp_path),
+            Namespace(agent=None, phase_model=[phase_model]),
+            "tiebreaker_researcher",
+        )
+
+
+def test_exact_muse_probe_receipt_is_replayable_and_identity_bound(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        CONTINUATION_PROVIDER_PROBE_OUTPUT,
+        ensure_continuation_provider_probe,
+    )
+
+    project = _project(tmp_path)
+    calls: list[list[str]] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout=CONTINUATION_PROVIDER_PROBE_OUTPUT + "\n", stderr="")
+
+    def membership(_provider: str, _model: str) -> dict[str, str]:
+        return {
+            "identity": "openrouter/meta/muse-spark-1.3-contributor",
+            "digest": "catalog-digest",
+        }
+    first = ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_000.0,
+    )
+    second = ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid receipt must replay without a provider call"),
+        membership_probe=membership,
+        clock=lambda: 1_001.0,
+    )
+    assert first == second
+    assert len(calls) == 1
+    assert calls[0][0:3] == ["omp", "-p", "--no-session"]
+    assert second["probe_session"]
+    assert second["reasoning_effort"] == "high"
+    assert second["output"] == CONTINUATION_PROVIDER_PROBE_OUTPUT
+
+    receipt_path = project / ".megaplan" / "continuation-provider-probe.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt.pop("catalog_digest")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_002.0,
+    )
+    assert len(calls) == 2

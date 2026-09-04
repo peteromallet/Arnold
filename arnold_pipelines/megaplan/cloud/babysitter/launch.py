@@ -1242,9 +1242,9 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
 
 
 def _require_continuation_provider_probe(ctx: dict[str, Any]) -> None:
-    """Require and retain an exact live OMP membership proof before launch."""
+    """Require and retain a credentialed exact-output Muse proof before launch."""
     from arnold_pipelines.megaplan.cloud.worker_dispatch import (
-        resolve_omp_live_membership,
+        ensure_continuation_provider_probe,
     )
     from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
 
@@ -1258,21 +1258,19 @@ def _require_continuation_provider_probe(ctx: dict[str, Any]) -> None:
     model_id, effort_separator, effort = model_and_effort.rpartition(":")
     if not separator or not provider or not effort_separator or effort != "high":
         raise RuntimeError("continuation provider probe route is not canonical")
-    proof = resolve_omp_live_membership(provider, model_id)
-    if (
-        proof.get("identity") != f"{provider}/{model_id}"
-        or not proof.get("digest")
-        or proof.get("model") != model_id
-    ):
-        raise RuntimeError("continuation provider probe did not attest the exact model")
+    proof = ensure_continuation_provider_probe(ctx["engine_root"], continuation_model)
     ctx["provider_probe"] = {
         "spec": continuation_model,
         "provider": provider,
         "model": model_id,
         "reasoning_effort": effort,
-        "identity": proof["identity"],
-        "catalog_digest": proof["digest"],
-        "observed_at": proof.get("observed_at"),
+        "identity": f"{provider}/{model_id}",
+        "catalog_digest": proof["catalog_digest"],
+        "probe_session": proof["probe_session"],
+        "output": proof["output"],
+        "output_sha256": proof["output_sha256"],
+        "observed_at": proof["observed_at"],
+        "profile_sha256": proof["profile_sha256"],
     }
 
 

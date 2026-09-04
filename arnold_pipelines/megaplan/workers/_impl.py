@@ -8349,6 +8349,14 @@ def _run_step_with_worker_legacy(
     ledger_fallback_trigger: str | None = None,
     wbc_dispatch: CommonWorkerDispatchSpec | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
+    from arnold_pipelines.megaplan.profiles import validate_continuation_agent_override
+
+    project_dir_raw = (state.get("config") or {}).get("project_dir")
+    validate_continuation_agent_override(
+        Path(project_dir_raw) if isinstance(project_dir_raw, str) else None,
+        args,
+        step,
+    )
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
     mode = am.mode if isinstance(am, AgentMode) else am[1]

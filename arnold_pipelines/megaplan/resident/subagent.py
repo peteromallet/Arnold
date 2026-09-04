@@ -3389,6 +3389,7 @@ def launch_managed_subagent_detached(
     project_dir: str | None = None,
     model: str = "gpt-5.6-terra",
     model_spec: str | None = None,
+    provider_probe: Mapping[str, Any] | None = None,
     backend: str = "codex",
     reasoning_effort: str = "medium",
     toolsets: str = "file,web,terminal",
@@ -3886,6 +3887,7 @@ def launch_managed_subagent_detached(
             "runtime_model": model,
             "model_spec": model_spec or f"{backend}:{model}",
         },
+        "provider_probe": dict(provider_probe) if provider_probe is not None else None,
         "reasoning_effort": reasoning_effort,
         "provider_options": {
             "toolsets": toolsets,
@@ -7697,6 +7699,7 @@ def launch_superfixer_proactive_managed(
     continuation caller must provide its exact profile-derived model spec;
     this seam never rewrites a legacy/default value into a continuation pin.
     """
+    provider_probe: Mapping[str, Any] | None = None
     if project_dir is not None:
         from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
 
@@ -7706,24 +7709,18 @@ def launch_superfixer_proactive_managed(
                 raise ValueError(
                     "continuation superfixer requires the explicit canonical model"
                 )
-            from arnold_pipelines.megaplan.cloud.worker_dispatch import (
-                resolve_omp_live_membership,
-            )
-
             route = canonical_model.removeprefix("omp:")
             provider, separator, model_and_effort = route.partition("/")
             model, effort_separator, effort = model_and_effort.rpartition(":")
             if not separator or not provider or not effort_separator or effort != "high":
                 raise ValueError("continuation superfixer provider route is not canonical")
-            proof = resolve_omp_live_membership(provider, model)
-            if (
-                proof.get("identity") != f"{provider}/{model}"
-                or not proof.get("digest")
-                or proof.get("model") != model
-            ):
-                raise ValueError(
-                    "continuation superfixer provider probe did not attest the exact model"
-                )
+            from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+                ensure_continuation_provider_probe,
+            )
+
+            provider_probe = ensure_continuation_provider_probe(
+                Path(project_dir), canonical_model
+            )
     if model_spec is None:
         model_spec = SUPERFIXER_PROACTIVE_MODEL_SPEC
     if not model_spec.startswith("omp:"):
@@ -7743,6 +7740,7 @@ def launch_superfixer_proactive_managed(
         model=model,
         model_spec=model_spec,
         reasoning_effort="high" if model_spec.endswith(":high") else "medium",
+        provider_probe=provider_probe,
         task_kind="autonomous",
         work_intent="execution",
         mutation_claim="auto",
