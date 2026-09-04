@@ -2,17 +2,17 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: main
-  workspace: /workspace/nbf-continuation-c2-live9-20260904/Arnold
+  workspace: /workspace/nbf-continuation-c2-live9b-20260904/Arnold
 mode: idle
-chain_session: nbf-continuation-c2-live9-20260904
+chain_session: nbf-continuation-c2-live9b-20260904
 chain:
-  spec: /workspace/nbf-continuation-c2-live9-20260904/Arnold/.megaplan/initiatives/native-build-forward-continuation-20260904/chain.yaml
+  spec: /workspace/nbf-continuation-c2-live9b-20260904/Arnold/.megaplan/initiatives/native-build-forward-continuation-20260904/chain.yaml
 megaplan:
   ref: main
-  src_path: /workspace/nbf-main-continuation-20260904-source/Arnold
+  src_path: /workspace/nbf-continuation-c2-live9b-20260904/Arnold
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  runtime_python: /workspace/nbf-continuation-c2-live9-20260904/Arnold/.venv/bin/python
+  runtime_python: /workspace/nbf-continuation-c2-live9b-20260904/Arnold/.venv/bin/python
 agents:
   default: omp
 ssh:
@@ -22,7 +22,7 @@ ssh:
   identity_file: /Users/peteromalley/.ssh/services/agentbox_159_69_51_216_ed25519
   remote_dir: /opt/megaplan-cloud/deploy
   workspace_dir: /opt/megaplan-cloud/workspace
-  container: nbf-cloud-agent-python313-20260904
+  container: nbf-cloud-agent-python313-live9b-20260904
 driver:
   babysitter:
     mode: superfixer
