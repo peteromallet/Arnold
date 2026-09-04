@@ -134,6 +134,91 @@ else:
 ' "$1" "$2"
 }
 
+# The per-epic manifest is an authority boundary. Before publishing it, the
+# interpreter recorded by the dependency-generation proof must import the code
+# from THIS worktree and the entrypoint's operational wrappers must be present
+# in that same worktree. Keep this probe inline and stdlib-only in the caller:
+# if the selected interpreter cannot import Arnold, importing a validator
+# module from the selected runtime would hide the actual failure.
+validate_runtime_candidate() {
+  local runtime_root="$1"
+  local expected_revision="$2"
+  local interpreter="$3"
+  [[ -x "$interpreter" ]] || {
+    echo "arnold-runtime-create: selected generation interpreter is unavailable: $interpreter" >&2
+    return 1
+  }
+  env -u PYTHONHOME PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1 PYTHONPATH="$runtime_root" \
+    "$interpreter" -P - "$runtime_root" "$expected_revision" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+expected_revision = sys.argv[2]
+try:
+    import arnold
+    import arnold_pipelines
+except Exception as exc:
+    raise SystemExit(f"runtime import failed: {type(exc).__name__}: {exc}")
+
+imports = {
+    "arnold": pathlib.Path(arnold.__file__).resolve(),
+    "arnold_pipelines": pathlib.Path(arnold_pipelines.__file__).resolve(),
+}
+if any(not path.is_relative_to(root) for path in imports.values()):
+    raise SystemExit("runtime import escaped the manifest runtime root")
+actual_revision = subprocess.run(
+    ["git", "-C", str(root), "rev-parse", "HEAD"],
+    check=False, capture_output=True, text=True,
+).stdout.strip()
+if actual_revision != expected_revision:
+    raise SystemExit(
+        f"runtime source revision mismatch: expected {expected_revision}, observed {actual_revision}"
+    )
+
+# These are the entrypoint's operational doors. A runtime missing any one
+# must never become active; otherwise heartbeat/watchdog can immediately emit
+# runtime_attestation_failed and leave a live but unsupervised chain behind.
+required = {
+    # These are the executable launch surfaces copied by the canonical cloud
+    # template. Heartbeat/watchdog and the Discord helper are runtime services,
+    # not the launch boundary.
+    name: root / "arnold_pipelines/megaplan/cloud/wrappers" / name
+    for name in (
+        "arnold-supervisor-runtime",
+        "arnold-supervise",
+        "arnold-chain",
+        "arnold-run",
+        "arnold-launch-boundary",
+    )
+}
+wrappers = {}
+for name, path in required.items():
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise SystemExit(f"required {name} wrapper missing or not executable: {path}")
+    wrappers[name] = {
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+module_file = imports["arnold_pipelines"]
+print(json.dumps({
+    "module_file": str(module_file),
+    "module_digest": hashlib.sha256(module_file.read_bytes()).hexdigest(),
+    "mount_id": "unavailable",
+    "declared_vs_observed_match": True,
+    "interpreter_path": os.path.realpath(sys.executable),
+    "source_revision": actual_revision,
+    "imports": {name: str(path) for name, path in imports.items()},
+    "wrappers": wrappers,
+}, sort_keys=True))
+PY
+}
+
 # Serialize create/resume decisions before inspecting or changing either the
 # runtime or manifest.  This is intentionally the same lock used for the
 # active-pointer transaction below.
@@ -210,6 +295,11 @@ if canonical_origin:
 print("arnold-runtime-create: existing per-epic runtime verified; resuming without recreation", file=sys.stderr)
 PY
   RUNTIME_ID="$(_json_get "$MANIFEST_PATH" runtime_id)"
+  EXISTING_INTERPRETER="$(_json_get "$MANIFEST_PATH" epic.dependency_generation.interpreter_path)"
+  if ! validate_runtime_candidate "$RUNTIME_DIR" "$BASE_HEAD" "$EXISTING_INTERPRETER" >/dev/null; then
+    echo "arnold-runtime-create: existing runtime failed selected-interpreter/wrapper attestation; refusing recovery" >&2
+    exit 1
+  fi
   echo "arnold-runtime-create: runtime '$SLUG' resumed (runtime_id=$RUNTIME_ID)" >&2
   echo "  branch:   $(_json_get "$MANIFEST_PATH" epic.branch) (already pushed)" >&2
   echo "  runtime:  $RUNTIME_DIR" >&2
@@ -288,7 +378,20 @@ print(str(proof["interpreter_path"]).rsplit("/bin/python", 1)[0])
   exit 1
 }
 GEN_ID="$("$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$GEN_PROOF_JSON")"
+GEN_INTERPRETER="$("$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["interpreter_path"])' "$GEN_PROOF_JSON")" || {
+  echo "arnold-runtime-create: dependency generation proof is unreadable (interpreter path missing)" >&2
+  exit 1
+}
 echo "arnold-runtime-create: dependency generation ready at '$GEN_DIR' (id=$GEN_ID)" >&2
+
+# Attest the fresh candidate immediately after the dependency proof selects
+# its interpreter and before writing either the per-epic manifest or the
+# compatibility pointer. A failed probe leaves the pushed worktree available
+# for diagnosis, but it can never become discoverable runtime state.
+RUNTIME_ATTESTATION_JSON="$(validate_runtime_candidate "$RUNTIME_DIR" "$BASE_HEAD" "$GEN_INTERPRETER")" || {
+  echo "arnold-runtime-create: fresh runtime candidate failed selected-interpreter/import/wrapper attestation; refusing publication" >&2
+  exit 1
+}
 
 # (c) Write the epic manifest atomically. Build the full payload first (the
 # complete mandatory field set per the runtime_manifest contract — schema "1",
@@ -302,11 +405,11 @@ manifest_valid() {
 
 mkdir -p "$MANIFEST_DIR"
 MANIFEST_TMP="$(mktemp "${MANIFEST_DIR}/.runtime-manifest-XXXXXX")"
-"$PYTHON_BIN" - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" "$GEN_DIR" "$GEN_PROOF_JSON" "$DEPS_LOCKFILE" "$REMOTE" <<'PY'
+"$PYTHON_BIN" - "$MANIFEST_TMP" "$SLUG" "$BRANCH" "$RUNTIME_DIR" "$BASE_HEAD" "$BASE_REF" "$STAMP" "$GEN_DIR" "$GEN_PROOF_JSON" "$DEPS_LOCKFILE" "$REMOTE" "$RUNTIME_ATTESTATION_JSON" <<'PY'
 import json, os, sys
 from datetime import datetime, timedelta, timezone
 
-path, slug, branch, runtime_root, head, base_ref, stamp, gen_dir, gen_proof_json, deps_lockfile, origin_url = sys.argv[1:12]
+path, slug, branch, runtime_root, head, base_ref, stamp, gen_dir, gen_proof_json, deps_lockfile, origin_url, attestation_json = sys.argv[1:13]
 gen_dir = str(gen_dir)
 generation = json.loads(gen_proof_json)
 owner = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
@@ -474,13 +577,18 @@ manifest = {
     "commands": [],
 }
 
-# Content attestation of the runtime tree (best-effort; attest_runtime NEVER
-# raises — probe failures land in the returned errors list).
+# The publication gate above already performed this probe under the selected
+# generation interpreter. Preserve its observed import/wrapper evidence in
+# the manifest; do not replace it with a best-effort ambient-interpreter probe.
 try:
-    from arnold_pipelines.megaplan.cloud.runtime_manifest import RuntimeManifest, attest_runtime
-    manifest["indirection"]["attestation"] = attest_runtime(RuntimeManifest.from_dict(manifest))
-except Exception as exc:  # noqa: BLE001 - guarded best-effort import
-    missing_notes.append(f"runtime_manifest attest_runtime unavailable ({exc}); attestation left empty")
+    attestation = json.loads(attestation_json)
+    if not isinstance(attestation, dict):
+        raise ValueError("candidate attestation is not an object")
+    manifest["indirection"]["attestation"] = attestation
+except (TypeError, ValueError, json.JSONDecodeError) as exc:
+    raise SystemExit(
+        f"arnold-runtime-create: fresh candidate attestation is invalid: {exc}"
+    ) from exc
 
 for note in missing_notes:
     print(f"arnold-runtime-create: note — {note}", file=sys.stderr)

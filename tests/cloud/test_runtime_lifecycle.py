@@ -55,6 +55,25 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
     git(base_repo, "config", "user.email", "lifecycle@example.invalid")
     git(base_repo, "config", "commit.gpgsign", "false")
     (base_repo / "README.md").write_text("base seed\n")
+    # The fresh-candidate admission probe imports the runtime from the
+    # worktree and checks the executable launch surfaces copied by the
+    # canonical cloud template. Keep this fixture deliberately tiny while
+    # still modeling those runtime-boundary inputs.
+    (base_repo / "arnold").mkdir()
+    (base_repo / "arnold" / "__init__.py").write_text("__version__ = 'test'\n")
+    wrappers = base_repo / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    wrappers.mkdir(parents=True)
+    (base_repo / "arnold_pipelines" / "__init__.py").write_text("")
+    for wrapper in (
+        "arnold-supervisor-runtime",
+        "arnold-supervise",
+        "arnold-chain",
+        "arnold-run",
+        "arnold-launch-boundary",
+    ):
+        path = wrappers / wrapper
+        path.write_text("#!/usr/bin/env bash\nexit 0\n")
+        path.chmod(0o755)
     # T-0301: the frozen dependency spec (pyproject.toml + uv.lock pair) that
     # every created runtime's dependency generation is content-addressed
     # from.  Zero dependencies and a project-only (editable-sourced) lock so
@@ -109,6 +128,7 @@ def sandbox(tmp_path: Path) -> dict[str, object]:
             "ARNOLD_RUNTIME_VENVS_DIR": str(gen_dir),
             "ARNOLD_REFERENCE_RUNTIME_VENVS_DIR": str(gen_dir),
             "ARNOLD_GENERATION_BUILD_STRATEGY": "pip",
+            "ARNOLD_GENERATION_PYTHON": sys.executable,
             # Reference-census stores (T-0012): sandbox-scoped so the sweep's
             # census never reads host stores.  These dirs are absent unless a
             # fixture populates them (a missing store is not a reference).
@@ -212,6 +232,27 @@ def epic_commit(worktree: Path, filename: str, content: str, message: str) -> st
     return git(worktree, "rev-parse", "HEAD")
 
 
+def _base_variant(
+    sandbox: dict[str, object],
+    name: str,
+    *,
+    remove: str | None = None,
+    replace: tuple[str, str] | None = None,
+) -> str:
+    """Commit one runtime-boundary fixture variant and publish its ref."""
+    base_repo = Path(str(sandbox["base_repo"]))
+    if remove is not None:
+        (base_repo / remove).unlink()
+    if replace is not None:
+        path, content = replace
+        (base_repo / path).write_text(content, encoding="utf-8")
+    git(base_repo, "add", "-A")
+    git(base_repo, "commit", "-m", f"fixture variant {name}")
+    git(base_repo, "branch", f"base/{name}")
+    git(base_repo, "push", "origin", f"base/{name}")
+    return f"base/{name}"
+
+
 # ── arnold-runtime-create ────────────────────────────────────────────────────
 
 
@@ -292,6 +333,95 @@ def test_runtime_create_worktree_pushed_manifest(sandbox: dict[str, object]) -> 
     again = sandbox["run"](CREATE, "epic-a", "base/editable-install")
     assert again.returncode == 0, again.stderr
     assert "resumed" in again.stderr
+
+
+def test_runtime_create_validates_fresh_imports_and_launch_contract(
+    sandbox: dict[str, object],
+) -> None:
+    """The fresh probe binds imports and the five canonical launch wrappers."""
+    worktree = sandbox["create"]("epic-fresh-valid")
+    manifest = read_manifest(sandbox, "epic-fresh-valid")
+    attestation = manifest["indirection"]["attestation"]
+    assert Path(attestation["imports"]["arnold"]).is_relative_to(worktree)
+    assert Path(attestation["imports"]["arnold_pipelines"]).is_relative_to(worktree)
+    assert set(attestation["wrappers"]) == {
+        "arnold-supervisor-runtime",
+        "arnold-supervise",
+        "arnold-chain",
+        "arnold-run",
+        "arnold-launch-boundary",
+    }
+
+
+def test_runtime_create_rejects_invalid_fresh_import_without_publication(
+    sandbox: dict[str, object],
+) -> None:
+    ref = _base_variant(
+        sandbox,
+        "broken-import",
+        replace=("arnold/__init__.py", "raise RuntimeError('broken candidate')\n"),
+    )
+    proc = sandbox["run"](CREATE, "epic-broken-import", ref)
+    assert proc.returncode != 0
+    assert "runtime import failed" in proc.stderr
+    assert not manifest_path(sandbox, "epic-broken-import").exists()
+    assert not Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])).exists()
+
+
+def test_runtime_create_rejects_invalid_fresh_interpreter_without_publication(
+    sandbox: dict[str, object],
+) -> None:
+    """A generation proof whose selected interpreter cannot run the probe is
+    rejected before either discoverability artifact is published."""
+    fake_python = Path(str(sandbox["tmp_path"])) / "fake-generation-python"
+    real_python = sys.executable
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        f"real={real_python!r}\n"
+        "if [[ \"$1\" == \"-m\" && \"$2\" == \"venv\" ]]; then\n"
+        "  \"$real\" \"$@\"\n"
+        "  rc=$?\n"
+        "  if [[ $rc -eq 0 ]]; then\n"
+        "    target=\"${@: -1}\"\n"
+        "    unlink \"$target/bin/python\"\n"
+        "    cp \"$0\" \"$target/bin/python\"\n"
+        "  fi\n"
+        "  exit $rc\n"
+        "fi\n"
+        "if [[ \"$1\" == \"-P\" ]]; then\n"
+        "  echo 'selected generation interpreter rejected probe' >&2\n"
+        "  exit 97\n"
+        "fi\n"
+        "exec \"$real\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    proc = sandbox["run"](
+        CREATE,
+        "epic-broken-interpreter",
+        "base/editable-install",
+        extra_env={"ARNOLD_GENERATION_PYTHON": str(fake_python)},
+    )
+    assert proc.returncode != 0
+    assert "fresh runtime candidate failed" in proc.stderr
+    assert not manifest_path(sandbox, "epic-broken-interpreter").exists()
+    assert not Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])).exists()
+
+
+def test_runtime_create_rejects_missing_actual_wrapper_without_publication(
+    sandbox: dict[str, object],
+) -> None:
+    ref = _base_variant(
+        sandbox,
+        "missing-run",
+        remove="arnold_pipelines/megaplan/cloud/wrappers/arnold-run",
+    )
+    proc = sandbox["run"](CREATE, "epic-missing-run", ref)
+    assert proc.returncode != 0
+    assert "arnold-run" in proc.stderr
+    assert "required" in proc.stderr
+    assert not manifest_path(sandbox, "epic-missing-run").exists()
+    assert not Path(str(sandbox["env"]["ARNOLD_RUNTIME_MANIFEST"])).exists()
 
 
 def test_runtime_create_foreign_authoritative_pointer_is_compatibility_receipted(
