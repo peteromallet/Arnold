@@ -1258,7 +1258,12 @@ class LockedChainControlTransaction:
                 self._lock_fds.append(lock_fd)
             for state_path in self.state_paths:
                 state_path.parent.mkdir(parents=True, exist_ok=True)
-                lock_fd = os.open(str(state_path), os.O_RDWR | os.O_CREAT, 0o644)
+                # Lock a sidecar, never the authority file itself.  Opening the
+                # state path with O_CREAT made a failed pre-write transaction
+                # leave a zero-byte chain state that was indistinguishable from
+                # a corrupted persisted state on the next launch.
+                lock_path = state_path.with_name(state_path.name + ".lock")
+                lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
                 self._lock_fds.append(lock_fd)
             self.records = self.journal.ledger._journal._read_records()

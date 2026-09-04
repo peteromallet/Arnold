@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     ChainControlHold,
     ChainControlJournal,
     LockedChainControlTransaction,
+    apply_chain_lifecycle,
     build_envelope,
     canonical_json,
     compute_event_hash,
@@ -21,6 +22,7 @@ from arnold_pipelines.megaplan.incident.chain_control import (
     payload_digest_for,
     u64be,
 )
+from arnold_pipelines.megaplan.chain.spec import _state_path_for
 from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 
 FIXTURE = Path(__file__).parent / "incident" / "fixtures" / "nbf08_s1_event_v1.json"
@@ -320,3 +322,79 @@ def test_lock_order_is_sequence_then_sorted_chain_then_state(tmp_path: Path) -> 
         assert txn.state_paths == (child.resolve(), parent.resolve())
         assert txn._seq_fd is not None
         assert len(txn._lock_fds) == 4
+
+
+def test_missing_state_stays_absent_when_effect_fails(tmp_path: Path) -> None:
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id="chain-missing", actor={"id": "t", "class": "test"})
+    state_path = tmp_path / "state.json"
+
+    def fail(_txn: LockedChainControlTransaction) -> dict[str, object]:
+        raise RuntimeError("simulated pre-write failure")
+
+    with pytest.raises(RuntimeError, match="simulated pre-write failure"):
+        journal.mutate(
+            chain_id="chain-missing",
+            operation_id="op-missing-fail",
+            intent_kind="start",
+            actor={"id": "t", "class": "test"},
+            state_paths=[state_path],
+            effect=fail,
+        )
+
+    assert not state_path.exists()
+    assert (tmp_path / "state.json.lock").exists()
+
+
+def test_first_state_write_creates_valid_json_after_sidecar_lock(tmp_path: Path) -> None:
+    journal = ChainControlJournal(IncidentLedger(tmp_path))
+    journal.ensure_genesis(chain_id="chain-first", actor={"id": "t", "class": "test"})
+    state_path = tmp_path / "state.json"
+
+    def write(txn: LockedChainControlTransaction) -> dict[str, object]:
+        from arnold_pipelines.megaplan.incident.chain_control import ChainStateAdapter
+
+        payload = ChainStateAdapter(txn, state_path).cas_write(
+            {"current_milestone_index": 0, "metadata": {}},
+            expected_revision=None,
+        )
+        return {
+            "pre_state_digest": "0" * 64,
+            "post_state_digest": "1" * 64,
+            "actual_cursor": 0,
+            "payload": payload,
+        }
+
+    result = journal.mutate(
+        chain_id="chain-first",
+        operation_id="op-first-write",
+        intent_kind="start",
+        actor={"id": "t", "class": "test"},
+        state_paths=[state_path],
+        effect=write,
+    )
+
+    assert result["outcome"] == "committed"
+    assert json.loads(state_path.read_text(encoding="utf-8"))["current_milestone_index"] == 0
+
+
+def test_lifecycle_prewrite_failure_does_not_materialize_chain_state(tmp_path: Path) -> None:
+    spec_path = tmp_path / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    state_path = _state_path_for(spec_path)
+
+    def fail(_txn: LockedChainControlTransaction) -> dict[str, object]:
+        raise RuntimeError("simulated lifecycle failure")
+
+    with pytest.raises(RuntimeError, match="simulated lifecycle failure"):
+        apply_chain_lifecycle(
+            spec_path,
+            tmp_path,
+            intent_kind="start",
+            actor={"id": "t", "class": "test"},
+            effect=fail,
+        )
+
+    assert not state_path.exists()
+    assert state_path.with_name(state_path.name + ".lock").exists()
