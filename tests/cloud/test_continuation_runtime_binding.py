@@ -457,3 +457,146 @@ def test_exact_muse_probe_receipt_is_replayable_and_identity_bound(tmp_path: Pat
         clock=lambda: 1_002.0,
     )
     assert len(calls) == 2
+
+
+def test_continuation_probe_receipt_is_operation_local_for_managed_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        CONTINUATION_PROVIDER_PROBE_OUTPUT,
+        ensure_continuation_provider_probe,
+    )
+
+    (tmp_path / "checkout").mkdir()
+    project = _project(tmp_path / "checkout")
+    operation = tmp_path / "operation"
+    monkeypatch.setenv("ARNOLD_BASE_DIR", str(operation))
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION", "continuation-clean1")
+
+    def runner(argv, **_kwargs):
+        return SimpleNamespace(
+            returncode=0, stdout=CONTINUATION_PROVIDER_PROBE_OUTPUT, stderr=""
+        )
+
+    def membership(_provider: str, _model: str) -> dict[str, str]:
+        return {
+            "identity": "openrouter/meta/muse-spark-1.3-contributor",
+            "digest": "catalog-digest",
+        }
+
+    receipt = ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_000.0,
+    )
+    paths = list((operation / "continuation-provider-probes" / "continuation-clean1").glob("*.json"))
+    assert len(paths) == 1
+    assert paths[0].read_text(encoding="utf-8").find(receipt["source_identity"]) >= 0
+    assert not (project / ".megaplan" / "continuation-provider-probe.json").exists()
+
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION", "continuation-clean1-other")
+    second = ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_001.0,
+    )
+    assert second["probe_session"] != receipt["probe_session"]
+
+
+def test_managed_probe_receipt_does_not_replay_for_changed_source_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from arnold_pipelines.megaplan.cloud import worker_dispatch
+
+    (tmp_path / "checkout").mkdir()
+    project = _project(tmp_path / "checkout")
+    operation = tmp_path / "operation"
+    monkeypatch.setenv("ARNOLD_BASE_DIR", str(operation))
+    monkeypatch.setenv("ARNOLD_CHAIN_SESSION", "continuation-clean1")
+    calls: list[object] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=worker_dispatch.CONTINUATION_PROVIDER_PROBE_OUTPUT,
+            stderr="",
+        )
+
+    def membership(_provider, _model):
+        return {
+            "identity": "openrouter/meta/muse-spark-1.3-contributor",
+            "digest": "catalog-digest",
+        }
+    worker_dispatch.ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_000.0,
+    )
+    # A profile change is a source identity change.  It must select a new
+    # content-addressed receipt rather than accepting the old probe.
+    (project / ".megaplan" / "profiles.toml").write_text(
+        PROFILE_TEXT + "\n# identity drift\n", encoding="utf-8"
+    )
+    worker_dispatch.ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=membership,
+        clock=lambda: 1_001.0,
+    )
+    paths = list(
+        (operation / "continuation-provider-probes" / "continuation-clean1").glob(
+            "*.json"
+        )
+    )
+    assert len(paths) == 2
+    assert len(calls) == 2
+
+
+def test_legacy_probe_receipt_path_without_managed_scope_remains_compatible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        CONTINUATION_PROVIDER_PROBE_OUTPUT,
+        ensure_continuation_provider_probe,
+    )
+
+    project = _project(tmp_path)
+    for name in (
+        "ARNOLD_BASE_DIR",
+        "ARNOLD_BABYSITTER_SESSION",
+        "ARNOLD_REPAIR_SESSION",
+        "ARNOLD_CHAIN_SESSION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def runner(argv, **_kwargs):
+        return SimpleNamespace(
+            returncode=0, stdout=CONTINUATION_PROVIDER_PROBE_OUTPUT, stderr=""
+        )
+
+    receipt = ensure_continuation_provider_probe(
+        project,
+        CONTINUATION_RUNTIME_MODEL_SPEC,
+        runner=runner,
+        membership_probe=lambda _provider, _model: {
+            "identity": "openrouter/meta/muse-spark-1.3-contributor",
+            "digest": "catalog-digest",
+        },
+        clock=lambda: 1_000.0,
+    )
+    assert (project / ".megaplan" / "continuation-provider-probe.json").is_file()
+    assert receipt["probe_session"]

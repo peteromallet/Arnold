@@ -1846,6 +1846,52 @@ def test_chain_runtime_probe_and_create_command_embeds_create_and_policy() -> No
     assert "/workspace/.megaplan/demo-abc123.json" in command
 
 
+def test_chain_runtime_probe_command_binds_operation_roots() -> None:
+    command = _chain_runtime_probe_and_create_command(
+        slug="demo-clean1",
+        manifest_path="/workspace/demo-clean1/.megaplan/demo-clean1.json",
+        runtime_src="/workspace/demo-clean1/runtime-candidates/demo-clean1",
+        manifest_dir="/workspace/demo-clean1/.megaplan",
+        base_repo="/workspace/demo-clean1/Arnold",
+        base_ref="main",
+        policy_path=None,
+        base_dir="/workspace/demo-clean1",
+    )
+    assert "export ARNOLD_BASE_DIR=/workspace/demo-clean1" in command
+    assert "export ARNOLD_RUNTIME_MANIFEST_DIR=/workspace/demo-clean1/.megaplan" in command
+
+
+def test_chain_launch_env_propagates_operation_roots() -> None:
+    command = _refresh_then_chain_start_command(
+        "/workspace/demo-clean1/Arnold/.megaplan/plans/.chains/demo.yaml",
+        project_dir="/workspace/demo-clean1/Arnold",
+        spec=SimpleNamespace(megaplan=SimpleNamespace(src_path="/workspace/demo-clean1/Arnold")),
+        repair_session="demo-clean1",
+        repair_marker_dir="/workspace/demo-clean1/.megaplan/cloud-sessions",
+    )
+    assert "export ARNOLD_BASE_DIR=/workspace/demo-clean1" in command
+    assert "export ARNOLD_RUNTIME_MANIFEST_DIR=/workspace/demo-clean1/.megaplan" in command
+
+
+def test_fresh_continuation_cloud_spec_uses_unique_workspace_root() -> None:
+    from arnold_pipelines.megaplan.cloud.spec import load_spec
+
+    path = (
+        Path(__file__).parents[2]
+        / ".megaplan/initiatives/native-build-forward-main-continuation-20260904/cloud.yaml"
+    )
+    spec = load_spec(path)
+    assert spec.ssh is not None
+    assert spec.ssh.workspace_dir == (
+        "/opt/megaplan-cloud/workspace/"
+        "nbf-main-continuation-final-clean1-20260904"
+    )
+    assert spec.repo.workspace == (
+        "/workspace/nbf-main-continuation-final-clean1-20260904/Arnold"
+    )
+    assert spec.resources.volume is None
+
+
 def test_chain_runtime_probe_uses_reviewed_source_wrapper_over_stale_installed_bin(
     tmp_path: Path,
 ) -> None:

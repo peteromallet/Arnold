@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -67,7 +68,35 @@ def _continuation_probe_profile_identity(project_dir: Path) -> dict[str, str]:
     return {"source_path": str(project), "profile_sha256": profile_sha}
 
 
-def _continuation_probe_receipt_path(project_dir: Path) -> Path:
+def _continuation_probe_receipt_path(
+    project_dir: Path, *, identity: Mapping[str, str] | None = None
+) -> Path:
+    """Return the probe receipt path for this execution scope.
+
+    Cloud/managed launches set the existing ``ARNOLD_BASE_DIR`` and one of
+    the existing session variables.  Their probe receipt is control-plane
+    evidence, not a checkout artifact, so keep it beside the operation roots
+    and content-address it by the source/profile identity.  Standalone
+    library callers retain the historical project-local path.
+    """
+    base_dir = str(os.environ.get("ARNOLD_BASE_DIR") or "").strip()
+    session = (
+        str(os.environ.get("ARNOLD_BABYSITTER_SESSION") or "").strip()
+        or str(os.environ.get("ARNOLD_REPAIR_SESSION") or "").strip()
+        or str(os.environ.get("ARNOLD_CHAIN_SESSION") or "").strip()
+    )
+    if base_dir and session:
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "-", session).strip(".-") or "session"
+        if safe_session != session:
+            safe_session = f"{safe_session}-{hashlib.sha256(session.encode()).hexdigest()[:12]}"
+        bound_identity = dict(identity or _continuation_probe_profile_identity(project_dir))
+        source_digest = _digest(bound_identity)
+        return (
+            Path(base_dir).expanduser().resolve()
+            / "continuation-provider-probes"
+            / safe_session
+            / f"{source_digest}.json"
+        )
     return project_dir.resolve() / ".megaplan" / "continuation-provider-probe.json"
 
 
@@ -129,7 +158,7 @@ def ensure_continuation_provider_probe(
     project = Path(project_dir)
     identity = _continuation_probe_profile_identity(project)
     now = (clock or time.time)()
-    path = _continuation_probe_receipt_path(project)
+    path = _continuation_probe_receipt_path(project, identity=identity)
     try:
         prior = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):

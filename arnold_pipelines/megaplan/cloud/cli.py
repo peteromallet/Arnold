@@ -2841,6 +2841,33 @@ class ChainLaunchContext:
     marker_path: str
 
 
+def _operation_base_dir_for_workspace(workspace: str) -> str | None:
+    """Return the operation root for an explicit box workspace.
+
+    AgentBox mounts one shared ``/workspace`` volume, so the unique project
+    workspace's parent is the smallest supported isolation boundary for
+    runtime manifests, markers, runtime candidates, and probe evidence.
+    Local/non-box paths intentionally retain their historical defaults.
+    """
+    path = PurePosixPath(str(workspace or "").strip())
+    if not path.is_absolute() or len(path.parts) < 4 or path.parts[1] != "workspace":
+        return None
+    return str(path.parent)
+
+
+def _operation_manifest_dir_for_workspace(workspace: str) -> str | None:
+    base = _operation_base_dir_for_workspace(workspace)
+    return f"{base}/.megaplan" if base else None
+
+
+def _operation_marker_dir_for_workspace(workspace: str) -> str:
+    return (
+        f"{_operation_manifest_dir_for_workspace(workspace)}/cloud-sessions"
+        if _operation_manifest_dir_for_workspace(workspace)
+        else _CHAIN_SESSION_MARKER_DIR
+    )
+
+
 def _slugify_chain_identity(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip().lower()).strip(".-")
     return slug[:48] or "chain"
@@ -3161,7 +3188,10 @@ def _derive_chain_launch_context(
     state_path = str(chain_module._state_path_for(Path(remote_spec_path)))
     log_relative = f".megaplan/cloud-chain-{session_name}.log"
     log_path = str(PurePosixPath(workspace) / log_relative)
-    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    marker_path = str(
+        PurePosixPath(_operation_marker_dir_for_workspace(workspace))
+        / f"{session_name}.json"
+    )
     return ChainLaunchContext(
         identity=identity,
         slug=slug,
@@ -4027,6 +4057,7 @@ def _chain_start_command(
             repair_session,
             run_kind=repair_run_kind,
             marker_dir=repair_marker_dir,
+            base_dir=_operation_base_dir_for_workspace(project_dir or ""),
         )
     if engine_dir:
         # G5 round-6 finding 2: the emitted cd is ALWAYS the manifest-bound
@@ -4111,14 +4142,22 @@ def _managed_run_env_prefix(
     *,
     run_kind: str,
     marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
+    base_dir: str | None = None,
 ) -> str:
     """Return the one launcher-to-runner owner-lease environment contract."""
 
+    operation_roots = ""
+    if base_dir:
+        operation_roots = (
+            f"export ARNOLD_BASE_DIR={shlex.quote(base_dir)}; "
+            f"export ARNOLD_RUNTIME_MANIFEST_DIR={shlex.quote(base_dir + '/.megaplan')}; "
+        )
     return (
         # Never accept a box-wide or parent-shell publisher claim. The Python
         # owner sets these only after it has acquired the per-session fence;
         # its genuine children inherit them after launch.
         "unset ARNOLD_LIVENESS_OWNER_PID ARNOLD_LIVENESS_OWNER_PROCESS_START; "
+        f"{operation_roots}"
         "export ARNOLD_REPAIR_QUEUE_ROOT="
         '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
         f"export ARNOLD_REPAIR_MARKER_DIR={shlex.quote(marker_dir)}; "
@@ -4327,6 +4366,7 @@ def _chain_runtime_probe_and_create_command(
     runtime_python: str | None = None,
     spec_path: str | None = None,
     workspace_path: str | None = None,
+    base_dir: str | None = None,
 ) -> str:
     """Box-side probe for the per-epic runtime manifest; creates the runtime
     when absent and verifies/resumes an exact pre-chain partial runtime.
@@ -4343,6 +4383,8 @@ def _chain_runtime_probe_and_create_command(
         f"export ARNOLD_BASE_REPO={shlex.quote(base_repo)}",
         f"export ARNOLD_RUNTIME_MANIFEST_DIR={shlex.quote(manifest_dir)}",
     ]
+    if base_dir:
+        create_env.insert(0, f"export ARNOLD_BASE_DIR={shlex.quote(base_dir)}")
     if policy_path:
         create_env.append(f"export ARNOLD_RUNTIME_POLICY={shlex.quote(policy_path)}")
     if canonical_origin_url:
@@ -4540,6 +4582,7 @@ def _ensure_chain_runtime_binding(
         runtime_python=runtime_python,
         spec_path=launch_ctx.remote_spec_path,
         workspace_path=launch_ctx.workspace,
+        base_dir=_operation_base_dir_for_workspace(launch_ctx.workspace),
     )
     result = provider.ssh_exec(command)
     if result.returncode != 0:
@@ -4827,7 +4870,10 @@ def _derive_epic_chain_launch_context(
     )
     log_relative = f".megaplan/cloud-epic-chain-{session_name}.log"
     log_path = str(PurePosixPath(workspace) / log_relative)
-    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    marker_path = str(
+        PurePosixPath(_operation_marker_dir_for_workspace(workspace))
+        / f"{session_name}.json"
+    )
     return ChainLaunchContext(
         identity=identity,
         slug=slug,
@@ -4875,6 +4921,7 @@ def _epic_chain_start_command(
             repair_session,
             run_kind="epic_chain",
             marker_dir=repair_marker_dir,
+            base_dir=_operation_base_dir_for_workspace(workspace),
         )
     # Fail closed (G2 round 2): there is NO fixed-path ENGINE_DIR fallback
     # for the epic-chain parent launch.  Every epic-chain start requires a
@@ -5953,6 +6000,17 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         local_spec_path=local_spec_path,
         chain_spec=chain_spec,
     )
+    # Bind all generated chain/runtime evidence to this operation before any
+    # provider upload, runtime bootstrap, marker write, or chain start.  The
+    # AgentBox volume is shared, so relying on the process-global defaults
+    # would allow a prior operation's manifest/markers to be selected.
+    operation_base = _operation_base_dir_for_workspace(launch_ctx.workspace)
+    if operation_base:
+        os.environ["ARNOLD_BASE_DIR"] = operation_base
+        os.environ["ARNOLD_RUNTIME_MANIFEST_DIR"] = f"{operation_base}/.megaplan"
+        os.environ["ARNOLD_CHAIN_SESSION_MARKER_DIR"] = (
+            f"{operation_base}/.megaplan/cloud-sessions"
+        )
     launch_spec = replace(
         spec,
         repo=replace(spec.repo, workspace=launch_ctx.workspace),
