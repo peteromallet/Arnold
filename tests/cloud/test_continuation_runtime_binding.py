@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     resolve_babysitter_routing,
@@ -19,6 +20,8 @@ from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import policy_sha
 from arnold_pipelines.megaplan.cloud.preflight import (
     resolve_cloud_chain_runtime_dependencies,
 )
+from arnold_pipelines.megaplan.cloud.spec import load_spec as load_cloud_spec
+from arnold_pipelines.megaplan.cloud.template import render_entrypoint
 from arnold_pipelines.megaplan.chain.spec import load_spec
 from arnold_pipelines.megaplan.profiles import (
     CONTINUATION_RUNTIME_MODEL_SPEC,
@@ -48,10 +51,55 @@ tiebreaker_challenger = "omp:openrouter/meta/muse-spark-1.3-contributor:high"
 """
 
 
+CONTINUATION_CLOUD = (
+    Path(__file__).parents[2]
+    / ".megaplan/initiatives/native-build-forward-main-continuation-20260904/cloud.yaml"
+)
+
+
 def _project(tmp_path: Path, text: str = PROFILE_TEXT) -> Path:
     (tmp_path / ".megaplan").mkdir()
     (tmp_path / ".megaplan" / "profiles.toml").write_text(text, encoding="utf-8")
     return tmp_path
+
+
+def test_continuation_cloud_declares_distinct_source_project_and_runtime_roots() -> None:
+    raw = yaml.safe_load(CONTINUATION_CLOUD.read_text(encoding="utf-8"))
+    cloud = load_cloud_spec(CONTINUATION_CLOUD)
+    project_root = raw["repo"]["workspace"]
+    source_root = raw["megaplan"]["src_path"]
+    runtime_root = (
+        "/workspace/runtime-candidates/"
+        "native-build-forward-main-continuation-20260904"
+    )
+
+    assert project_root != source_root
+    assert project_root != runtime_root
+    assert source_root != runtime_root
+    assert cloud.repo.workspace == project_root
+    assert cloud.megaplan.src_path == source_root
+    assert raw["chain"]["spec"].startswith(project_root + "/")
+    assert raw["ssh"]["workspace_dir"].endswith(
+        "nbf-main-continuation-clean2-20260904"
+    )
+    assert raw["ssh"]["container"] == "nbf-main-continuation-clean2-20260904"
+
+
+def test_continuation_cloud_requires_canonical_entrypoint_and_isolated_supervisor_root() -> None:
+    cloud = load_cloud_spec(CONTINUATION_CLOUD)
+    rendered = render_entrypoint(cloud)
+    supervisor_wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime"
+    ).read_text(encoding="utf-8")
+
+    assert "/usr/local/bin/arnold-supervisor-runtime --prepare" in rendered
+    assert "sleep infinity" not in rendered
+    assert (
+        'ROOT="${MEGAPLAN_SUPERVISOR_RUNTIME_ROOT:-/workspace/.megaplan/'
+        'supervisor-python}"'
+    ) in supervisor_wrapper
+    assert "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1" in rendered
 
 
 def test_continuation_profile_is_one_strict_binding(tmp_path: Path) -> None:

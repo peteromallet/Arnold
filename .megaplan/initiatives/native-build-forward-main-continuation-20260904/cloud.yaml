@@ -2,17 +2,22 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: main
-  workspace: /workspace/nbf-main-continuation-final-clean1-20260904/Arnold
+  # Writable operation/project root. The reviewed source is provisioned
+  # separately at /workspace/arnold; the manifest-created runtime candidate
+  # is a third, immutable execution root.
+  workspace: /workspace/projects/native-build-forward-main-continuation-20260904/Arnold
 mode: idle
-chain_session: nbf-main-continuation-final-clean1-20260904
+chain_session: nbf-main-continuation-main-clean2-20260904
 chain:
-  spec: /workspace/nbf-main-continuation-final-clean1-20260904/Arnold/.megaplan/initiatives/native-build-forward-main-continuation-20260904/chain.yaml
+  spec: /workspace/projects/native-build-forward-main-continuation-20260904/Arnold/.megaplan/initiatives/native-build-forward-main-continuation-20260904/chain.yaml
 megaplan:
   ref: main
-  src_path: /workspace/nbf-main-continuation-final-clean1-20260904/Arnold
+  # Bootstrap/supervisor source checkout. Per-epic execution uses the
+  # manifest's runtime_root under /workspace/runtime-candidates/ instead.
+  src_path: /workspace/arnold
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  runtime_python: /workspace/nbf-main-continuation-final-clean1-20260904/Arnold/.venv/bin/python
+  runtime_python: /workspace/arnold/.venv/bin/python
 agents:
   default: omp
 ssh:
@@ -21,8 +26,9 @@ ssh:
   port: 22
   identity_file: /Users/peteromalley/.ssh/services/agentbox_159_69_51_216_ed25519
   remote_dir: /opt/megaplan-cloud/deploy
-  workspace_dir: /opt/megaplan-cloud/workspace/nbf-main-continuation-final-clean1-20260904
-  container: nbf-main-continuation-final-clean1-20260904-exec
+  # Unique host workspace is mounted as /workspace in the new container.
+  workspace_dir: /opt/megaplan-cloud/workspace/nbf-main-continuation-clean2-20260904
+  container: nbf-main-continuation-clean2-20260904
 driver:
   babysitter:
     mode: superfixer
