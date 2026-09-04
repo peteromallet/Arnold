@@ -59,6 +59,7 @@ from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.babysitter.routing import (
     cli_model,
+    CONTINUATION_MUSE_MODEL,
     CONTINUATION_MUSE_THINKING,
     resolve_babysitter_routing,
 )
@@ -279,6 +280,9 @@ def _collect_context(args: argparse.Namespace) -> dict[str, Any]:
             else os.environ.get("ARNOLD_BABYSITTER_MODEL", "").strip()
             or routing.controller_model
         ),
+        "reasoning_effort": (
+            CONTINUATION_MUSE_THINKING if routing.closed else REASONING_EFFORT
+        ),
         "routing": routing,
         "difficulty": _difficulty_env(),
     }
@@ -345,6 +349,15 @@ def _recovery_evidence_root(workspace: str) -> str:
 
 
 def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.cloud.fixer_model_policy import model_policy_sha
+    from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import policy_sha
+
+    resolved_model = str(ctx.get("model") or "")
+    continuation_model = (
+        resolved_model
+        if resolved_model == "omp:openrouter/meta/muse-spark-1.3-contributor:high"
+        else None
+    )
     payload: dict[str, Any] = {
         "schema": LAUNCH_RECEIPT_SCHEMA,
         "session": ctx["session"],
@@ -357,6 +370,14 @@ def _receipt_payload(ctx: dict[str, Any], *, status: str, **extra: Any) -> dict[
         "remote_spec": ctx["remote_spec"],
         "mode": ctx["mode"],
         "model": ctx["model"],
+        "reasoning_effort": ctx.get("reasoning_effort"),
+        "provider_probe": ctx.get("provider_probe"),
+        "policy_sha": policy_sha(),
+        # Include the continuation override in the effective digest.  Legacy
+        # receipts retain the historical table digest for compatibility.
+        "model_policy_sha": model_policy_sha(
+            continuation_model_spec=continuation_model
+        ),
         "toolsets": TOOLSETS,
         "babysitter_pid": os.getpid(),
         "supervisor_pid": os.getpid(),
@@ -607,6 +628,36 @@ def _managed_spec(
 ) -> ManagedCommandSpec:
     engine_root = ctx["engine_root"]
     routing = ctx["routing"]
+    if routing.closed or ctx.get("model") in {
+        "omp:openrouter/meta/muse-spark-1.3-contributor",
+        "omp:openrouter/meta/muse-spark-1.3-contributor:high",
+    }:
+        # A continuation's babysitter is also a fixer dispatch.  Resolve the
+        # explicit fixer rung through its canonical policy seam so this
+        # production consumer cannot accidentally fall back to the legacy
+        # gated DeepSeek table.
+        from arnold_pipelines.megaplan.cloud.fixer_model_policy import (
+            CONTINUATION_FIXER_MODEL_SPEC,
+            resolve_continuation_fixer_policy,
+        )
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        continuation_model = resolve_continuation_runtime_model(engine_root)
+        if continuation_model is not None:
+            fixer_policy = resolve_continuation_fixer_policy(
+                "proactive", runtime_model_spec=continuation_model
+            )
+            expected_model = (
+                CONTINUATION_MUSE_MODEL
+                if routing.closed
+                else f"omp:{fixer_policy.model}:high"
+            )
+            if continuation_model != CONTINUATION_FIXER_MODEL_SPEC:
+                raise RuntimeError("continuation fixer policy/profile identity diverged")
+            if ctx.get("model") != expected_model:
+                raise RuntimeError(
+                    "continuation babysitter model does not match the canonical fixer policy"
+                )
     if routing.mode == "codex":
         # Codex reads the sealed goal from stdin.  Keeping the goal out of argv
         # also makes the managed manifest's stdin hash the exact controller
@@ -703,8 +754,9 @@ def _managed_spec(
         task_kind=TASK_KIND,
         difficulty=ctx["difficulty"],
         model=ctx["model"],
-        reasoning_effort=(
-            CONTINUATION_MUSE_THINKING if routing.closed else REASONING_EFFORT
+        reasoning_effort=ctx.get(
+            "reasoning_effort",
+            CONTINUATION_MUSE_THINKING if routing.closed else REASONING_EFFORT,
         ),
         route_class=route_class,
         backend=backend,
@@ -1250,6 +1302,39 @@ def _admit_managed_launch(ctx: dict[str, Any], spec: ManagedCommandSpec) -> int:
     return result
 
 
+def _require_continuation_provider_probe(ctx: dict[str, Any]) -> None:
+    """Require and retain a credentialed exact-output Muse proof before launch."""
+    from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+        ensure_continuation_provider_probe,
+    )
+    from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+    continuation_model = resolve_continuation_runtime_model(ctx["engine_root"])
+    if continuation_model is None:
+        return
+    if ctx.get("reasoning_effort") != "high":
+        raise RuntimeError("continuation provider probe requires high reasoning effort")
+    route = continuation_model.removeprefix("omp:")
+    provider, separator, model_and_effort = route.partition("/")
+    model_id, effort_separator, effort = model_and_effort.rpartition(":")
+    if not separator or not provider or not effort_separator or effort != "high":
+        raise RuntimeError("continuation provider probe route is not canonical")
+    proof = ensure_continuation_provider_probe(ctx["engine_root"], continuation_model)
+    ctx["provider_probe"] = {
+        "spec": continuation_model,
+        "provider": provider,
+        "model": model_id,
+        "reasoning_effort": effort,
+        "identity": f"{provider}/{model_id}",
+        "catalog_digest": proof["catalog_digest"],
+        "probe_session": proof["probe_session"],
+        "output": proof["output"],
+        "output_sha256": proof["output_sha256"],
+        "observed_at": proof["observed_at"],
+        "profile_sha256": proof["profile_sha256"],
+    }
+
+
 def launch_babysitter(argv: Sequence[str] | None = None) -> int:
     """Run the single-flash babysitter launch flow; returns the process rc."""
     args = _build_parser().parse_args(argv)
@@ -1274,7 +1359,16 @@ def launch_babysitter(argv: Sequence[str] | None = None) -> int:
             return 0
 
         ctx["engine_root"] = _resolve_engine_root()
+        # Resolve continuation profiles from the actual engine root before
+        # capability and provider gates; this prevents a stale environment
+        # route from bypassing the project-local canonical model.
+        ctx["routing"] = resolve_babysitter_routing(project_dir=ctx["engine_root"])
+        if ctx["routing"].mode == "omp":
+            ctx["model"] = ctx["routing"].controller_model
+            if ctx["model"].endswith(":high"):
+                ctx["reasoning_effort"] = "high"
         _continuation_capability_preflight(ctx)
+        _require_continuation_provider_probe(ctx)
         goal_path = _resolve_goal_file(ctx)
         ctx["goal_path"] = str(goal_path)
 

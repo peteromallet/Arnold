@@ -15,16 +15,21 @@ from typing import Any
 from arnold_pipelines.megaplan.chain import ChainSpec
 from arnold_pipelines.megaplan.fallback_chains import FallbackSpecChain, decode_phase_model_value
 from arnold_pipelines.megaplan.profiles import (
+    CONTINUATION_RUNTIME_MODEL_SPEC,
+    CONTINUATION_RUNTIME_PROFILE,
     DEFAULT_AGENT_ROUTING,
     apply_profile_expansion,
     effective_premium_vendor,
+    resolve_continuation_runtime_model,
 )
 from arnold_pipelines.megaplan.types import (
+    CliError,
     format_agent_spec,
     is_premium_placeholder_spec,
     parse_agent_spec,
     resolve_premium_placeholder_spec,
 )
+from arnold_pipelines.megaplan.workers.omp import validate_omp_catalog_model
 
 
 AGENTS_DEFAULT_WARNING = (
@@ -181,6 +186,21 @@ def resolve_cloud_chain_runtime_dependencies(
     runtime_commands: set[str] = set()
     env_hints: set[str] = set()
     provider_requirements: list[dict[str, Any]] = []
+    continuation_profile_used = any(
+        milestone.profile == CONTINUATION_RUNTIME_PROFILE
+        for milestone in chain_spec.milestones
+    )
+    continuation_model = (
+        resolve_continuation_runtime_model(project_dir)
+        if continuation_profile_used
+        else None
+    )
+    if continuation_profile_used and continuation_model is None:
+        raise CliError(
+            "runtime_model_binding_mismatch",
+            "continuation profile requires a project directory with its "
+            "canonical model binding",
+        )
     for milestone in chain_spec.milestones:
         fallback_routing = _concrete_fallback_routing(
             vendor=milestone.vendor,
@@ -202,6 +222,14 @@ def resolve_cloud_chain_runtime_dependencies(
             fallback_routing,
         )
         resolved = _resolved_phase_map(resolved_phase_chains)
+        if milestone.profile == CONTINUATION_RUNTIME_PROFILE:
+            for phase, chain in resolved_phase_chains.items():
+                if tuple(chain.specs) != (CONTINUATION_RUNTIME_MODEL_SPEC,):
+                    raise CliError(
+                        "runtime_model_binding_mismatch",
+                        f"continuation milestone {milestone.label!r} phase {phase!r} "
+                        "does not resolve to the canonical model without fallback",
+                    )
         milestone_agents: set[str] = set()
         milestone_commands: set[str] = set()
         milestone_env_hints: set[str] = set()
@@ -210,6 +238,14 @@ def resolve_cloud_chain_runtime_dependencies(
         for chain in resolved_phase_chains.values():
             for spec in chain:
                 parsed = parse_agent_spec(spec)
+                if continuation_model is not None and parsed.agent == "omp":
+                    provider, separator, model_id = str(parsed.model or "").partition("/")
+                    if not separator:
+                        raise CliError(
+                            "runtime_model_binding_mismatch",
+                            f"continuation OMP route {spec!r} lacks provider/model identity",
+                        )
+                    validate_omp_catalog_model(provider, model_id)
                 milestone_agents.add(parsed.agent)
                 required_agents.add(parsed.agent)
                 for command in _COMMANDS_BY_AGENT.get(parsed.agent, ()):
@@ -264,6 +300,29 @@ def resolve_cloud_chain_runtime_dependencies(
         "provider_requirements": provider_requirements,
         "policy": policy,
     }
+    if continuation_model is not None:
+        result["runtime_model_binding"] = {
+            "profile": CONTINUATION_RUNTIME_PROFILE,
+            "spec": continuation_model,
+            "backend": "omp",
+            "provider": "openrouter",
+            "model": "meta/muse-spark-1.3-contributor",
+            "effort": "high",
+            "roles": {
+                role: {"spec": continuation_model, "effort": "high"}
+                for role in (
+                    "phase",
+                    "tiebreaker_researcher",
+                    "tiebreaker_challenger",
+                    "oracle",
+                    "researcher",
+                    "fixer",
+                    "babysitter",
+                )
+            },
+            "babysitter_enabled": False,
+            "credential_env_hints": list(_ENV_HINTS_BY_OMP_PROVIDER["openrouter"]),
+        }
 
     # When validation_policy is 'required', report a validation_environment
     # section with capability requirements so cloud launchers know what

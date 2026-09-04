@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 ROUTING_ENV = "ARNOLD_BABYSITTER_ROUTING"
@@ -95,6 +96,7 @@ def resolve_babysitter_routing(
     chain_profile: str | None = None,
     closed_profile: str | None = None,
     manifest_identity: Mapping[str, object] | None = None,
+    project_dir: Path | str | None = None,
 ) -> BabysitterRouting:
     """Resolve routing from authoritative profile identity and closed config.
 
@@ -107,6 +109,28 @@ def resolve_babysitter_routing(
     """
 
     values = os.environ if env is None else env
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
+        if canonical_model is not None:
+            selected = str(values.get(ROUTING_ENV, "")).strip().lower()
+            if selected and selected not in {OMP_ROUTING, "default", "legacy"}:
+                raise ValueError(
+                    f"continuation canonical model rejects {ROUTING_ENV}={selected!r}"
+                )
+            configured_model = str(values.get(OMP_MODEL_ENV, "")).strip()
+            if configured_model and configured_model != canonical_model:
+                raise ValueError(
+                    f"{OMP_MODEL_ENV} conflicts with the continuation canonical model"
+                )
+            return BabysitterRouting(
+                mode=OMP_ROUTING,
+                controller_backend=OMP_ROUTING,
+                controller_model=canonical_model,
+                investigator_backend=OMP_ROUTING,
+                investigator_model=canonical_model,
+            )
     session_value = str(session or values.get("ARNOLD_BABYSITTER_SESSION", "")).strip()
     manifest_profile = ""
     if manifest_identity is not None:
@@ -190,15 +214,25 @@ def resolve_babysitter_routing(
             investigator_model=CONTINUATION_MUSE_MODEL,
             thinking=CONTINUATION_MUSE_THINKING,
         )
-    selected = str(values.get(ROUTING_ENV, "")).strip().lower() or OMP_ROUTING
+    requested_routing = str(values.get(ROUTING_ENV, "")).strip().lower()
+    selected = requested_routing or OMP_ROUTING
     if selected in {OMP_ROUTING, "default", "legacy"}:
         # ``legacy`` remains accepted as a back-compat alias for the omp route.
+        configured_model = str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL
+        if not requested_routing or requested_routing in {"default", "legacy"}:
+            return BabysitterRouting(
+                mode="legacy",
+                controller_backend="hermes",
+                controller_model=configured_model,
+                investigator_backend="hermes",
+                investigator_model=configured_model,
+            )
         return BabysitterRouting(
             mode=OMP_ROUTING,
             controller_backend="omp",
-            controller_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
+            controller_model=configured_model,
             investigator_backend="omp",
-            investigator_model=str(values.get(OMP_MODEL_ENV, "")).strip() or OMP_CONTROLLER_MODEL,
+            investigator_model=configured_model,
         )
     if selected != CODEX_ROUTING:
         raise ValueError(

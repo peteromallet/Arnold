@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -39,6 +40,9 @@ SCHEMA_VERSION = 1
 RECEIPT_DERIVATION_VERSION = "1"
 DEFAULT_TIMEOUT_BUDGET_S = 3600.0
 NATIVE_PROOF_MAX_AGE_S = 24.0 * 60.0 * 60.0
+CONTINUATION_PROVIDER_PROBE_SCHEMA = "arnold.megaplan.continuation_provider_probe.v1"
+CONTINUATION_PROVIDER_PROBE_OUTPUT = "NBF_MUSE_PROBE_OK"
+CONTINUATION_PROVIDER_PROBE_MAX_AGE_S = 15.0 * 60.0
 
 
 def _now() -> str:
@@ -47,6 +51,152 @@ def _now() -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+def _continuation_probe_profile_identity(project_dir: Path) -> dict[str, str]:
+    """Return the source/profile identity bound into a continuation probe."""
+    project = project_dir.resolve()
+    profile = project / ".megaplan" / "profiles.toml"
+    try:
+        profile_sha = hashlib.sha256(profile.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise CliError(
+            "continuation_probe_unavailable",
+            f"continuation profile is unreadable: {profile}",
+        ) from exc
+    return {"source_path": str(project), "profile_sha256": profile_sha}
+
+
+def _continuation_probe_receipt_path(project_dir: Path) -> Path:
+    return project_dir.resolve() / ".megaplan" / "continuation-provider-probe.json"
+
+
+def _continuation_probe_receipt_valid(
+    receipt: Mapping[str, Any],
+    *,
+    identity: Mapping[str, str],
+    model_spec: str,
+    now: float,
+) -> bool:
+    """Validate a persisted exact-output probe before allowing dispatch."""
+    if receipt.get("schema") != CONTINUATION_PROVIDER_PROBE_SCHEMA:
+        return False
+    if (
+        receipt.get("provider") != "openrouter"
+        or receipt.get("model") != "meta/muse-spark-1.3-contributor"
+        or receipt.get("model_spec") != model_spec
+        or receipt.get("reasoning_effort") != "high"
+        or receipt.get("output") != CONTINUATION_PROVIDER_PROBE_OUTPUT
+        or receipt.get("source_path") != identity["source_path"]
+        or receipt.get("profile_sha256") != identity["profile_sha256"]
+        or receipt.get("source_identity") != _digest(identity)
+        or not str(receipt.get("probe_session") or "").strip()
+        or not str(receipt.get("catalog_digest") or "").strip()
+    ):
+        return False
+    if receipt.get("output_sha256") != hashlib.sha256(
+        CONTINUATION_PROVIDER_PROBE_OUTPUT.encode("utf-8")
+    ).hexdigest():
+        return False
+    try:
+        observed = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z", "+00:00"))
+        age = now - observed.timestamp()
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return 0 <= age <= CONTINUATION_PROVIDER_PROBE_MAX_AGE_S
+
+
+def ensure_continuation_provider_probe(
+    project_dir: Path | str,
+    model_spec: str,
+    *,
+    runner: Callable[..., Any] | None = None,
+    membership_probe: Callable[[str, str], Mapping[str, Any]] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> Mapping[str, Any]:
+    """Require a credentialed, exact-output Muse probe receipt.
+
+    The receipt is a small project-local authority record.  A recent record is
+    replayable only when its model, high-thinking setting, source path, and
+    profile digest still match.  A missing/stale/divergent record causes one
+    exact ``omp -p`` probe; any non-zero exit or output other than the sentinel
+    fails closed before a managed worker can launch.
+    """
+    from arnold_pipelines.megaplan.profiles import CONTINUATION_RUNTIME_MODEL_SPEC
+
+    if model_spec != CONTINUATION_RUNTIME_MODEL_SPEC:
+        raise CliError("continuation_probe_mismatch", "continuation probe model is not canonical")
+    project = Path(project_dir)
+    identity = _continuation_probe_profile_identity(project)
+    now = (clock or time.time)()
+    path = _continuation_probe_receipt_path(project)
+    try:
+        prior = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        prior = None
+    membership = (membership_probe or resolve_omp_live_membership)(
+        "openrouter", "meta/muse-spark-1.3-contributor"
+    )
+    if isinstance(prior, Mapping) and _continuation_probe_receipt_valid(
+        prior, identity=identity, model_spec=model_spec, now=now
+    ) and membership.get("digest") == prior.get("catalog_digest"):
+        return dict(prior)
+    if (
+        membership.get("identity") != "openrouter/meta/muse-spark-1.3-contributor"
+        or not membership.get("digest")
+    ):
+        raise CliError("continuation_probe_unavailable", "Muse route is not an exact live catalog member")
+    run = runner or subprocess.run
+    try:
+        completed = run(
+            [
+                "omp", "-p", "--no-session", "--no-tools",
+                "--model", "openrouter/meta/muse-spark-1.3-contributor",
+                "--thinking", "high", f"reply exactly {CONTINUATION_PROVIDER_PROBE_OUTPUT}",
+            ], capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CliError("continuation_probe_unavailable", f"exact Muse probe failed: {exc}") from exc
+    output = str(getattr(completed, "stdout", "") or "").strip()
+    if getattr(completed, "returncode", 1) != 0 or output != CONTINUATION_PROVIDER_PROBE_OUTPUT:
+        raise CliError(
+            "continuation_probe_failed",
+            "credentialed Muse probe did not return the exact sentinel",
+            extra={"returncode": getattr(completed, "returncode", None), "output": output},
+        )
+    observed_at = datetime.fromtimestamp(now, timezone.utc).isoformat()
+    receipt: dict[str, Any] = {
+        "schema": CONTINUATION_PROVIDER_PROBE_SCHEMA,
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "model_spec": model_spec,
+        "reasoning_effort": "high",
+        "probe_session": f"continuation-muse-probe-{hashlib.sha256((identity['source_path'] + observed_at).encode()).hexdigest()[:16]}",
+        "output": output,
+        "output_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        "source_identity": _digest(identity),
+        "timestamp": observed_at,
+        "observed_at": observed_at,
+        "source_path": identity["source_path"],
+        "profile_sha256": identity["profile_sha256"],
+        "catalog_digest": str(membership["digest"]),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(receipt, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except OSError as exc:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise CliError("continuation_probe_receipt_failed", f"could not persist probe receipt: {path}") from exc
+    return receipt
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
@@ -1901,4 +2051,4 @@ def dispatch_with_admission(
                 transport_worker.auth_metadata = metadata
             return raw.returncode if isinstance(raw, ManagedCommandResult) else raw
         return result
-__all__ = ["AdmissionRefusal", "LaunchResult", "ManagedCommandResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "production_provider_probe_executor", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]
+__all__ = ["AdmissionRefusal", "CONTINUATION_PROVIDER_PROBE_SCHEMA", "CONTINUATION_PROVIDER_PROBE_OUTPUT", "LaunchResult", "ManagedCommandResult", "WorkerAdmissionReceipt", "WorkerAdmissionRequest", "WorkerExecutionContextRef", "build_authorized_linked_child_request", "dispatch_with_admission", "ensure_continuation_provider_probe", "production_provider_probe_executor", "reconcile_no_launch", "require_production_worker_dispatch_runtime", "resolve_omp_live_membership"]

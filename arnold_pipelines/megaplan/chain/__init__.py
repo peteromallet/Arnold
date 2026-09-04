@@ -354,6 +354,17 @@ def _write_chain_policy_into_plan_meta(
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
+    # A paused-checkout source cutover records the canonical binding on the
+    # chain/marker while the historical aborted plan remains byte-preserved.
+    # Carry that binding into the next materialized plan so the existing
+    # chain/plan binding assertion has one authoritative projection.
+    try:
+        chain_state = chain_spec.load_chain_state(spec_path)
+        source_binding = chain_state.metadata.get("project_source_binding")
+        if isinstance(source_binding, Mapping):
+            chain_policy["project_source_binding"] = dict(source_binding)
+    except (CliError, OSError, ValueError, TypeError):
+        pass
     try:
         chain_policy["milestone_base_sha"] = _current_head_sha(root)
     except CliError:
@@ -364,6 +375,8 @@ def _write_chain_policy_into_plan_meta(
         if not isinstance(meta, dict):
             current["meta"] = meta = {}
         meta["chain_policy"] = chain_policy
+        if isinstance(chain_policy.get("project_source_binding"), Mapping):
+            meta["project_source_binding"] = dict(chain_policy["project_source_binding"])
         return True
 
     write_plan_state(
@@ -11257,6 +11270,34 @@ def build_chain_parser(subparsers: Any) -> None:
     reconcile_source_parser.add_argument("--authoritative-source", required=True)
     reconcile_source_parser.add_argument("--reason", required=True)
 
+    reconcile_aborted_parser = chain_sub.add_parser(
+        "reconcile-aborted-c2-authority",
+        help="Admit one exact paused, null-plan aborted C2 authority projection without dispatch",
+    )
+    reconcile_aborted_parser.add_argument("--spec", required=True)
+    reconcile_aborted_parser.add_argument("--project-dir", required=False)
+    reconcile_aborted_parser.add_argument("--marker", required=True)
+    reconcile_aborted_parser.add_argument("--aborted-plan", required=True)
+    reconcile_aborted_parser.add_argument("--session-id", required=True)
+    reconcile_aborted_parser.add_argument("--plan-name", required=True)
+    reconcile_aborted_parser.add_argument("--chain-state-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--plan-state-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--marker-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--spec-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--historical-spec-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--chain-revision", required=True, type=int)
+    reconcile_aborted_parser.add_argument("--completed-prefix", required=True)
+    reconcile_aborted_parser.add_argument("--source-binding", required=True)
+    reconcile_aborted_parser.add_argument("--runtime-identity", required=True)
+    reconcile_aborted_parser.add_argument("--hold", required=True)
+    reconcile_aborted_parser.add_argument("--operation-rows", required=True)
+    reconcile_aborted_parser.add_argument("--operation-rows-sha256", required=True)
+    reconcile_aborted_parser.add_argument("--runtime-manifest")
+    reconcile_aborted_parser.add_argument("--runtime-manifest-sha256")
+    reconcile_aborted_parser.add_argument("--reason", required=True)
+    reconcile_aborted_parser.add_argument("--actor", default="operator")
+    reconcile_aborted_parser.add_argument("--operation-id")
+
     rebind_parser = chain_sub.add_parser(
         "rebind",
         help="Guardedly adopt a content-addressed successor chain without moving its cursor",
@@ -11673,6 +11714,41 @@ def build_chain_parser(subparsers: Any) -> None:
     restart_current_attempt_parser.add_argument("--expected-state-digest")
     restart_current_attempt_parser.add_argument("--expected-physical-sequence-start", type=int)
 
+    paused_checkout_parser = chain_sub.add_parser(
+        "cutover-paused-checkout",
+        help=(
+            "Guardedly cut over a paused null-plan aborted-C2 checkout and "
+            "record its content-addressed source binding"
+        ),
+    )
+    paused_checkout_parser.add_argument("--spec", required=True)
+    paused_checkout_parser.add_argument("--project-dir", required=True)
+    paused_checkout_parser.add_argument("--marker", required=True)
+    paused_checkout_parser.add_argument("--aborted-plan", required=True)
+    paused_checkout_parser.add_argument("--session-id", required=True)
+    paused_checkout_parser.add_argument("--current-milestone", required=True)
+    paused_checkout_parser.add_argument("--cursor", required=True, type=int)
+    paused_checkout_parser.add_argument("--completed-prefix", required=True)
+    paused_checkout_parser.add_argument("--hold", required=True)
+    paused_checkout_parser.add_argument("--runtime-identity", required=True)
+    paused_checkout_parser.add_argument("--from-branch", required=True)
+    paused_checkout_parser.add_argument("--from-head", required=True)
+    paused_checkout_parser.add_argument("--from-milestone-base", required=True)
+    paused_checkout_parser.add_argument("--from-ref", required=True)
+    paused_checkout_parser.add_argument("--to-branch", required=True)
+    paused_checkout_parser.add_argument("--to-head", required=True)
+    paused_checkout_parser.add_argument("--to-milestone-base", required=True)
+    paused_checkout_parser.add_argument("--to-ref", required=True)
+    paused_checkout_parser.add_argument("--expected-chain-state-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-plan-state-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-marker-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-spec-sha256", required=True)
+    paused_checkout_parser.add_argument("--expected-target-spec-sha256")
+    paused_checkout_parser.add_argument("--expected-chain-revision", required=True, type=int)
+    paused_checkout_parser.add_argument("--reason", required=True)
+    paused_checkout_parser.add_argument("--actor", default="operator")
+    paused_checkout_parser.add_argument("--operation-id")
+
     seed_rematerialize_parser = chain_sub.add_parser(
         "seed-rematerialize",
         help=(
@@ -12033,6 +12109,70 @@ def run_chain_cli(
         sys.stderr.write("megaplan chain: --spec is required\n")
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
+
+    def _guard_json(path_arg: str, label: str) -> Any:
+        try:
+            return json.loads(Path(path_arg).expanduser().resolve(strict=True).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CliError("invalid_args", f"{label} JSON is unavailable or malformed: {exc}") from exc
+
+    if action == "reconcile-aborted-c2-authority":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.current_attempt import (
+                AbortedC2AuthorityGuards,
+                reconcile_aborted_c2_authority,
+            )
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+            prefix = _guard_json(args.completed_prefix, "completed-prefix")
+            source = _guard_json(args.source_binding, "source-binding")
+            runtime = _guard_json(args.runtime_identity, "runtime-identity")
+            hold = _guard_json(args.hold, "hold")
+            rows = _guard_json(args.operation_rows, "operation-rows")
+            if not isinstance(prefix, list) or not isinstance(rows, list):
+                raise CliError("invalid_args", "completed-prefix and operation-rows must contain JSON lists")
+            if not all(isinstance(item, Mapping) for item in prefix + rows):
+                raise CliError("invalid_args", "completed-prefix and operation-rows must contain JSON objects")
+            if not isinstance(source, Mapping) or not isinstance(runtime, Mapping) or not isinstance(hold, Mapping):
+                raise CliError("invalid_args", "source-binding, runtime-identity, and hold must contain JSON objects")
+            result = reconcile_aborted_c2_authority(
+                spec_path=spec_path,
+                project_dir=project_root,
+                marker_path=Path(args.marker).expanduser().resolve(),
+                aborted_plan_path=Path(args.aborted_plan).expanduser().resolve(),
+                guards=AbortedC2AuthorityGuards(
+                    expected_session_id=args.session_id,
+                    expected_plan_name=args.plan_name,
+                    expected_chain_state_sha256=args.chain_state_sha256,
+                    expected_plan_state_sha256=args.plan_state_sha256,
+                    expected_marker_sha256=args.marker_sha256,
+                    expected_spec_sha256=args.spec_sha256,
+                    expected_chain_revision=args.chain_revision,
+                    expected_completed_prefix=tuple(dict(item) for item in prefix),
+                    expected_source_binding=dict(source),
+                    expected_runtime_identity=dict(runtime),
+                    expected_hold=dict(hold),
+                    expected_operation_rows=tuple(dict(item) for item in rows),
+                    expected_historical_spec_sha256=args.historical_spec_sha256,
+                    expected_runtime_manifest_sha256=args.runtime_manifest_sha256,
+                    expected_operation_rows_sha256=args.operation_rows_sha256,
+                ),
+                expected_operation_rows_path=Path(args.operation_rows).expanduser().resolve(),
+                runtime_manifest_path=(Path(args.runtime_manifest).expanduser().resolve() if args.runtime_manifest else None),
+                reason=args.reason,
+                actor=args.actor,
+                operation_id=args.operation_id,
+            )
+        except ChainControlHold as exc:
+            return _emit_error(CliError(exc.code, str(exc), extra=exc.details))
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps({"success": True, "spec": str(spec_path), "action": action, **result}, indent=2) + "\n")
+        return 0
 
     if action in {"pause", "resume"}:
         from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
@@ -12810,6 +12950,55 @@ def run_chain_cli(
             )
             + "\n"
         )
+        return 0
+
+    if action == "cutover-paused-checkout":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import cutover_paused_checkout
+            from arnold_pipelines.megaplan.incident.chain_control import ChainControlHold
+
+            prefix = _guard_json(args.completed_prefix, "completed-prefix")
+            hold = _guard_json(args.hold, "hold")
+            runtime = _guard_json(args.runtime_identity, "runtime-identity")
+            if not isinstance(prefix, list) or not all(isinstance(item, Mapping) for item in prefix):
+                raise CliError("invalid_args", "completed-prefix must contain JSON objects")
+            if not isinstance(hold, Mapping) or not isinstance(runtime, Mapping):
+                raise CliError("invalid_args", "hold and runtime-identity must contain JSON objects")
+            result = cutover_paused_checkout(
+                spec_path,
+                project_root,
+                marker_path=Path(args.marker).expanduser().resolve(),
+                aborted_plan_path=Path(args.aborted_plan).expanduser().resolve(),
+                expected_session_id=args.session_id,
+                expected_current_milestone=args.current_milestone,
+                expected_cursor=args.cursor,
+                expected_completed_prefix=[dict(item) for item in prefix],
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                expected_marker_sha256=args.expected_marker_sha256,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
+                expected_chain_revision=args.expected_chain_revision,
+                expected_hold=dict(hold),
+                expected_runtime_identity=dict(runtime),
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_milestone_base=args.to_milestone_base,
+                to_ref=args.to_ref,
+                reason=args.reason,
+                actor=args.actor,
+                operation_id=args.operation_id,
+            )
+        except ChainControlHold as exc:
+            return _emit_error(CliError(exc.code, str(exc), extra=exc.details))
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps({"success": True, "spec": str(spec_path), "action": action, **result}, indent=2) + "\n")
         return 0
 
     if action == "target-rebind":

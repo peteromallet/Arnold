@@ -889,6 +889,14 @@ class ResidentJobHandlers:
             (target or {}).get("project_dir") or job.payload.get("workspace") or "/workspace"
         )
         model = str((target or {}).get("model") or "").strip()
+        if not model:
+            # The schedule payload is intentionally model-agnostic.  Resolve a
+            # continuation's explicit profile pin at this producer so the
+            # launch seam can reject omission/conflict rather than silently
+            # rewriting its legacy DeepSeek default.
+            from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+            model = resolve_continuation_runtime_model(Path(project_dir)) or ""
         if prompt:
             return prompt, {
                 "description": description,

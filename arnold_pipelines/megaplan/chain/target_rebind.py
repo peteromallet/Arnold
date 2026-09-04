@@ -9,6 +9,7 @@ the launch-time chain target/base identity immutable.
 from __future__ import annotations
 
 import fcntl
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, NoReturn
 
 from arnold_pipelines.megaplan._core.io import find_plan_dir
 from arnold_pipelines.megaplan._core.state import driver_lock, plan_lock
@@ -29,6 +30,7 @@ from arnold_pipelines.megaplan.chain.operator_pause import (
     AUTHORITY_KEY,
     AUTHORITY_SCHEMA,
 )
+from arnold_pipelines.megaplan.cloud.operator_control import RESUME_HOLD_SCHEMA
 from arnold_pipelines.megaplan.types import CliError
 
 PROJECT_SOURCE_BINDING_SCHEMA = "arnold.megaplan.project_source_binding.v1"
@@ -1475,6 +1477,533 @@ def target_rebind(
         }
 
 
+def cutover_paused_checkout(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    marker_path: Path,
+    aborted_plan_path: Path,
+    expected_session_id: str,
+    expected_current_milestone: str,
+    expected_cursor: int,
+    expected_completed_prefix: list[Mapping[str, Any]],
+    expected_chain_state_sha256: str,
+    expected_plan_state_sha256: str,
+    expected_marker_sha256: str,
+    expected_spec_sha256: str,
+    expected_chain_revision: Any,
+    expected_hold: Mapping[str, Any],
+    expected_runtime_identity: Mapping[str, Any],
+    from_branch: str,
+    from_head: str,
+    from_milestone_base: str,
+    from_ref: str,
+    to_branch: str,
+    to_head: str,
+    to_milestone_base: str,
+    to_ref: str,
+    expected_target_spec_sha256: str | None = None,
+    reason: str,
+    actor: str = "operator",
+    operation_id: str | None = None,
+    failure_injector: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Cut over a paused/null-plan C2 checkout and attest its source.
+
+    Unlike ``target_rebind`` this operation accepts the persisted aborted-C2
+    shape, never rewrites the aborted plan, and never creates a plan or
+    dispatches work.  Git and authority files are changed only inside the
+    existing chain-control transaction and are recovered from its intent.
+    """
+    from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+        marker_runtime_identity,
+        normalize_runtime_identity,
+    )
+    from arnold_pipelines.megaplan.incident.chain_control import (
+        ChainControlHold,
+        ChainStateAdapter,
+        canonical_json,
+        chain_id_for_spec,
+        _incomplete_operation_statuses,
+        journal_for,
+        physical_digest_after,
+        read_physical_lines,
+        sha256_hex,
+        state_digest_for,
+    )
+
+    def refuse(message: str, **details: Any) -> NoReturn:
+        raise CliError(PROJECT_SOURCE_REBIND_ERROR, message, extra=details)
+
+    if not reason.strip() or not actor.strip() or not expected_session_id.strip():
+        refuse("reason, actor, and session are required")
+    if expected_cursor != 6 or len(expected_completed_prefix) != 6:
+        refuse("cutover requires the exact six-milestone completed prefix")
+    if not isinstance(expected_hold, Mapping) or not isinstance(expected_runtime_identity, Mapping):
+        refuse("hold and runtime identity guards are required")
+    spec_path = spec_path.resolve(strict=False)
+    project_root = project_root.resolve(strict=False)
+    marker_path = marker_path.resolve(strict=False)
+    aborted_plan_path = aborted_plan_path.resolve(strict=False)
+    if expected_session_id != project_root.name:
+        refuse("session must equal the canonical project-root name")
+    chain_path = chain_spec._state_path_for(spec_path)
+    for path in (spec_path, chain_path, marker_path, aborted_plan_path):
+        try:
+            path.relative_to(project_root)
+        except ValueError as exc:
+            raise CliError(PROJECT_SOURCE_REBIND_ERROR, "authority paths must be inside project root") from exc
+    if not all(path.exists() for path in (spec_path, chain_path, aborted_plan_path, marker_path)):
+        refuse("required cutover authority file is unavailable")
+
+    from_branch = _guard_branch(from_branch, label="from branch")
+    from_head = _guard_git_sha(from_head, label="from head")
+    from_milestone_base = _guard_git_sha(from_milestone_base, label="from milestone base")
+    from_ref = _guard_ref(from_ref, label="from ref")
+    to_branch = _guard_branch(to_branch, label="to branch")
+    to_head = _guard_git_sha(to_head, label="to head")
+    to_milestone_base = _guard_git_sha(to_milestone_base, label="to milestone base")
+    to_ref = _guard_ref(to_ref, label="to ref")
+    expected_spec_sha256 = _guard_sha256(expected_spec_sha256, label="spec SHA-256")
+    expected_chain_state_sha256 = _guard_sha256(expected_chain_state_sha256, label="chain-state SHA-256")
+    expected_plan_state_sha256 = _guard_sha256(expected_plan_state_sha256, label="plan-state SHA-256")
+    expected_marker_sha256 = _guard_sha256(expected_marker_sha256, label="marker SHA-256")
+    target_spec_sha256 = _guard_sha256(
+        expected_target_spec_sha256 or expected_spec_sha256,
+        label="target spec SHA-256",
+    )
+
+    chain_raw, chain = _load_json_bytes(chain_path, label="chain state")
+    plan_raw, plan = _load_json_bytes(aborted_plan_path, label="aborted C2 plan")
+    marker_raw, marker = _load_json_bytes(marker_path, label="session marker")
+    _assert_hash(plan_raw, expected_plan_state_sha256, label="plan-state SHA-256")
+    spec = chain_spec.load_spec(spec_path)
+    if expected_cursor >= len(spec.milestones) or spec.milestones[expected_cursor].label != expected_current_milestone:
+        refuse("current milestone does not match the guarded C2 successor")
+    persisted_prefix = chain.get("completed")
+    if not isinstance(persisted_prefix, list) or len(persisted_prefix) != 6 or not all(isinstance(item, Mapping) for item in persisted_prefix):
+        refuse("persisted completed prefix is not the exact six-milestone authority")
+    canonical_prefix = [dict(item) for item in persisted_prefix]
+    if canonical_prefix != [dict(item) for item in expected_completed_prefix]:
+        refuse("guarded completed prefix does not match persisted authority")
+    if any(item.get("status") != "completed" for item in canonical_prefix):
+        refuse("persisted completed prefix records must carry completed status")
+    if [item.get("label") for item in canonical_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+        refuse("persisted completed prefix is not canonical")
+    if any(set(item) - {"label", "status", "artifacts"} for item in canonical_prefix):
+        refuse("persisted completed prefix contains non-canonical fields")
+    for item in canonical_prefix:
+        artifacts = item.get("artifacts")
+        if isinstance(artifacts, Mapping):
+            has_artifacts = bool(artifacts)
+        elif isinstance(artifacts, list):
+            has_artifacts = bool(artifacts) and all(isinstance(entry, Mapping) for entry in artifacts)
+        else:
+            has_artifacts = False
+        if not has_artifacts:
+            refuse("completed prefix predecessor artifacts are required")
+    from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+    _assert_artifact_hashes(project_root, canonical_prefix)
+    # Derive the id before inspecting the live checkout so a retry with the
+    # original pre-state guards can replay after the checkout has moved.
+    early_source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
+    # The target SHA is an input identity; remote observation is deliberately
+    # deferred until every local action-off/authority guard has passed.
+    early_target_advertised = to_head
+    early_target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": early_target_advertised}
+    chain_id = chain_id_for_spec(spec_path)
+    early_guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": canonical_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": early_source, "target": early_target}
+    early_operation_id = "c2-checkout-cutover-" + sha256_hex(canonical_json(early_guard_material))
+    journal = journal_for(project_root)
+    early_replay = journal.replay_strict()
+    # Replay/refusal still requires the stable authority identities; mutable
+    # pre-state hashes may legitimately differ after a committed cutover.
+    replay_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    replay_hold = marker.get("operator_resume_hold")
+    if chain.get("chain_session") != expected_session_id or replay_meta.get("chain_id") != chain_id:
+        refuse("replay authority session or chain ID diverges")
+    if marker.get("should_run") is not False or not isinstance(replay_hold, Mapping) or replay_hold != dict(expected_hold):
+        refuse("replay authority hold or action-off state diverges")
+    if marker_runtime_identity(marker) != normalize_runtime_identity(expected_runtime_identity):
+        refuse("replay runtime identity diverges")
+    pending_intent = next(
+        (event for event in reversed(early_replay.get("accepted", []))
+         if event.get("event_kind") == "chain_control.intent"
+         and isinstance(event.get("payload"), Mapping)
+         and isinstance(event["payload"].get("effect"), Mapping)
+         and event["payload"]["effect"].get("source") == early_source
+         and event["payload"]["effect"].get("target") == early_target),
+        None,
+    )
+    # Replays may carry refreshed observational hashes; retain the original
+    # operation identity from its durable intent when source/target identities
+    # are unchanged.
+    if pending_intent is not None and isinstance(pending_intent.get("operation_id"), str):
+        early_operation_id = str(pending_intent["operation_id"])
+    replay_identity_from_intent = pending_intent is not None
+    early_existing = next(
+        (event for event in reversed(early_replay.get("accepted", []))
+         if event.get("operation_id") == early_operation_id
+         and event.get("event_kind") == "chain_control.source_checkout_cutover"),
+        None,
+    )
+    live_spec_sha256 = sha256_path(spec_path)
+    target_replay = pending_intent is not None or early_existing is not None
+    if (live_spec_sha256 == target_spec_sha256
+            and target_spec_sha256 != expected_spec_sha256
+            and not target_replay):
+        refuse("chain spec SHA-256 changed")
+    if live_spec_sha256 not in (expected_spec_sha256, target_spec_sha256):
+        refuse("chain spec SHA-256 changed")
+    foreign_incomplete = {
+        operation: kind
+        for operation, kind in _incomplete_operation_statuses(early_replay, chain_id).items()
+        if operation != early_operation_id
+    }
+    if foreign_incomplete:
+        refuse("a foreign journal operation is incomplete", operations=foreign_incomplete)
+    # Complete local authority closure before any branch/head observation or
+    # remote Git operation.  Replay and recovery below may read Git only after
+    # this same action-off boundary has passed.
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    plan_name = plan.get("name")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        refuse("canonical aborted plan name is required")
+    if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
+        refuse("chain is not paused at cursor 6 with a null current plan")
+    if chain.get("chain_session") != expected_session_id or chain_meta.get("chain_id") != chain_id:
+        refuse("canonical session or chain ID identity diverges")
+    expected_chain_spec_sha256 = target_spec_sha256 if live_spec_sha256 == target_spec_sha256 else expected_spec_sha256
+    if chain_meta.get("chain_spec_sha256") != expected_chain_spec_sha256:
+        refuse("chain spec identity diverges")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        refuse("aborted C2 plan is not immutable and inactive")
+    canonical_plan_path = find_plan_dir(project_root, plan_name)
+    if canonical_plan_path is None or aborted_plan_path != (canonical_plan_path / "state.json").resolve(strict=False):
+        refuse("aborted plan path is not the canonical plan authority")
+    pause = marker.get("operator_pause")
+    hold = marker.get("operator_resume_hold")
+    if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
+        refuse("marker is not paused, held, and action-off")
+    if chain_meta.get(AUTHORITY_KEY) != dict(pause):
+        refuse("chain and marker pause authorities do not match")
+    resume_authority = hold.get("resume_authority")
+    if (hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or hold.get("workspace") != str(project_root) or not isinstance(resume_authority, Mapping) or resume_authority.get("schema_version") != AUTHORITY_SCHEMA or resume_authority.get("plan") != plan_name):
+        refuse("canonical active hold identity is required")
+    if dict(hold) != dict(expected_hold):
+        refuse("active hold does not match guard")
+    if marker_runtime_identity(marker) != normalize_runtime_identity(expected_runtime_identity):
+        refuse("marker runtime identity does not match guard")
+    if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
+        refuse("an active owner is present")
+    expected_prefix = canonical_prefix
+    if chain.get("completed") != expected_prefix or any(item.get("status") != "completed" for item in expected_prefix):
+        refuse("completed six-milestone prefix is not canonical")
+    if [item.get("label") for item in expected_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+        refuse("guarded completed prefix is not canonical")
+    if any(set(item) - {"label", "status", "artifacts"} for item in expected_prefix):
+        refuse("completed prefix contains non-canonical caller fields")
+    from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+    _assert_artifact_hashes(project_root, expected_prefix)
+    chain_policy = chain_meta.get("chain_policy") if isinstance(chain_meta.get("chain_policy"), Mapping) else None
+    if not isinstance(chain_policy, Mapping) or chain_policy.get("milestone_base_sha") != from_milestone_base or chain_policy.get("milestone_base_sha") != from_head:
+        refuse("source milestone base is not derived from chain authority")
+    target_milestone = spec.milestones[expected_cursor]
+    if target_milestone.branch not in (None, to_branch):
+        refuse("target milestone branch does not match guarded target branch")
+    for binding_name, binding in (("chain", chain_meta.get("project_source_binding")), ("marker", marker.get("project_source_binding")), ("plan", (plan.get("meta") or {}).get("project_source_binding") if isinstance(plan.get("meta"), Mapping) else None)):
+        if binding is not None and not isinstance(binding, Mapping):
+            refuse(f"existing {binding_name} source binding is malformed")
+        if isinstance(binding, Mapping):
+            admission = binding.get("admission") if isinstance(binding.get("admission"), Mapping) else {}
+            committed_replay = binding.get("current") == early_target and admission.get("operation_id") == early_operation_id
+            if ((binding.get("current") != early_source and not committed_replay)
+                    or binding.get("original") not in (None, early_source)
+                    or (binding.get("rebind_events") not in (None, []) and not committed_replay)):
+                refuse(f"existing {binding_name} source binding diverges from guarded source")
+    if early_existing is not None and early_existing.get("event_kind") == "chain_control.source_checkout_cutover":
+        payload = early_existing.get("payload") if isinstance(early_existing.get("payload"), Mapping) else {}
+        effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+        if not replay_identity_from_intent and effect.get("guard_digest") != sha256_hex(canonical_json(early_guard_material)):
+            refuse("committed cutover guard digest differs")
+        if live_spec_sha256 != target_spec_sha256:
+            refuse("chain spec SHA-256 changed")
+        if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
+            refuse("committed cutover checkout diverged")
+        return {"outcome": "replay", "operation_id": early_operation_id, "receipt": dict(early_existing), "external_effect": False}
+    # A process may disappear after both projections were written but before
+    # the terminal event was acknowledged.  Complete that exact intent before
+    # applying any pre-state hash or Git-side effect.
+    if pending_intent is not None:
+        pending_payload = pending_intent.get("payload") if isinstance(pending_intent.get("payload"), Mapping) else {}
+        pending_effect = pending_payload.get("effect") if isinstance(pending_payload.get("effect"), Mapping) else {}
+        pending_post_chain = pending_effect.get("post_chain")
+        pending_post_marker = pending_effect.get("post_marker")
+        if isinstance(pending_post_chain, Mapping) and isinstance(pending_post_marker, Mapping):
+            pending_meta = pending_post_chain.get("metadata") if isinstance(pending_post_chain.get("metadata"), Mapping) else {}
+            pending_hold = pending_post_marker.get("operator_resume_hold")
+            pending_runtime = marker_runtime_identity(pending_post_marker)
+            pending_at_target = _current_branch(project_root) == to_branch and _current_head(project_root) == to_head
+            if pending_at_target and live_spec_sha256 != target_spec_sha256:
+                refuse("chain spec SHA-256 changed")
+            if (pending_at_target
+                    and state_digest_for(chain) == pending_effect.get("post_chain_digest")
+                    and marker == dict(pending_post_marker)
+                    and pending_post_chain.get("chain_session") == expected_session_id
+                    and pending_meta.get("chain_id") == chain_id
+                    and pending_post_chain.get("completed") == canonical_prefix
+                    and pending_hold == dict(expected_hold)
+                    and pending_runtime == normalize_runtime_identity(expected_runtime_identity)):
+                with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, marker_path, spec_path, aborted_plan_path], operation_id=early_operation_id, actor={"id": actor, "class": "operator"}) as txn:
+                    terminal = journal.operation_result(early_operation_id)
+                    if terminal is not None and terminal.get("event_kind") == "chain_control.source_checkout_cutover":
+                        return {"outcome": "replay", "operation_id": early_operation_id, "receipt": dict(terminal), "external_effect": False}
+                    committed = journal.append_under_lock(
+                        txn, event_kind="chain_control.source_checkout_cutover", chain_id=chain_id,
+                        operation_id=early_operation_id, causation_id=str(pending_intent.get("event_id") or early_operation_id),
+                        correlation_id=early_operation_id, payload={"schema": pending_effect.get("schema"), "effect": dict(pending_effect)},
+                        semantic_effect="metadata_only", claim_class="required", actor={"id": actor, "class": "operator"},
+                        outcome="committed", intent="cutover-paused-checkout", expected_cursor=expected_cursor,
+                        expected_revision=expected_chain_revision, actual_cursor=expected_cursor,
+                        actual_revision=pending_post_chain.get("metadata", {}).get("_nbf08_revision"),
+                        pre_state_digest=pending_effect.get("pre_chain_digest"), post_state_digest=pending_effect.get("post_chain_digest"),
+                        source_identity=pending_effect.get("source"), spec_identity=str(spec_path),
+                        linked_receipts=[str(pending_intent.get("event_id") or early_operation_id)],
+                    )
+                    return {"outcome": "recovered", "operation_id": early_operation_id, "receipt": committed, "external_effect": False}
+    _assert_hash(chain_raw, expected_chain_state_sha256, label="chain-state SHA-256")
+    _assert_hash(marker_raw, expected_marker_sha256, label="marker SHA-256")
+    # A caller may repeat with refreshed observational file hashes after the
+    # first commit.  The committed source/target tuple remains the stronger
+    # idempotency identity than those mutable observations.
+    for event in reversed(early_replay.get("accepted", [])):
+        if event.get("event_kind") != "chain_control.source_checkout_cutover":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+        effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+        if effect.get("source") == early_source and effect.get("target") == early_target:
+            if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
+                refuse("committed cutover checkout diverged")
+            return {"outcome": "replay", "operation_id": str(event.get("operation_id") or early_operation_id), "receipt": dict(event), "external_effect": False}
+    current_branch = _current_branch(project_root)
+    current_head = _current_head(project_root)
+    if (current_branch != from_branch or current_head != from_head) and not (
+        pending_intent is not None and current_branch == to_branch and current_head == to_head
+    ):
+        refuse("current checkout branch/HEAD does not match guarded source")
+    # All authority/action-off checks must precede ls-remote, fetch, ancestry,
+    # and checkout effects.  The path is part of the same authority closure.
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
+        refuse("chain is not paused at cursor 6 with a null current plan")
+    if chain_meta.get("_nbf08_revision") != expected_chain_revision:
+        refuse("chain revision does not match guard")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        refuse("aborted C2 plan is not immutable and inactive")
+    plan_name = str(plan.get("name") or aborted_plan_path.parent.name)
+    pause = marker.get("operator_pause")
+    hold = marker.get("operator_resume_hold")
+    if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
+        refuse("marker is not paused, held, and action-off")
+    if chain.get("chain_session") != expected_session_id:
+        refuse("chain session identity is required and does not match guard")
+    if chain_meta := (chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}):
+        if chain_meta.get("chain_id") != chain_id:
+            refuse("chain ID identity is required and does not match the guarded spec")
+    else:
+        refuse("chain metadata authority is unavailable")
+    if chain_meta.get("operator_pause") != marker.get("operator_pause"):
+        refuse("chain and marker pause authorities do not match")
+    resume_authority = hold.get("resume_authority") if isinstance(hold, Mapping) else None
+    if (not isinstance(hold, Mapping) or hold.get("schema_version") != RESUME_HOLD_SCHEMA or hold.get("session") != expected_session_id or hold.get("spec") != str(spec_path) or not isinstance(resume_authority, Mapping) or resume_authority.get("schema_version") != AUTHORITY_SCHEMA or resume_authority.get("plan") != plan_name):
+        refuse("canonical active hold identity is required")
+    canonical_plan_path = find_plan_dir(project_root, plan_name) / "state.json"
+    if aborted_plan_path != canonical_plan_path.resolve(strict=False):
+        refuse("aborted plan path is not the canonical plan authority")
+    if any(item.get("status") != "completed" for item in canonical_prefix):
+        refuse("completed prefix records must carry completed status")
+    try:
+        from arnold_pipelines.megaplan.chain.current_attempt import _assert_artifact_hashes
+        _assert_artifact_hashes(project_root, canonical_prefix)
+    except CliError:
+        raise
+    if chain_meta.get("chain_policy", {}).get("milestone_base_sha") not in (None, from_milestone_base):
+        refuse("source milestone base does not match chain policy")
+    existing_binding = chain_meta.get("project_source_binding")
+    if existing_binding is not None and not isinstance(existing_binding, Mapping):
+        refuse("existing chain source binding is malformed")
+    if isinstance(existing_binding, Mapping) and existing_binding.get("current") not in (None, early_source):
+        refuse("existing chain source binding diverges from guarded source")
+    marker_binding = marker.get("project_source_binding")
+    if marker_binding is not None and not isinstance(marker_binding, Mapping):
+        refuse("existing marker source binding is malformed")
+    if isinstance(marker_binding, Mapping) and marker_binding.get("current") not in (None, early_source):
+        refuse("existing marker source binding diverges from guarded source")
+    plan_meta = plan.get("meta") if isinstance(plan.get("meta"), Mapping) else {}
+    plan_binding = plan_meta.get("project_source_binding")
+    if plan_binding is not None and not isinstance(plan_binding, Mapping):
+        refuse("existing plan source binding is malformed")
+    if isinstance(plan_binding, Mapping) and plan_binding.get("current") not in (None, early_source):
+        refuse("existing plan source binding diverges from guarded source")
+    if dict(hold) != dict(expected_hold) or hold.get("session") != expected_session_id:
+        refuse("active hold does not match guard")
+    observed_runtime = marker_runtime_identity(marker)
+    if observed_runtime is None or observed_runtime != normalize_runtime_identity(expected_runtime_identity):
+        refuse("marker runtime identity does not match guard")
+    execution_binding = chain_meta.get("execution_binding")
+    launched = execution_binding.get("launched_identity") if isinstance(execution_binding, Mapping) else None
+    launched_runtime = launched.get("runtime") if isinstance(launched, Mapping) else None
+    if isinstance(launched_runtime, Mapping) and normalize_runtime_identity(launched_runtime) != normalize_runtime_identity(expected_runtime_identity):
+        refuse("chain launched runtime identity does not match guard")
+    for field, expected in (("editable_source_branch", from_branch), ("editable_source_head", from_head)):
+        observed = marker.get(field)
+        if observed not in (None, "") and str(observed) != expected:
+            refuse(f"marker {field} does not match guarded source")
+    if chain.get("completed") != canonical_prefix:
+        refuse("completed six-milestone prefix does not match guard")
+    if [item.get("label") for item in canonical_prefix] != [str(item.label) for item in spec.milestones[:6]]:
+        refuse("guarded completed prefix is not canonical")
+    if any(marker.get(field) not in (None, "", False) for field in ("owner", "active_owner", "owner_pid", "chain_owner", "owner_id")):
+        refuse("an active owner is present")
+    _assert_clean_worktree(project_root)
+    if _remote_advertised_sha(project_root, from_ref) != from_head:
+        refuse("advertised source does not match guarded source HEAD")
+    target_advertised = _remote_advertised_sha(project_root, to_ref)
+    if target_advertised != to_head:
+        refuse("advertised target does not match guarded target HEAD")
+    _fetch_advertised_ref(project_root, to_ref, to_head)
+    if not _is_ancestor(project_root, from_head, to_head) or from_head == to_head:
+        refuse("target checkout must be a strict fast-forward of guarded source")
+    if not _is_ancestor(project_root, to_milestone_base, to_head):
+        refuse("target milestone base is not an ancestor of target HEAD")
+
+    chain_meta = chain.get("metadata") if isinstance(chain.get("metadata"), Mapping) else {}
+    if chain.get("current_milestone_index") != expected_cursor or chain.get("current_plan_name") is not None or chain.get("last_state") != "paused":
+        refuse("chain is not paused at cursor 6 with a null current plan")
+    if chain_meta.get("_nbf08_revision") != expected_chain_revision:
+        refuse("chain revision does not match guard")
+    if plan.get("current_state") != "aborted" or plan.get("active_step") is not None:
+        refuse("aborted C2 plan is not immutable and inactive")
+    plan_name = str(plan.get("name") or aborted_plan_path.parent.name)
+    pause = marker.get("operator_pause")
+    hold = marker.get("operator_resume_hold")
+    if marker.get("should_run") is not False or not isinstance(pause, Mapping) or pause.get("active") is not True or pause.get("schema_version") != AUTHORITY_SCHEMA or pause.get("plan") != plan_name or not isinstance(hold, Mapping) or hold.get("active") is not True:
+        refuse("marker is not paused, held, and action-off")
+    source = {"branch": from_branch, "head": from_head, "milestone_base_sha": from_milestone_base, "advertised_ref": from_ref, "advertised_sha": from_head}
+    target = {"branch": to_branch, "head": to_head, "milestone_base_sha": to_milestone_base, "advertised_ref": to_ref, "advertised_sha": target_advertised}
+    chain_id = chain_id_for_spec(spec_path)
+    guard_material = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "session": expected_session_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "chain_id": chain_id, "chain_sha256": expected_chain_state_sha256, "plan_sha256": expected_plan_state_sha256, "marker_sha256": expected_marker_sha256, "spec_sha256": expected_spec_sha256, "target_spec_sha256": target_spec_sha256, "chain_revision": expected_chain_revision, "prefix": canonical_prefix, "hold": dict(expected_hold), "runtime": normalize_runtime_identity(expected_runtime_identity), "source": source, "target": target}
+    guard_digest = sha256_hex(canonical_json(guard_material))
+    derived_operation_id = "c2-checkout-cutover-" + guard_digest
+    if operation_id is not None and operation_id != derived_operation_id:
+        refuse("operation identity does not match guarded inputs")
+    operation_id = derived_operation_id
+    journal = journal_for(project_root)
+    replay = journal.replay_strict()
+    existing = next(
+        (event for event in reversed(replay.get("accepted", []))
+         if event.get("operation_id") == operation_id
+         and event.get("event_kind") == "chain_control.source_checkout_cutover"),
+        None,
+    )
+    if existing is not None and existing.get("event_kind") == "chain_control.source_checkout_cutover":
+        payload = existing.get("payload") if isinstance(existing.get("payload"), Mapping) else {}
+        effect = payload.get("effect") if isinstance(payload.get("effect"), Mapping) else {}
+        if effect.get("guard_digest") != guard_digest:
+            refuse("committed cutover guard digest differs")
+        if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
+            refuse("committed cutover checkout diverged")
+        return {"outcome": "replay", "operation_id": operation_id, "receipt": dict(existing), "external_effect": False}
+
+    event_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event = {"schema": PROJECT_SOURCE_REBIND_SCHEMA, "operation": "cutover-paused-checkout", "operation_id": operation_id, "actor": actor, "reason": reason, "session_id": expected_session_id, "chain_id": chain_id, "milestone": expected_current_milestone, "cursor": expected_cursor, "from": source, "to": target, "guard_digest": guard_digest, "rebound_at": event_time}
+    event["content_sha256"] = sha256_hex(canonical_json(event))
+    binding = {"schema": PROJECT_SOURCE_BINDING_SCHEMA, "current": target, "original": source, "admission": {"schema": "arnold.megaplan.paused-checkout-admission.v1", "operation_id": operation_id, "guard_digest": guard_digest}, "rebind_events": [event], "last_rebound_at": event_time}
+    post_chain = copy.deepcopy(chain)
+    post_meta = dict(post_chain.get("metadata") or {})
+    post_meta.update({"chain_id": chain_id, "chain_spec_sha256": target_spec_sha256, "project_source_binding": binding})
+    post_chain["chain_session"] = expected_session_id
+    post_chain["metadata"] = post_meta
+    post_chain["current_milestone_index"] = expected_cursor
+    post_chain["current_plan_name"] = None
+    post_chain["last_state"] = "paused"
+    post_meta["_nbf08_revision"] = int(expected_chain_revision) + 1
+    post_chain["metadata"] = post_meta
+    post_marker = copy.deepcopy(marker)
+    post_marker["project_source_binding"] = binding
+    post_marker["editable_source_branch"] = to_branch
+    post_marker["editable_source_head"] = to_head
+    sync = post_marker.get("editable_install_sync")
+    if isinstance(sync, dict):
+        sync["status"] = "content-addressed-source-cutover"
+        sync["source"] = str(project_root)
+    effect = {"schema": "arnold.megaplan.paused-checkout-cutover.v1", "guard_digest": guard_digest, "pre_chain_digest": state_digest_for(chain), "pre_chain_sha256": expected_chain_state_sha256, "pre_marker_sha256": expected_marker_sha256, "plan_sha256": expected_plan_state_sha256, "post_chain": post_chain, "post_chain_digest": state_digest_for(post_chain), "post_marker": post_marker, "post_marker_sha256": hashlib.sha256(_json_bytes(post_marker)).hexdigest(), "source": source, "target": target, "zero_dispatch": True, "preserved_plan_sha256": expected_plan_state_sha256}
+    prior_branch, prior_head = from_branch, from_head
+    created_branch: str | None = None
+    try:
+        with journal.transaction(chain_ids=[chain_id], state_paths=[chain_path, marker_path, spec_path, aborted_plan_path], expected_revision=expected_chain_revision, operation_id=operation_id, actor={"id": actor, "class": "operator"}) as txn:
+            locked_chain_raw, locked_chain = _load_json_bytes(chain_path, label="chain state")
+            locked_plan_raw, _ = _load_json_bytes(aborted_plan_path, label="aborted C2 plan")
+            locked_marker_raw, _ = _load_json_bytes(marker_path, label="session marker")
+            _assert_hash(locked_chain_raw, expected_chain_state_sha256, label="locked chain-state SHA-256")
+            _assert_hash(locked_plan_raw, expected_plan_state_sha256, label="locked plan-state SHA-256")
+            _assert_hash(locked_marker_raw, expected_marker_sha256, label="locked marker SHA-256")
+            if not journal.is_bound(chain_id):
+                physical = [item for item in read_physical_lines(journal.ledger.events_path) if not item.torn]
+                last = next((item for item in reversed(physical) if not str(item.record.get("kind") or "").startswith("chain_control.")), None)
+                tip = -1 if last is None else last.record.get("seq")
+                digest = "0" * 64 if last is None else physical_digest_after(journal.ledger_id, physical, upto_seq=int(tip))
+                journal.append_under_lock(txn, event_kind="chain_control.genesis_accepted", chain_id=chain_id, operation_id="genesis-" + chain_id, causation_id="genesis-" + chain_id, correlation_id="genesis-" + chain_id, payload={"prefix_tip_seq": tip, "prefix_digest": digest, "authority_mode": "file", "schema_version": "nbf08-chain-control-v1"}, semantic_effect="no_change", claim_class="required", actor={"id": actor, "class": "operator"}, outcome="committed", spec_identity=str(spec_path), source_identity=binding)
+            intent = pending_intent or journal.append_under_lock(txn, event_kind="chain_control.intent", chain_id=chain_id, operation_id=operation_id, causation_id=operation_id, correlation_id=operation_id, payload={"schema": effect["schema"], "effect": effect}, semantic_effect="no_change", claim_class="required", actor={"id": actor, "class": "operator"}, intent="cutover-paused-checkout", outcome="pending", expected_cursor=expected_cursor, expected_revision=expected_chain_revision, source_identity=source, spec_identity=str(spec_path), pre_state_digest=effect["pre_chain_digest"], post_state_digest=effect["post_chain_digest"])
+            if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
+                created_branch = to_branch if _checkout_target(project_root, branch=to_branch, head=to_head) else None
+            if _current_branch(project_root) != to_branch or _current_head(project_root) != to_head:
+                refuse("target checkout postcondition diverged")
+            if sha256_path(spec_path) != target_spec_sha256:
+                refuse("target chain spec SHA-256 does not match its guard")
+            target_spec = chain_spec.load_spec(spec_path)
+            if target_spec.milestones[expected_cursor].label != expected_current_milestone or target_spec.milestones[expected_cursor].branch not in (None, to_branch):
+                refuse("target spec milestone or branch closure diverged")
+            if failure_injector is not None:
+                failure_injector("after_git_switch")
+            final_chain_raw, _ = _load_json_bytes(chain_path, label="final chain state")
+            final_plan_raw, _ = _load_json_bytes(aborted_plan_path, label="final aborted C2 plan")
+            final_marker_raw, _ = _load_json_bytes(marker_path, label="final marker")
+            _assert_hash(final_chain_raw, expected_chain_state_sha256, label="final chain-state SHA-256")
+            _assert_hash(final_plan_raw, expected_plan_state_sha256, label="final plan-state SHA-256")
+            _assert_hash(final_marker_raw, expected_marker_sha256, label="final marker SHA-256")
+            ChainStateAdapter(txn, chain_path).cas_write(post_chain, expected_revision=expected_chain_revision)
+            _atomic_write(marker_path, _json_bytes(post_marker))
+            if failure_injector is not None:
+                failure_injector("after_state_write")
+            committed = journal.append_under_lock(txn, event_kind="chain_control.source_checkout_cutover", chain_id=chain_id, operation_id=operation_id, causation_id=str(intent.get("event_id") or operation_id), correlation_id=operation_id, payload={"schema": effect["schema"], "effect": effect}, semantic_effect="metadata_only", claim_class="required", actor={"id": actor, "class": "operator"}, outcome="committed", intent="cutover-paused-checkout", expected_cursor=expected_cursor, expected_revision=expected_chain_revision, actual_cursor=expected_cursor, actual_revision=post_chain["metadata"]["_nbf08_revision"], pre_state_digest=effect["pre_chain_digest"], post_state_digest=effect["post_chain_digest"], source_identity=source, spec_identity=str(spec_path), linked_receipts=[str(intent.get("event_id") or operation_id)])
+            return {"outcome": "committed", "operation_id": operation_id, "receipt": committed, "project_source_binding": binding, "external_effect": False}
+    except ChainControlHold:
+        raise
+    except Exception:
+        # Keep the journal intent as the recovery authority.  If both
+        # projections and the checkout already equal the recorded post-state,
+        # preserve them so a later invocation can append the terminal receipt;
+        # otherwise roll back the incomplete external effect.
+        try:
+            post_chain_raw, post_chain_now = _load_json_bytes(chain_path, label="post chain state")
+            post_marker_raw, post_marker_now = _load_json_bytes(marker_path, label="post marker")
+            post_state_present = (
+                _current_branch(project_root) == to_branch
+                and _current_head(project_root) == to_head
+                and state_digest_for(post_chain_now) == effect["post_chain_digest"]
+                and post_marker_now == effect["post_marker"]
+            )
+            if not post_state_present:
+                if _current_branch(project_root) != prior_branch or _current_head(project_root) != prior_head:
+                    _restore_git(project_root, branch=prior_branch, head=prior_head, created_branch=created_branch)
+                _atomic_write(chain_path, chain_raw)
+                _atomic_write(marker_path, marker_raw)
+        except Exception:
+            pass
+        raise
+
+
 def _binding_from_metadata(metadata: Any) -> Mapping[str, Any] | None:
     binding = metadata.get("project_source_binding") if isinstance(metadata, Mapping) else None
     return binding if isinstance(binding, Mapping) else None
@@ -1645,6 +2174,7 @@ __all__ = [
     "assert_chain_project_source_binding",
     "assert_plan_project_source_binding",
     "publish_bound_project_source_branch",
+    "cutover_paused_checkout",
     "sha256_path",
     "target_rebind",
 ]

@@ -130,6 +130,9 @@ SEMANTIC_KINDS = frozenset(
         "chain_control.runtime_rebound",
         "chain_control.hold_context_attested",
         "chain_control.backend_rebound",
+        "chain_control.current_attempt_adopted",
+        "chain_control.aborted_c2_authority_admitted",
+        "chain_control.source_checkout_cutover",
         # A legacy restart receipt is immutable external evidence.  The
         # attestation is a real chain-control semantic transition because it
         # records the modern guard in chain state, but it never replays the
@@ -578,6 +581,12 @@ def validate_payload(payload: Any) -> Any:
 
 
 def semantic_effect_for(kind: str, *, pre_digest: Any, post_digest: Any) -> str:
+    if kind in {
+        "chain_control.current_attempt_adopted",
+        "chain_control.aborted_c2_authority_admitted",
+        "chain_control.source_checkout_cutover",
+    }:
+        return "metadata_only" if pre_digest != post_digest else "no_change"
     if kind in SEMANTIC_KINDS:
         if pre_digest != post_digest and pre_digest is not ABSENT and post_digest is not ABSENT:
             return "advance"
@@ -1056,6 +1065,9 @@ REPLAYABLE_OPERATION_KINDS = frozenset(
         "chain_control.hold_released",
         "chain_control.hold_reconciled",
         "chain_control.hold_context_attested",
+        "chain_control.current_attempt_adopted",
+        "chain_control.aborted_c2_authority_admitted",
+        "chain_control.source_checkout_cutover",
         "chain_control.restart_receipt_attested",
         "chain_control.trailing_sequence_collision_quarantined",
     }
@@ -1676,6 +1688,9 @@ class ChainControlJournal:
                         "chain_control.hold_released",
                         "chain_control.hold_reconciled",
                         "chain_control.hold_context_attested",
+                        "chain_control.current_attempt_adopted",
+                        "chain_control.aborted_c2_authority_admitted",
+                        "chain_control.source_checkout_cutover",
                         "chain_control.restart_receipt_attested",
                         "chain_control.genesis_accepted",
                         "chain_control.suffix_rebound",

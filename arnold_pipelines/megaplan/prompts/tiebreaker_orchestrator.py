@@ -24,7 +24,7 @@ from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from arnold_pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from arnold_pipelines.megaplan.prompts.tiebreaker_synthesis import render_synthesis
-from arnold_pipelines.megaplan.types import CliError, PlanState
+from arnold_pipelines.megaplan.types import AgentMode, CliError, PlanState
 from arnold_pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, run_step_with_worker
 
 
@@ -66,7 +66,9 @@ def _run_tiebreaker(
 
     # -- Researcher pass --
     r_prompt = researcher_prompt(question, state, plan_dir, root=root)
-    resolved = _build_resolved(args, "tiebreaker_researcher")
+    resolved = _build_resolved(
+        args, "tiebreaker_researcher", project_dir=Path(state["config"]["project_dir"])
+    )
     rendered_researcher = _render_tiebreaker_prompt(
         step="tiebreaker_researcher",
         prompt=r_prompt,
@@ -93,7 +95,9 @@ def _run_tiebreaker(
     c_prompt = challenger_prompt(
         question, researcher_data, state, plan_dir, root=root
     )
-    resolved_c = _build_resolved(args, "tiebreaker_challenger")
+    resolved_c = _build_resolved(
+        args, "tiebreaker_challenger", project_dir=Path(state["config"]["project_dir"])
+    )
     rendered_challenger = _render_tiebreaker_prompt(
         step="tiebreaker_challenger",
         prompt=c_prompt,
@@ -143,35 +147,47 @@ def _run_tiebreaker(
 
 
 def _build_resolved(
-    args: argparse.Namespace, step: str
-) -> tuple[str, str, bool, str | None]:
+    args: argparse.Namespace, step: str, *, project_dir: Path | None = None
+) -> AgentMode:
     """Build a resolved tuple for ephemeral mode (FLAG-002)."""
     from arnold_pipelines.megaplan.workers import resolve_agent_mode
 
+    from arnold_pipelines.megaplan.profiles import validate_continuation_agent_override
+
+    validate_continuation_agent_override(project_dir, args, step)
     am = resolve_agent_mode(step, args)
-    return (am.agent, "ephemeral", True, am.model)
+    return AgentMode(
+        agent=am.agent,
+        mode="ephemeral",
+        refreshed=True,
+        model=am.model,
+        effort=am.effort,
+        resolved_model=am.resolved_model,
+    )
 
 
 def _render_tiebreaker_prompt(
     *,
     step: str,
     prompt: str,
-    resolved: tuple[str, str, bool, str | None],
+    resolved: AgentMode | tuple[str, str, bool, str | None],
     state: PlanState,
     plan_dir: Path,
     root: Path,
 ):
     schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES[step])
-    tier = ModelTier.ENFORCED if resolved[0] in {"codex", "omp"} else ModelTier.NON_ENFORCED
+    agent = resolved.agent if isinstance(resolved, AgentMode) else resolved[0]
+    model = resolved.resolved_model if isinstance(resolved, AgentMode) else resolved[3]
+    tier = ModelTier.ENFORCED if agent in {"codex", "omp"} else ModelTier.NON_ENFORCED
     return render_prompt_for_dispatch(
-        resolved[0],
+        agent,
         step,
         state,
         plan_dir,
         root=root,
-        worker=resolved[0],
-        model=resolved[3],
-        normalized_model=resolved[3],
+        worker=agent,
+        model=model,
+        normalized_model=model,
         tier=tier,
         schema=schema,
         prompt_override=prompt,

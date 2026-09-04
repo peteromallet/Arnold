@@ -3389,6 +3389,7 @@ def launch_managed_subagent_detached(
     project_dir: str | None = None,
     model: str = "gpt-5.6-terra",
     model_spec: str | None = None,
+    provider_probe: Mapping[str, Any] | None = None,
     backend: str = "codex",
     reasoning_effort: str = "medium",
     toolsets: str = "file,web,terminal",
@@ -3886,6 +3887,7 @@ def launch_managed_subagent_detached(
             "runtime_model": model,
             "model_spec": model_spec or f"{backend}:{model}",
         },
+        "provider_probe": dict(provider_probe) if provider_probe is not None else None,
         "reasoning_effort": reasoning_effort,
         "provider_options": {
             "toolsets": toolsets,
@@ -7684,7 +7686,7 @@ def launch_superfixer_proactive_managed(
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
     schedule_context: Mapping[str, Any] | None = None,
-    model_spec: str = SUPERFIXER_PROACTIVE_MODEL_SPEC,
+    model_spec: str | None = None,
 ) -> SubagentResult:
     """Launch the hourly superfixer backstop through the durable managed-run path.
 
@@ -7693,9 +7695,34 @@ def launch_superfixer_proactive_managed(
     the durable manifest (``schedule_occurrence``), and ``launch_origin``
     carries the scheduled-turn source kind, so the durable launch receipt
     links back to the occurrence claim and forward to the final run receipt.
-    The model spec defaults to the fixed omp deepseek-v4-flash backstop
-    identity used by the hourly schedule; anything else fails closed.
+    Legacy callers default to the fixed omp deepseek-v4-flash backstop.  A
+    continuation caller must provide its exact profile-derived model spec;
+    this seam never rewrites a legacy/default value into a continuation pin.
     """
+    provider_probe: Mapping[str, Any] | None = None
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
+        if canonical_model is not None:
+            if model_spec != canonical_model:
+                raise ValueError(
+                    "continuation superfixer requires the explicit canonical model"
+                )
+            route = canonical_model.removeprefix("omp:")
+            provider, separator, model_and_effort = route.partition("/")
+            model, effort_separator, effort = model_and_effort.rpartition(":")
+            if not separator or not provider or not effort_separator or effort != "high":
+                raise ValueError("continuation superfixer provider route is not canonical")
+            from arnold_pipelines.megaplan.cloud.worker_dispatch import (
+                ensure_continuation_provider_probe,
+            )
+
+            provider_probe = ensure_continuation_provider_probe(
+                Path(project_dir), canonical_model
+            )
+    if model_spec is None:
+        model_spec = SUPERFIXER_PROACTIVE_MODEL_SPEC
     if not model_spec.startswith("omp:"):
         raise ValueError(
             f"superfixer model spec requires the omp backend: {model_spec!r}"
@@ -7712,6 +7739,8 @@ def launch_superfixer_proactive_managed(
         backend=backend,
         model=model,
         model_spec=model_spec,
+        reasoning_effort="high" if model_spec.endswith(":high") else "medium",
+        provider_probe=provider_probe,
         task_kind="autonomous",
         work_intent="execution",
         mutation_claim="auto",
@@ -7781,7 +7810,29 @@ async def launch_subagent_task(
             "claude": "opus",
         },
     )
+    if project_dir is not None:
+        from arnold_pipelines.megaplan.profiles import resolve_continuation_runtime_model
+
+        canonical_model = resolve_continuation_runtime_model(Path(project_dir))
+        if canonical_model is not None:
+            if model is None or provider_route.model_spec != canonical_model:
+                raise ValueError(
+                    "continuation resident dispatch requires the explicit canonical model"
+                )
+            provider_route = ManagedAgentRoute(
+                backend="omp",
+                model=canonical_model.removeprefix("omp:"),
+                model_spec=canonical_model,
+                effort="high",
+                backend_source="continuation_profile",
+            )
     selected_effort = reasoning_effort or provider_route.effort or route.reasoning_effort
+    if (
+        project_dir is not None
+        and provider_route.backend_source == "continuation_profile"
+        and reasoning_effort not in {None, "high"}
+    ):
+        raise ValueError("continuation canonical model requires high reasoning effort")
     if selected_effort not in _VALID_DELEGATED_EFFORTS:
         raise ValueError(
             "reasoning_effort must be one of "
